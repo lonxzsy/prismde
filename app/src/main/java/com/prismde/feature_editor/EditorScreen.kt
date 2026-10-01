@@ -359,17 +359,25 @@ fun EditorScreen(
                 editor.text.delete(targetLine, 0, targetLine, currentLineTotal)
                 editor.setSelection(targetLine, 0)
 
-                for (i in replacementCode.indices) {
-                    val charStr = replacementCode[i].toString()
-                    val col = editor.text.getColumnCount(targetLine)
-                    editor.text.insert(targetLine, col, charStr)
-                    editor.setSelection(targetLine, col + 1)
-                    if (i % 3 == 0) {
-                        editor.ensureSelectionVisible()
+                val cleanedReplacement = replacementCode.trimEnd()
+                var curLine = targetLine
+                var curCol = 0
+
+                for (char in cleanedReplacement) {
+                    val charStr = char.toString()
+                    editor.text.insert(curLine, curCol, charStr)
+                    if (char == '\n') {
+                        curLine++
+                        curCol = 0
+                    } else {
+                        curCol++
                     }
-                    kotlinx.coroutines.delay(20)
+                    editor.setSelection(curLine, curCol)
+                    editor.ensureSelectionVisible()
+                    kotlinx.coroutines.delay(16)
                 }
 
+                editor.jumpToLine(curLine)
                 editor.ensureSelectionVisible()
 
                 // 4. Save and finish

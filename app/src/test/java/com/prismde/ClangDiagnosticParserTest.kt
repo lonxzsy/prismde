@@ -15,6 +15,32 @@ class ClangDiagnosticParserTest {
     private val parser = ClangDiagnosticParser()
 
     @Test
+    fun testMultilineStreamingTyping() {
+        val content = Content()
+        val code = "#include <iostream>\n#include <vector>\nvoid hello() {\n    return;\n}"
+
+        var curLine = 0
+        var curCol = 0
+        for (char in code) {
+            content.insert(curLine, curCol, char.toString())
+            if (char == '\n') {
+                curLine++
+                curCol = 0
+            } else {
+                curCol++
+            }
+        }
+
+        assertEquals(code, content.toString())
+        assertEquals(5, content.lineCount)
+        assertEquals("#include <iostream>", content.getLineString(0))
+        assertEquals("#include <vector>", content.getLineString(1))
+        assertEquals("void hello() {", content.getLineString(2))
+        assertEquals("    return;", content.getLineString(3))
+        assertEquals("}", content.getLineString(4))
+    }
+
+    @Test
     fun testParseClangError() {
         val line = "jni/native-lib.cpp:14:5: error: use of undeclared identifier 'count'"
         val diag = parser.parseLine(line)
