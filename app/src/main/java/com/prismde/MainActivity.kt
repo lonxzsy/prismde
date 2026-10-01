@@ -63,6 +63,14 @@ class MainActivity : ComponentActivity() {
 
         val settingsRepo = SettingsRepository(applicationContext)
 
+        // If NDK is already installed, mark setup completed to prevent any flash
+        if (!settingsRepo.isSetupCompletedSync) {
+            val ndkDir = File(applicationContext.filesDir, "ndk/r26c")
+            if (ndkDir.exists() && ndkDir.isDirectory) {
+                settingsRepo.markSetupCompletedSync()
+            }
+        }
+
         // Restore last project or pick / create starter project
         lifecycleScope.launch {
             val lastPath = settingsRepo.lastProjectPathFlow.first()
@@ -87,7 +95,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val isSetupCompleted by settingsRepo.isSetupCompletedFlow.collectAsState(initial = false)
+            val isSetupCompleted by settingsRepo.isSetupCompletedFlow.collectAsState(initial = settingsRepo.isSetupCompletedSync)
             val darkMode by settingsRepo.darkModeFlow.collectAsState(initial = "system")
             val dynamicColor by settingsRepo.dynamicColorFlow.collectAsState(initial = true)
             val geminiKey by settingsRepo.geminiApiKeyFlow.collectAsState(initial = "")

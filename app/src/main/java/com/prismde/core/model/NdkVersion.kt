@@ -136,6 +136,16 @@ data class NdkVersion(
         fun ensureNdkPermissions(ndkDir: File) {
             if (!ndkDir.exists()) return
 
+            fun applyChmod755(target: File) {
+                try {
+                    android.system.Os.chmod(target.absolutePath, 493) // 0755 in octal
+                } catch (_: Throwable) {}
+                try {
+                    target.setExecutable(true, false)
+                    target.setReadable(true, false)
+                } catch (_: Throwable) {}
+            }
+
             // 1. Try system chmod -R 755
             try {
                 val process = ProcessBuilder("/system/bin/chmod", "-R", "755", ndkDir.absolutePath).start()
@@ -155,31 +165,32 @@ data class NdkVersion(
 
                 val busybox = File(prebuiltBin, "busybox")
                 if (busybox.exists()) {
-                    busybox.setExecutable(true, false)
-                    busybox.setReadable(true, false)
+                    applyChmod755(busybox)
                     val essentialTools = listOf(
                         "mkdir", "make", "sh", "rm", "cp", "mv", "sed", "awk", "cat",
                         "echo", "uname", "tar", "grep", "find", "chmod", "basename", "dirname"
                     )
                     for (tool in essentialTools) {
                         val toolFile = File(prebuiltBin, tool)
-                        if (!toolFile.exists()) {
+                        val needsFix = !toolFile.exists() || (toolFile.isFile && toolFile.length() == 0L)
+                        if (needsFix) {
+                            try { toolFile.delete() } catch (_: Throwable) {}
+                            try { android.system.Os.remove(toolFile.absolutePath) } catch (_: Throwable) {}
+                            var linked = false
                             try {
                                 android.system.Os.symlink("busybox", toolFile.absolutePath)
-                            } catch (_: Throwable) {
+                                linked = true
+                            } catch (_: Throwable) {}
+                            if (!linked) {
                                 try { busybox.copyTo(toolFile, overwrite = true) } catch (_: Throwable) {}
                             }
                         }
-                        toolFile.setExecutable(true, false)
-                        toolFile.setReadable(true, false)
+                        applyChmod755(toolFile)
                     }
                 }
 
                 prebuiltBin.listFiles()?.forEach { f ->
-                    if (f.isFile) {
-                        f.setExecutable(true, false)
-                        f.setReadable(true, false)
-                    }
+                    applyChmod755(f)
                 }
             }
 
@@ -193,10 +204,7 @@ data class NdkVersion(
             for (binDir in llvmBinDirs) {
                 if (!binDir.exists() || !binDir.isDirectory) continue
                 binDir.listFiles()?.forEach { f ->
-                    if (f.isFile) {
-                        f.setExecutable(true, false)
-                        f.setReadable(true, false)
-                    }
+                    applyChmod755(f)
                 }
             }
 
@@ -208,8 +216,7 @@ data class NdkVersion(
                 File(ndkDir, "android-ndk-aide/ndk-build-android")
             ).forEach { script ->
                 if (script.exists()) {
-                    script.setExecutable(true, false)
-                    script.setReadable(true, false)
+                    applyChmod755(script)
                 }
             }
 
@@ -223,6 +230,7 @@ data class NdkVersion(
                     tmpDir.setWritable(true, false)
                     tmpDir.setReadable(true, false)
                     tmpDir.setExecutable(true, false)
+                    try { android.system.Os.chmod(tmpDir.absolutePath, 511) } catch (_: Throwable) {} // 0777
                 } catch (_: Throwable) {}
             }
         }

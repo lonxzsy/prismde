@@ -277,14 +277,24 @@ fun ProjectPickerBottomSheet(
 
     // Delete Confirmation Dialog
     projectToDelete?.let { target ->
+        val isInternal = try {
+            target.rootDir.canonicalPath.startsWith(ProjectManager.getProjectsDir(context).canonicalPath)
+        } catch (_: Throwable) {
+            false
+        }
         AlertDialog(
             onDismissRequest = { projectToDelete = null },
-            title = { Text("Удалить проект?") },
-            text = { Text("Вы уверены, что хотите удалить проект «${target.name}» со всеми файлами?") },
+            title = { Text(if (isInternal) "Удалить проект?" else "Убрать проект?") },
+            text = {
+                Text(
+                    if (isInternal) "Вы уверены, что хотите удалить проект «${target.name}» со всеми файлами?"
+                    else "Убрать проект «${target.name}» из списка проектов? Файлы на устройстве удалены не будут."
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
-                        ProjectManager.deleteProject(target)
+                        ProjectManager.deleteProject(context, target)
                         projects = ProjectManager.listProjects(context)
                         projectToDelete = null
                         if (target.rootPath == currentProject?.rootPath) {
@@ -295,7 +305,7 @@ fun ProjectPickerBottomSheet(
                         containerColor = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text("Удалить")
+                    Text(if (isInternal) "Удалить" else "Убрать")
                 }
             },
             dismissButton = {

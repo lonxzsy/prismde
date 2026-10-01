@@ -29,7 +29,18 @@ class SettingsRepository(private val context: Context) {
         val KEY_SETUP_COMPLETED = booleanPreferencesKey("setup_completed")
     }
 
-    val isSetupCompletedFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_SETUP_COMPLETED] ?: false }
+    private val syncPrefs = context.getSharedPreferences("prism_sync_state", Context.MODE_PRIVATE)
+
+    val isSetupCompletedSync: Boolean
+        get() = syncPrefs.getBoolean("setup_completed", false)
+
+    val isSetupCompletedFlow: Flow<Boolean> = context.dataStore.data.map { 
+        val completed = it[KEY_SETUP_COMPLETED] ?: false
+        if (completed && !syncPrefs.getBoolean("setup_completed", false)) {
+            syncPrefs.edit().putBoolean("setup_completed", true).apply()
+        }
+        completed
+    }
     val darkModeFlow: Flow<String> = context.dataStore.data.map { it[KEY_DARK_MODE] ?: "system" }
     val dynamicColorFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_DYNAMIC_COLOR] ?: true }
     val activeNdkFlow: Flow<String> = context.dataStore.data.map { it[KEY_ACTIVE_NDK] ?: "r26c" }
@@ -77,6 +88,11 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setSetupCompleted(completed: Boolean) {
+        syncPrefs.edit().putBoolean("setup_completed", completed).apply()
         context.dataStore.edit { it[KEY_SETUP_COMPLETED] = completed }
+    }
+
+    fun markSetupCompletedSync() {
+        syncPrefs.edit().putBoolean("setup_completed", true).apply()
     }
 }

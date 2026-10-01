@@ -11,22 +11,66 @@ import java.io.FileOutputStream
 
 object ProjectManager {
 
+    private const val PREFS_NAME = "prism_projects_registry"
+    private const val KEY_EXTERNAL_PROJECTS = "external_projects_paths"
+
+    fun getExternalProjectPaths(context: Context): Set<String> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getStringSet(KEY_EXTERNAL_PROJECTS, emptySet()) ?: emptySet()
+    }
+
+    fun registerExternalProject(context: Context, path: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(KEY_EXTERNAL_PROJECTS, emptySet())?.toMutableSet() ?: mutableSetOf()
+        current.add(path)
+        prefs.edit().putStringSet(KEY_EXTERNAL_PROJECTS, current).apply()
+    }
+
+    fun unregisterExternalProject(context: Context, path: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(KEY_EXTERNAL_PROJECTS, emptySet())?.toMutableSet() ?: mutableSetOf()
+        current.remove(path)
+        prefs.edit().putStringSet(KEY_EXTERNAL_PROJECTS, current).apply()
+    }
+
     fun getProjectsDir(context: Context): File {
         return File(context.filesDir, "projects").also { it.mkdirs() }
     }
 
     fun listProjects(context: Context): List<Project> {
+        val projects = mutableListOf<Project>()
+
+        // 1. Internal projects in app storage
         val root = getProjectsDir(context)
         val dirs = root.listFiles()?.filter { it.isDirectory } ?: emptyList()
-
-        return dirs.map { dir ->
-            val detected = ProjectDetector.detect(dir)
-            Project(
-                name = dir.name,
-                rootPath = dir.absolutePath,
-                detectedType = detected
+        for (dir in dirs) {
+            projects.add(
+                Project(
+                    name = dir.name,
+                    rootPath = dir.absolutePath,
+                    detectedType = ProjectDetector.detect(dir)
+                )
             )
-        }.sortedBy { it.name.lowercase() }
+        }
+
+        // 2. External projects opened directly from user storage
+        val externalPaths = getExternalProjectPaths(context)
+        for (path in externalPaths) {
+            val f = File(path)
+            if (f.exists() && f.isDirectory && f.absolutePath != root.absolutePath) {
+                if (projects.none { it.rootPath == f.absolutePath }) {
+                    projects.add(
+                        Project(
+                            name = f.name,
+                            rootPath = f.absolutePath,
+                            detectedType = ProjectDetector.detect(f)
+                        )
+                    )
+                }
+            }
+        }
+
+        return projects.sortedBy { it.name.lowercase() }
     }
 
     fun createProject(context: Context, name: String, type: ProjectType): Project {
@@ -147,6 +191,23 @@ object ProjectManager {
     }
 
     fun importProjectFromTreeUri(context: Context, treeUri: Uri): Project? {
+        try {
+            val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(treeUri, flags)
+        } catch (_: Throwable) {}
+
+        // 1. Open folder directly without copying into app storage!
+        val resolvedFolder = resolveFolderFromUri(treeUri)
+        if (resolvedFolder != null && resolvedFolder.exists() && resolvedFolder.isDirectory) {
+            registerExternalProject(context, resolvedFolder.absolutePath)
+            return Project(
+                name = resolvedFolder.name,
+                rootPath = resolvedFolder.absolutePath,
+                detectedType = ProjectDetector.detect(resolvedFolder)
+            )
+        }
+
+        // 2. Fallback only if direct path couldn't be resolved (virtual provider)
         val rootDoc = DocumentFile.fromTreeUri(context, treeUri) ?: return null
         val rawName = rootDoc.name ?: "imported_project"
         val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "imported_project" }
@@ -169,6 +230,63 @@ object ProjectManager {
         )
     }
 
+    fun resolveFolderFromUri(uri: Uri): File? {
+        try {
+            val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+            if (docId != null) {
+                val resolved = resolveFromDocId(docId)
+                if (resolved != null && resolved.exists()) return resolved
+            }
+        } catch (_: Throwable) {}
+
+        try {
+            val docId = android.provider.DocumentsContract.getDocumentId(uri)
+            if (docId != null) {
+                val resolved = resolveFromDocId(docId)
+                if (resolved != null && resolved.exists()) return resolved
+            }
+        } catch (_: Throwable) {}
+
+        try {
+            val path = uri.path
+            if (path != null) {
+                val decoded = Uri.decode(path)
+                val markers = listOf("/tree/primary:", "/document/primary:", "primary:")
+                for (marker in markers) {
+                    if (decoded.contains(marker)) {
+                        val sub = decoded.substringAfter(marker)
+                        val f = File(android.os.Environment.getExternalStorageDirectory(), sub)
+                        if (f.exists()) return f
+                    }
+                }
+                if (uri.scheme == "file") {
+                    val f = File(uri.path ?: "")
+                    if (f.exists()) return f
+                }
+            }
+        } catch (_: Throwable) {}
+
+        return null
+    }
+
+    private fun resolveFromDocId(docId: String): File? {
+        val split = docId.split(":")
+        if (split.size < 2) return null
+        val type = split[0]
+        val sub = split[1]
+
+        return if ("primary".equals(type, ignoreCase = true)) {
+            File(android.os.Environment.getExternalStorageDirectory(), sub)
+        } else {
+            val extStorage = File("/storage/$type")
+            if (extStorage.exists()) {
+                File(extStorage, sub)
+            } else {
+                File("/mnt/media_rw/$type", sub)
+            }
+        }
+    }
+
     private fun copyDocumentFileRecursively(context: Context, doc: DocumentFile, destDir: File) {
         val files = doc.listFiles()
         for (f in files) {
@@ -189,6 +307,21 @@ object ProjectManager {
                     e.printStackTrace()
                 }
             }
+        }
+    }
+
+    fun deleteProject(context: Context, project: Project): Boolean {
+        val root = getProjectsDir(context)
+        val isInternal = try {
+            project.rootDir.canonicalPath.startsWith(root.canonicalPath)
+        } catch (_: Throwable) {
+            false
+        }
+        unregisterExternalProject(context, project.rootPath)
+        return if (isInternal) {
+            project.rootDir.deleteRecursively()
+        } else {
+            true
         }
     }
 
