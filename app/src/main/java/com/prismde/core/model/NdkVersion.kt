@@ -9,53 +9,75 @@ data class NdkVersion(
     val downloadUrl: String,            // Direct GitHub Releases URL
     val archiveSizeBytes: Long,
     val sha256Checksum: String? = null,
+    val isAvailable: Boolean = true,    // True for active/released versions, false for grayed out ones
     val isInstalled: Boolean = false,
     val installPath: String? = null
 ) {
     val clangExecutable: File?
-        get() = installPath?.let { File(it, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang") }
+        get() = installPath?.let {
+            val f1 = File(it, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang")
+            if (f1.exists()) f1 else File(it, "bin/clang")
+        }
 
     val clangPlusExecutable: File?
-        get() = installPath?.let { File(it, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang++") }
+        get() = installPath?.let {
+            val f1 = File(it, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang++")
+            if (f1.exists()) f1 else File(it, "bin/clang++")
+        }
 
     val cmakeToolchainFile: File?
-        get() = installPath?.let { File(it, "build/cmake/android.toolchain.cmake") }
+        get() = installPath?.let {
+            val f1 = File(it, "build/cmake/android.toolchain.cmake")
+            if (f1.exists()) f1 else null
+        }
 
     val ndkBuildScript: File?
-        get() = installPath?.let { File(it, "ndk-build") }
+        get() = installPath?.let {
+            val f1 = File(it, "ndk-build")
+            if (f1.exists()) f1 else null
+        }
 }
 
 object DefaultNdkCatalog {
-    private const val BASE_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download"
+    // Exact official release asset uploaded to https://github.com/lonxzsy/prismde-ndk/releases/tag/v1.0.0
+    const val DEFAULT_ACTIVE_TAG = "r26c"
+    const val R26_ASSET_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/ndk-arm64-26.tar.gz"
+    const val R26_SIZE_BYTES = 105_975_765L
+    const val R26_SHA256 = "bb839e34dcb0ab025e51457ef14a15ae4355feaca55079901ab0ddb020286d21"
 
     val AVAILABLE_VERSIONS = listOf(
+        NdkVersion(
+            versionTag = "r26c",
+            displayName = "Android NDK r26c (AArch64 - Релиз v1.0.0)",
+            llvmVersion = "LLVM / Clang 17",
+            downloadUrl = R26_ASSET_URL,
+            archiveSizeBytes = R26_SIZE_BYTES,
+            sha256Checksum = R26_SHA256,
+            isAvailable = true
+        ),
         NdkVersion(
             versionTag = "r27",
             displayName = "Android NDK r27 (Latest)",
             llvmVersion = "Clang 18.0.1",
-            downloadUrl = "$BASE_URL/v1.0.0/android-ndk-r27-aarch64.tar.xz",
-            archiveSizeBytes = 430_000_000L
-        ),
-        NdkVersion(
-            versionTag = "r26c",
-            displayName = "Android NDK r26c (LTS - Recommended)",
-            llvmVersion = "Clang 17.0.2",
-            downloadUrl = "$BASE_URL/v1.0.0/android-ndk-r26c-aarch64.tar.xz",
-            archiveSizeBytes = 385_000_000L
+            downloadUrl = "",
+            archiveSizeBytes = 430_000_000L,
+            isAvailable = false // Grayed out in UI
         ),
         NdkVersion(
             versionTag = "r25c",
             displayName = "Android NDK r25c (LTS)",
             llvmVersion = "Clang 14.0.7",
-            downloadUrl = "$BASE_URL/v1.0.0/android-ndk-r25c-aarch64.tar.xz",
-            archiveSizeBytes = 350_000_000L
+            downloadUrl = "",
+            archiveSizeBytes = 350_000_000L,
+            isAvailable = false // Grayed out in UI
         ),
         NdkVersion(
             versionTag = "r23c",
             displayName = "Android NDK r23c (Legacy)",
             llvmVersion = "Clang 12.0.8",
-            downloadUrl = "$BASE_URL/v1.0.0/android-ndk-r23c-aarch64.tar.xz",
-            archiveSizeBytes = 310_000_000L
+            downloadUrl = "",
+            archiveSizeBytes = 310_000_000L,
+            isAvailable = false // Grayed out in UI
         )
     )
 }

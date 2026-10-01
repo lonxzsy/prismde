@@ -40,6 +40,7 @@ import com.prismde.feature_files.FileTreeScreen
 import com.prismde.feature_ndk.NdkScreen
 import com.prismde.feature_ndk.NdkViewModel
 import com.prismde.feature_settings.SettingsScreen
+import com.prismde.feature_setup.SetupWizardScreen
 import com.prismde.feature_update.UpdateViewModel
 import com.prismde.feature_update.components.UpdateBottomSheet
 import java.io.File
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val isSetupCompleted by settingsRepo.isSetupCompletedFlow.collectAsState(initial = false)
             val darkMode by settingsRepo.darkModeFlow.collectAsState(initial = "system")
             val dynamicColor by settingsRepo.dynamicColorFlow.collectAsState(initial = true)
             val geminiKey by settingsRepo.geminiApiKeyFlow.collectAsState(initial = "")
@@ -90,14 +92,23 @@ class MainActivity : ComponentActivity() {
             }
 
             PrismTheme(darkTheme = isDark, dynamicColor = dynamicColor) {
-                var currentTab by remember { mutableIntStateOf(0) }
+                if (!isSetupCompleted) {
+                    SetupWizardScreen(
+                        settingsRepository = settingsRepo,
+                        ndkViewModel = ndkViewModel,
+                        onCompleteSetup = {
+                            // Setup completed - transitions into main IDE
+                        }
+                    )
+                } else {
+                    var currentTab by remember { mutableIntStateOf(0) }
 
-                // Auto-check for updates on launch
-                LaunchedEffect(Unit) {
-                    updateViewModel.checkForUpdates(manual = false)
-                }
+                    // Auto-check for updates on launch
+                    LaunchedEffect(Unit) {
+                        updateViewModel.checkForUpdates(manual = false)
+                    }
 
-                Scaffold(
+                    Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
                         NavigationBar {
@@ -186,4 +197,5 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
 }

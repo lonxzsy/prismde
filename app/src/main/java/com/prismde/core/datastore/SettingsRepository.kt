@@ -26,8 +26,10 @@ class SettingsRepository(private val context: Context) {
         val KEY_EDITOR_TAB_SIZE = intPreferencesKey("editor_tab_size")
         val KEY_EDITOR_WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
         val KEY_LAST_PROJECT_PATH = stringPreferencesKey("last_project_path")
+        val KEY_SETUP_COMPLETED = booleanPreferencesKey("setup_completed")
     }
 
+    val isSetupCompletedFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_SETUP_COMPLETED] ?: false }
     val darkModeFlow: Flow<String> = context.dataStore.data.map { it[KEY_DARK_MODE] ?: "system" }
     val dynamicColorFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_DYNAMIC_COLOR] ?: true }
     val activeNdkFlow: Flow<String> = context.dataStore.data.map { it[KEY_ACTIVE_NDK] ?: "r26c" }
@@ -72,5 +74,9 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLastProjectPath(path: String) {
         context.dataStore.edit { it[KEY_LAST_PROJECT_PATH] = path }
+    }
+
+    suspend fun setSetupCompleted(completed: Boolean) {
+        context.dataStore.edit { it[KEY_SETUP_COMPLETED] = completed }
     }
 }

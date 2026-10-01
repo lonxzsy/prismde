@@ -8,6 +8,8 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
 
 class NdkExtractor {
@@ -21,8 +23,15 @@ class NdkExtractor {
 
         try {
             when {
-                archiveFile.name.endsWith(".tar.xz") -> extractTarXz(archiveFile, targetDir, onProgress)
-                archiveFile.name.endsWith(".zip") -> extractZip(archiveFile, targetDir, onProgress)
+                archiveFile.name.endsWith(".tar.gz") || archiveFile.name.endsWith(".tgz") -> {
+                    extractTarStream(GZIPInputStream(BufferedInputStream(FileInputStream(archiveFile))), targetDir, onProgress)
+                }
+                archiveFile.name.endsWith(".tar.xz") -> {
+                    extractTarStream(XZInputStream(BufferedInputStream(FileInputStream(archiveFile))), targetDir, onProgress)
+                }
+                archiveFile.name.endsWith(".zip") -> {
+                    extractZip(archiveFile, targetDir, onProgress)
+                }
                 else -> throw IllegalArgumentException("Неподдерживаемый формат архива: ${archiveFile.name}")
             }
             true
@@ -32,18 +41,15 @@ class NdkExtractor {
         }
     }
 
-    private fun extractTarXz(
-        archiveFile: File,
+    private fun extractTarStream(
+        decompressedStream: InputStream,
         targetDir: File,
         onProgress: (statusMessage: String) -> Unit
     ) {
-        val fis = FileInputStream(archiveFile)
-        val bis = BufferedInputStream(fis)
-        val xzIn = XZInputStream(bis)
-        val tarIn = TarArchiveInputStream(xzIn)
+        val tarIn = TarArchiveInputStream(decompressedStream)
 
         tarIn.use { tar ->
-            var entry = tar.nextTarEntry
+            var entry = tar.nextEntry
             var count = 0
             while (entry != null) {
                 val outFile = File(targetDir, entry.name)
@@ -61,18 +67,23 @@ class NdkExtractor {
                         tar.copyTo(output)
                     }
 
-                    // Preserve executable permissions on POSIX systems
-                    if (entry.mode and 0b001_000_000 != 0 || outFile.name.endsWith("clang") || outFile.name.endsWith("clang++")) {
+                    // Preserve executable permissions for compiler binaries
+                    if (outFile.name.endsWith("clang") ||
+                        outFile.name.endsWith("clang++") ||
+                        outFile.name.endsWith("ld.lld") ||
+                        outFile.parentFile?.name == "bin" ||
+                        outFile.name == "ndk-build"
+                    ) {
                         outFile.setExecutable(true, false)
                     }
                 }
 
                 count++
-                if (count % 200 == 0) {
+                if (count % 150 == 0) {
                     onProgress("Распаковка: извлечено $count файлов...")
                 }
 
-                entry = tar.nextTarEntry
+                entry = tar.nextEntry
             }
         }
     }
@@ -99,13 +110,17 @@ class NdkExtractor {
                     FileOutputStream(outFile).use { output ->
                         zipIn.copyTo(output)
                     }
-                    if (outFile.name.endsWith("clang") || outFile.name.endsWith("clang++") || outFile.parentFile?.name == "bin") {
+                    if (outFile.name.endsWith("clang") ||
+                        outFile.name.endsWith("clang++") ||
+                        outFile.parentFile?.name == "bin" ||
+                        outFile.name == "ndk-build"
+                    ) {
                         outFile.setExecutable(true, false)
                     }
                 }
 
                 count++
-                if (count % 200 == 0) {
+                if (count % 150 == 0) {
                     onProgress("Распаковка: извлечено $count файлов...")
                 }
 
