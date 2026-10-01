@@ -54,6 +54,7 @@ fun BuildBottomSheet(
     onDismiss: () -> Unit,
     onJumpToCode: (Diagnostic) -> Unit,
     onApplyFix: ((Diagnostic) -> Unit)? = null,
+    onApplyAiFix: ((Diagnostic, String) -> Unit)? = null,
     onAskAi: ((Diagnostic) -> Unit)? = null,
     aiExplanations: Map<String, String> = emptyMap(),
     aiLoadingMap: Map<String, Boolean> = emptyMap()
@@ -174,6 +175,10 @@ fun BuildBottomSheet(
                                         onDismiss() // smooth contract sheet to view editor
                                     },
                                     onApplyFix = onApplyFix,
+                                    onApplyAiFix = { diag, code ->
+                                        onApplyAiFix?.invoke(diag, code)
+                                        onDismiss()
+                                    },
                                     onAskAi = onAskAi,
                                     aiExplanation = aiExplanations[diag.id],
                                     isAiLoading = aiLoadingMap[diag.id] ?: false,

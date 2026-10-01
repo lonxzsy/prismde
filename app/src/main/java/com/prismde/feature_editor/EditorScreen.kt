@@ -38,12 +38,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +78,8 @@ fun EditorScreen(
     var buildConfig by remember { mutableStateOf(BuildConfiguration()) }
     var showPresetDialog by remember { mutableStateOf(false) }
     var showProjectPicker by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    var aiApplyingMessage by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         floatingActionButton = {
@@ -240,6 +244,39 @@ fun EditorScreen(
                             modifier = Modifier.align(Alignment.TopCenter)
                         )
                     }
+
+                    // Floating banner when AI is applying code changes in real time
+                    val currentAiMsg = aiApplyingMessage
+                    if (currentAiMsg != null) {
+                        Card(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(12.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF6750A4),
+                                contentColor = Color.White
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = currentAiMsg,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -276,6 +313,72 @@ fun EditorScreen(
                     editor.text.insert(line, col, fix)
                     editorViewModel.saveActiveFile()
                 }
+            }
+        },
+        onApplyAiFix = { diagnostic, replacementCode ->
+            buildViewModel.hideBottomSheet()
+            editorViewModel.jumpToDiagnostic(diagnostic)
+            coroutineScope.launch {
+                val targetFile = java.io.File(diagnostic.filePath)
+                if (targetFile.exists() && targetFile != editorState.activeFile) {
+                    editorViewModel.openFile(targetFile)
+                    kotlinx.coroutines.delay(250)
+                }
+
+                val editor = codeEditorInstance ?: return@launch
+                val targetLine = (diagnostic.line - 1).coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+                val lineLen = editor.text.getColumnCount(targetLine)
+
+                // 1. Position cursor on target line & ensure visible
+                editor.jumpToLine(targetLine)
+                editor.setSelection(targetLine, lineLen)
+                editor.ensureSelectionVisible()
+                editor.requestFocus()
+
+                // 2. Real-time "Thinking.." display right on the line
+                aiApplyingMessage = "AI обдумывает исправление..."
+                val thinkingBase = " // 💭 Thinking"
+                editor.text.insert(targetLine, lineLen, "$thinkingBase.")
+                editor.setSelection(targetLine, editor.text.getColumnCount(targetLine))
+                editor.ensureSelectionVisible()
+
+                kotlinx.coroutines.delay(300)
+                var curLen = editor.text.getColumnCount(targetLine)
+                editor.text.replace(targetLine, lineLen, targetLine, curLen, "$thinkingBase..")
+                editor.setSelection(targetLine, editor.text.getColumnCount(targetLine))
+
+                kotlinx.coroutines.delay(350)
+                curLen = editor.text.getColumnCount(targetLine)
+                editor.text.replace(targetLine, lineLen, targetLine, curLen, "$thinkingBase...")
+                editor.setSelection(targetLine, editor.text.getColumnCount(targetLine))
+
+                kotlinx.coroutines.delay(450)
+
+                // 3. Clear line and stream-type replacement character-by-character in real time!
+                val currentLineTotal = editor.text.getColumnCount(targetLine)
+                editor.text.delete(targetLine, 0, targetLine, currentLineTotal)
+                editor.setSelection(targetLine, 0)
+
+                for (i in replacementCode.indices) {
+                    val charStr = replacementCode[i].toString()
+                    val col = editor.text.getColumnCount(targetLine)
+                    editor.text.insert(targetLine, col, charStr)
+                    editor.setSelection(targetLine, col + 1)
+                    if (i % 3 == 0) {
+                        editor.ensureSelectionVisible()
+                    }
+                    kotlinx.coroutines.delay(20)
+                }
+
+                editor.ensureSelectionVisible()
+
+                // 4. Save and finish
+                editorViewModel.updateContent(editor.text.toString())
+                editorViewModel.saveActiveFile()
+
+                aiApplyingMessage = "✔ Изменения AI успешно внесены!"
+                kotlinx.coroutines.delay(2500)
+                aiApplyingMessage = null
             }
         },
         onAskAi = { diagnostic ->

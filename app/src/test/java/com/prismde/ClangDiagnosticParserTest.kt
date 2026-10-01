@@ -3,6 +3,7 @@ package com.prismde
 import com.prismde.core.model.DiagnosticSeverity
 import com.prismde.feature_build.engine.ClangDiagnosticParser
 import com.prismde.feature_build.engine.HumanExplanationEngine
+import io.github.rosemoe.sora.text.Content
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull

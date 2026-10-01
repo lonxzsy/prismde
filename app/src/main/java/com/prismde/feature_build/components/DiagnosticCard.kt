@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.TipsAndUpdates
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,6 +64,7 @@ fun DiagnosticCard(
     diagnostic: Diagnostic,
     onJumpToCode: (Diagnostic) -> Unit,
     onApplyFix: ((Diagnostic) -> Unit)? = null,
+    onApplyAiFix: ((Diagnostic, String) -> Unit)? = null,
     onAskAi: ((Diagnostic) -> Unit)? = null,
     aiExplanation: String? = null,
     isAiLoading: Boolean = false,
@@ -322,26 +324,68 @@ fun DiagnosticCard(
 
             // AI Explanation result block
             AnimatedVisibility(visible = showAiResult && !aiExplanation.isNullOrBlank()) {
+                val fullAiText = aiExplanation ?: ""
+                val aiCodeFix = remember(fullAiText) { extractCodeFromAiResponse(fullAiText) }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 10.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (isDark) Color(0x33000000) else Color(0x15000000))
-                        .padding(10.dp)
+                        .padding(12.dp)
                 ) {
-                    Text(
-                        text = "Разбор AI ассистента:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = titleColor
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = iconColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Разбор AI ассистента:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = titleColor
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    // Formatted Markdown content (bold headers, inline code, code blocks)
+                    FormattedMarkdownText(
+                        markdown = fullAiText,
+                        titleColor = titleColor,
+                        textColor = textColor,
+                        isDark = isDark
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = aiExplanation ?: "",
-                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
-                        color = textColor
-                    )
+
+                    // Prominent Apply AI Fix Button
+                    if (!aiCodeFix.isNullOrBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Button(
+                            onClick = { onApplyAiFix?.invoke(diagnostic, aiCodeFix) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isDark) Color(0xFF6750A4) else MaterialTheme.colorScheme.primary,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoFixHigh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Применить решение AI в код",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }
