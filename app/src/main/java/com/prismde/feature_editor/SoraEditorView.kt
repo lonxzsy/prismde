@@ -2,6 +2,8 @@ package com.prismde.feature_editor
 
 import android.graphics.Typeface
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -9,6 +11,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import com.prismde.core.model.Diagnostic
 import com.prismde.feature_editor.language.PrismCodeLanguage
@@ -16,6 +20,7 @@ import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.widget.CodeEditor
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import io.github.rosemoe.sora.widget.schemes.SchemeDarcula
+import io.github.rosemoe.sora.widget.schemes.SchemeGitHub
 import java.io.File
 
 @Composable
@@ -28,8 +33,12 @@ fun SoraEditorView(
     modifier: Modifier = Modifier,
     onEditorReady: (CodeEditor) -> Unit = {}
 ) {
+    val m3ColorScheme = MaterialTheme.colorScheme
+    val isDark = m3ColorScheme.surface.luminance() < 0.5f
+
     var editorInstance by remember { mutableStateOf<CodeEditor?>(null) }
     var currentAttachedPath by remember { mutableStateOf<String?>(null) }
+    var lastAppliedDark by remember { mutableStateOf<Boolean?>(null) }
 
     AndroidView(
         modifier = modifier.fillMaxSize(),
@@ -40,20 +49,8 @@ fun SoraEditorView(
                 isLineNumberEnabled = true
                 isWordwrap = false
 
-                // Modern Expressive dark theme (One Dark / Material Dark)
-                val scheme = SchemeDarcula().apply {
-                    setColor(EditorColorScheme.ANNOTATION, 0xFFE5C07B.toInt())       // Gold #include / directives
-                    setColor(EditorColorScheme.KEYWORD, 0xFFC678DD.toInt())          // Purple keywords
-                    setColor(EditorColorScheme.FUNCTION_NAME, 0xFF61AFEF.toInt())    // Soft blue functions
-                    setColor(EditorColorScheme.LITERAL, 0xFF98C379.toInt())          // Fresh green strings/numbers
-                    setColor(EditorColorScheme.COMMENT, 0xFF7F848E.toInt())          // Muted slate comments
-                    setColor(EditorColorScheme.OPERATOR, 0xFF56B6C2.toInt())         // Cyan operators
-                    setColor(EditorColorScheme.TEXT_NORMAL, 0xFFABB2BF.toInt())      // Clean text
-                    setColor(EditorColorScheme.WHOLE_BACKGROUND, 0xFF1E1E2E.toInt()) // Deep Dark theme
-                    setColor(EditorColorScheme.LINE_NUMBER, 0xFF5C6370.toInt())
-                    setColor(EditorColorScheme.LINE_NUMBER_CURRENT, 0xFFE06C75.toInt())
-                }
-                colorScheme = scheme
+                colorScheme = buildEditorColorScheme(m3ColorScheme, isDark)
+                lastAppliedDark = isDark
 
                 // Set initial language based on file extension
                 setEditorLanguage(PrismCodeLanguage.forFile(file))
@@ -68,6 +65,12 @@ fun SoraEditorView(
             }
         },
         update = { editor ->
+            // Update color scheme if theme or luminance changed
+            if (lastAppliedDark != isDark) {
+                lastAppliedDark = isDark
+                editor.colorScheme = buildEditorColorScheme(m3ColorScheme, isDark)
+            }
+
             // Switch language if opened file changed
             if (file?.absolutePath != currentAttachedPath) {
                 currentAttachedPath = file?.absolutePath
@@ -98,5 +101,35 @@ fun SoraEditorView(
                 e.printStackTrace()
             }
         }
+    }
+}
+
+private fun buildEditorColorScheme(colorScheme: ColorScheme, isDark: Boolean): EditorColorScheme {
+    val base = if (isDark) SchemeDarcula() else SchemeGitHub()
+    return base.apply {
+        setColor(EditorColorScheme.WHOLE_BACKGROUND, colorScheme.surface.toArgb())
+        setColor(EditorColorScheme.TEXT_NORMAL, colorScheme.onSurface.toArgb())
+        setColor(EditorColorScheme.LINE_NUMBER, colorScheme.outline.copy(alpha = 0.65f).toArgb())
+        setColor(EditorColorScheme.LINE_NUMBER_CURRENT, colorScheme.primary.toArgb())
+        setColor(EditorColorScheme.LINE_DIVIDER, colorScheme.outlineVariant.copy(alpha = 0.4f).toArgb())
+        setColor(EditorColorScheme.CURRENT_LINE, colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.35f else 0.5f).toArgb())
+        setColor(EditorColorScheme.SELECTION_INSERT, colorScheme.primary.toArgb())
+        setColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND, colorScheme.primary.copy(alpha = 0.25f).toArgb())
+        setColor(EditorColorScheme.TEXT_SELECTED, colorScheme.onPrimaryContainer.toArgb())
+
+        // Syntax highlighting aligned with Material 3 tokens
+        setColor(EditorColorScheme.KEYWORD, colorScheme.primary.toArgb())
+        setColor(EditorColorScheme.ANNOTATION, colorScheme.tertiary.toArgb())
+        setColor(EditorColorScheme.FUNCTION_NAME, colorScheme.secondary.toArgb())
+        setColor(EditorColorScheme.COMMENT, colorScheme.outline.toArgb())
+        setColor(EditorColorScheme.OPERATOR, colorScheme.onSurfaceVariant.toArgb())
+
+        // Clear green for literals (strings, numbers)
+        val literalColor = if (isDark) 0xFF81C784.toInt() else 0xFF2E7D32.toInt()
+        setColor(EditorColorScheme.LITERAL, literalColor)
+
+        // Diagnostic squiggles
+        setColor(EditorColorScheme.PROBLEM_ERROR, colorScheme.error.toArgb())
+        setColor(EditorColorScheme.PROBLEM_WARNING, colorScheme.tertiary.toArgb())
     }
 }

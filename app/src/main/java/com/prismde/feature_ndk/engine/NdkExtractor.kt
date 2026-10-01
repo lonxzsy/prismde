@@ -130,15 +130,17 @@ class NdkExtractor {
                 } else if (entry.isSymbolicLink || entry.isLink) {
                     outFile.parentFile?.mkdirs()
                     val linkTarget = entry.linkName
-                    if (outFile.exists()) {
-                        outFile.delete()
-                    }
+                    try { outFile.delete() } catch (_: Throwable) {}
+                    try { android.system.Os.remove(outFile.absolutePath) } catch (_: Throwable) {}
                     var symlinkCreated = false
                     try {
                         android.system.Os.symlink(linkTarget, outFile.absolutePath)
                         symlinkCreated = true
-                    } catch (t: Throwable) {
-                        // Os.symlink might fail on non-Linux filesystem or if unsupported
+                    } catch (_: Throwable) {
+                        try {
+                            java.nio.file.Files.createSymbolicLink(outFile.toPath(), java.nio.file.Paths.get(linkTarget))
+                            symlinkCreated = true
+                        } catch (_: Throwable) {}
                     }
                     if (!symlinkCreated) {
                         deferredSymlinks.add(outFile to linkTarget)
@@ -168,8 +170,14 @@ class NdkExtractor {
 
         // Process any deferred symlinks (fallback copy if symlinks not supported on filesystem)
         for ((linkFile, targetPath) in deferredSymlinks) {
-            if (linkFile.exists()) continue
             try {
+                try { linkFile.delete() } catch (_: Throwable) {}
+                try { android.system.Os.remove(linkFile.absolutePath) } catch (_: Throwable) {}
+                try {
+                    android.system.Os.symlink(targetPath, linkFile.absolutePath)
+                    continue
+                } catch (_: Throwable) {}
+
                 val targetFile = if (File(targetPath).isAbsolute) {
                     File(targetPath)
                 } else {

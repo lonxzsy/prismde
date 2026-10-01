@@ -110,37 +110,36 @@ fun ProjectPickerBottomSheet(
                 .padding(bottom = 32.dp)
         ) {
             // Header
+            Text(
+                text = "Выбор проекта",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(Modifier.height(12.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "Выбор проекта",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                Button(
+                    onClick = { showCreateDialog = true },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Создать")
+                }
 
-                Row {
-                    OutlinedButton(
-                        onClick = { folderPickerLauncher.launch(null) },
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Из памяти")
-                    }
-
-                    Spacer(Modifier.width(8.dp))
-
-                    Button(
-                        onClick = { showCreateDialog = true },
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Создать")
-                    }
+                OutlinedButton(
+                    onClick = { folderPickerLauncher.launch(null) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Из памяти")
                 }
             }
 

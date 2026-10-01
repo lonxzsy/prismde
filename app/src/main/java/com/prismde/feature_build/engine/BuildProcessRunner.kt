@@ -96,18 +96,28 @@ class BuildProcessRunner {
         val ndkBuildScript = ndk.ndkBuildScript
         if (project.hasAndroidMk && ndkBuildScript != null && ndkBuildScript.exists()) {
             _events.emit(BuildOutputEvent.LogLine("Используется ndk-build с файлом Android.mk..."))
+            ndkBuildScript.setExecutable(true, false)
             val command = listOf(
+                "/system/bin/sh",
                 ndkBuildScript.absolutePath,
                 "NDK_PROJECT_PATH=${project.rootDir.absolutePath}",
                 "APP_ABI=${config.selectedAbi.abiString}",
                 "APP_PLATFORM=android-${config.minApiLevel}"
             )
-            executeProcess(command, project.rootDir)
+            executeProcess(command, project.rootDir, ndkBuildScript.parentFile)
             return if (targetSo.exists()) targetSo else libsDir.listFiles { _, name -> name.endsWith(".so") }?.firstOrNull()
         }
 
         // Direct Clang++ invocation
-        val clangPath = ndk.clangPlusExecutable?.absolutePath ?: "clang++"
+        val compilerFile = ndk.clangPlusExecutable ?: ndk.clangExecutable
+        if (compilerFile == null || !compilerFile.exists()) {
+            val effectiveDir = ndk.getEffectiveNdkDir()?.absolutePath ?: "не найдена"
+            _events.emit(BuildOutputEvent.LogLine("✖ Ошибка: Компилятор Clang++ не найден в NDK (директория: $effectiveDir).", isError = true))
+            _events.emit(BuildOutputEvent.LogLine("Пожалуйста, проверьте установку NDK во вкладке «Настройки» или выполните переустановку.", isError = true))
+            return null
+        }
+        compilerFile.setExecutable(true, false)
+        val clangPath = compilerFile.absolutePath
         val targetTriple = "${config.selectedAbi.triple}${config.minApiLevel}"
 
         val command = mutableListOf(
@@ -130,7 +140,7 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine("Выполнение команды Clang++:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, project.rootDir)
+        val success = executeProcess(command, project.rootDir, compilerFile.parentFile)
         return if (success && targetSo.exists()) targetSo else null
     }
 
@@ -179,7 +189,15 @@ class BuildProcessRunner {
             return null
         }
 
-        val clangPath = ndk.clangPlusExecutable?.absolutePath ?: "clang++"
+        val compilerFile = ndk.clangPlusExecutable ?: ndk.clangExecutable
+        if (compilerFile == null || !compilerFile.exists()) {
+            val effectiveDir = ndk.getEffectiveNdkDir()?.absolutePath ?: "не найдена"
+            _events.emit(BuildOutputEvent.LogLine("✖ Ошибка: Компилятор Clang++ не найден в NDK (директория: $effectiveDir).", isError = true))
+            _events.emit(BuildOutputEvent.LogLine("Пожалуйста, проверьте установку NDK во вкладке «Настройки» или выполните переустановку.", isError = true))
+            return null
+        }
+        compilerFile.setExecutable(true, false)
+        val clangPath = compilerFile.absolutePath
         val targetTriple = "${config.selectedAbi.triple}${config.minApiLevel}"
 
         val command = mutableListOf(
@@ -197,15 +215,32 @@ class BuildProcessRunner {
         command.add(targetExe.absolutePath)
         command.addAll(config.customLdFlags.split(" ").filter { it.isNotBlank() })
 
-        val success = executeProcess(command, project.rootDir)
+        _events.emit(BuildOutputEvent.LogLine("Выполнение команды Clang++:"))
+        _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
+
+        val success = executeProcess(command, project.rootDir, compilerFile.parentFile)
         return if (success && targetExe.exists()) targetExe else null
     }
 
-    private suspend fun executeProcess(command: List<String>, workingDir: File): Boolean {
+    private suspend fun executeProcess(
+        command: List<String>,
+        workingDir: File,
+        extraBinDir: File? = null
+    ): Boolean {
         return try {
             val processBuilder = ProcessBuilder(command)
                 .directory(workingDir)
                 .redirectErrorStream(false)
+
+            val env = processBuilder.environment()
+            val existingPath = env["PATH"] ?: "/system/bin"
+            if (extraBinDir != null && extraBinDir.exists()) {
+                env["PATH"] = "${extraBinDir.absolutePath}:$existingPath"
+            }
+            val tempDir = File(workingDir, ".prism_tmp").also { it.mkdirs() }
+            env["TMPDIR"] = tempDir.absolutePath
+            env["TEMP"] = tempDir.absolutePath
+            env["HOME"] = workingDir.absolutePath
 
             val process = processBuilder.start()
 

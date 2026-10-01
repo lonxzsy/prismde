@@ -14,44 +14,119 @@ data class NdkVersion(
     val installPath: String? = null
 ) {
     val clangExecutable: File?
-        get() = installPath?.let {
-            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
-            val candidates = listOf(
-                File(resolved, "toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
-                File(resolved, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang"),
-                File(resolved, "bin/clang")
-            )
-            candidates.firstOrNull { f -> f.exists() }
-        }
+        get() = resolveCompilerBinary(isPlusPlus = false)
 
     val clangPlusExecutable: File?
-        get() = installPath?.let {
-            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
-            val candidates = listOf(
-                File(resolved, "toolchains/llvm/prebuilt/linux-arm64/bin/clang++"),
-                File(resolved, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang++"),
-                File(resolved, "bin/clang++")
-            )
-            candidates.firstOrNull { f -> f.exists() }
-        }
+        get() = resolveCompilerBinary(isPlusPlus = true)
 
     val cmakeToolchainFile: File?
-        get() = installPath?.let {
-            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
-            val f1 = File(resolved, "build/cmake/android.toolchain.cmake")
-            if (f1.exists()) f1 else null
+        get() = getEffectiveNdkDir()?.let { root ->
+            val candidates = listOf(
+                File(root, "build/cmake/android.toolchain.cmake"),
+                File(root, "android-ndk-aide/build/cmake/android.toolchain.cmake")
+            )
+            candidates.firstOrNull { it.exists() }
         }
 
     val ndkBuildScript: File?
-        get() = installPath?.let {
-            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
+        get() = getEffectiveNdkDir()?.let { root ->
             val candidates = listOf(
-                File(resolved, "ndk-build"),
-                File(resolved, "build/ndk-build"),
-                File(resolved, "ndk-build-android")
+                File(root, "ndk-build"),
+                File(root, "build/ndk-build"),
+                File(root, "ndk-build-android")
             )
-            candidates.firstOrNull { f -> f.exists() }
+            val found = candidates.firstOrNull { it.exists() }
+            found?.setExecutable(true, false)
+            found
         }
+
+    fun getEffectiveNdkDir(): File? {
+        val path = installPath
+        if (path != null) {
+            val f = File(path)
+            if (f.exists()) {
+                val aide = File(f, "android-ndk-aide")
+                return if (aide.exists()) aide else f
+            }
+        }
+        val fallbackPaths = listOf(
+            "/data/user/0/com.prismde/files/ndk/$versionTag/android-ndk-aide",
+            "/data/user/0/com.prismde/files/ndk/$versionTag",
+            "/data/data/com.prismde/files/ndk/$versionTag/android-ndk-aide",
+            "/data/data/com.prismde/files/ndk/$versionTag"
+        )
+        for (fb in fallbackPaths) {
+            val f = File(fb)
+            if (f.exists()) return f
+        }
+        return null
+    }
+
+    private fun resolveCompilerBinary(isPlusPlus: Boolean): File? {
+        val rootDir = getEffectiveNdkDir() ?: return null
+
+        val binDirs = listOf(
+            File(rootDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
+            File(rootDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
+            File(rootDir, "toolchains/llvm/prebuilt/linux-x86_64/bin"),
+            File(rootDir, "bin")
+        )
+
+        for (binDir in binDirs) {
+            if (!binDir.exists() || !binDir.isDirectory) continue
+
+            // Ensure companion tools in binDir have executable permissions
+            try {
+                binDir.listFiles()?.forEach { file ->
+                    if (file.isFile && !file.canExecute()) {
+                        file.setExecutable(true, false)
+                    }
+                }
+            } catch (_: Throwable) {}
+
+            val primaryTarget = if (isPlusPlus) File(binDir, "clang++") else File(binDir, "clang")
+            if (primaryTarget.exists() && primaryTarget.isFile) {
+                primaryTarget.setExecutable(true, false)
+                return primaryTarget
+            }
+
+            // Fallback candidates: clang-21, clang-17, clang
+            val fallbackCandidates = listOf(
+                File(binDir, "clang-21"),
+                File(binDir, "clang-17"),
+                File(binDir, "clang"),
+                File(binDir, "clang++")
+            )
+            val existingFallback = fallbackCandidates.firstOrNull { it.exists() && it.isFile && it.length() > 1000L }
+            if (existingFallback != null) {
+                existingFallback.setExecutable(true, false)
+                if (!primaryTarget.exists()) {
+                    try {
+                        android.system.Os.symlink(existingFallback.name, primaryTarget.absolutePath)
+                    } catch (_: Throwable) {
+                        try {
+                            existingFallback.copyTo(primaryTarget, overwrite = true)
+                        } catch (_: Throwable) {}
+                    }
+                }
+                if (primaryTarget.exists()) {
+                    primaryTarget.setExecutable(true, false)
+                    return primaryTarget
+                }
+                return existingFallback
+            }
+        }
+
+        // Recursive search if bin directory structure was relocated
+        val found = rootDir.walkTopDown().maxDepth(6).firstOrNull { f ->
+            f.isFile && (
+                (isPlusPlus && (f.name == "clang++" || f.name.endsWith("-clang++"))) ||
+                (!isPlusPlus && (f.name == "clang" || f.name.startsWith("clang-")))
+            )
+        }
+        found?.setExecutable(true, false)
+        return found
+    }
 }
 
 object DefaultNdkCatalog {
