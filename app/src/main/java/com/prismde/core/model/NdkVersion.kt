@@ -15,26 +15,42 @@ data class NdkVersion(
 ) {
     val clangExecutable: File?
         get() = installPath?.let {
-            val f1 = File(it, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang")
-            if (f1.exists()) f1 else File(it, "bin/clang")
+            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
+            val candidates = listOf(
+                File(resolved, "toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
+                File(resolved, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang"),
+                File(resolved, "bin/clang")
+            )
+            candidates.firstOrNull { f -> f.exists() }
         }
 
     val clangPlusExecutable: File?
         get() = installPath?.let {
-            val f1 = File(it, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang++")
-            if (f1.exists()) f1 else File(it, "bin/clang++")
+            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
+            val candidates = listOf(
+                File(resolved, "toolchains/llvm/prebuilt/linux-arm64/bin/clang++"),
+                File(resolved, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang++"),
+                File(resolved, "bin/clang++")
+            )
+            candidates.firstOrNull { f -> f.exists() }
         }
 
     val cmakeToolchainFile: File?
         get() = installPath?.let {
-            val f1 = File(it, "build/cmake/android.toolchain.cmake")
+            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
+            val f1 = File(resolved, "build/cmake/android.toolchain.cmake")
             if (f1.exists()) f1 else null
         }
 
     val ndkBuildScript: File?
         get() = installPath?.let {
-            val f1 = File(it, "ndk-build")
-            if (f1.exists()) f1 else null
+            val resolved = if (File(it, "android-ndk-aide").exists()) File(it, "android-ndk-aide") else File(it)
+            val candidates = listOf(
+                File(resolved, "ndk-build"),
+                File(resolved, "build/ndk-build"),
+                File(resolved, "ndk-build-android")
+            )
+            candidates.firstOrNull { f -> f.exists() }
         }
 }
 

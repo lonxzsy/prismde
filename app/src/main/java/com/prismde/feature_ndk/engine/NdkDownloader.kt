@@ -15,7 +15,26 @@ class NdkDownloader(private val client: OkHttpClient) {
         destinationFile: File,
         onProgress: (bytesDownloaded: Long, totalBytes: Long, percent: Float, speedBytesPerSec: Long) -> Unit
     ) = withContext(Dispatchers.IO) {
-        val existingLength = if (destinationFile.exists()) destinationFile.length() else 0L
+        try {
+            downloadInternal(url, destinationFile, allowResume = true, onProgress = onProgress)
+        } catch (e: Exception) {
+            // If Range was not satisfiable (HTTP 416) or corrupted resume, delete and retry fresh
+            if (e.message?.contains("416") == true || destinationFile.exists()) {
+                destinationFile.delete()
+                downloadInternal(url, destinationFile, allowResume = false, onProgress = onProgress)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun downloadInternal(
+        url: String,
+        destinationFile: File,
+        allowResume: Boolean,
+        onProgress: (bytesDownloaded: Long, totalBytes: Long, percent: Float, speedBytesPerSec: Long) -> Unit
+    ) {
+        val existingLength = if (allowResume && destinationFile.exists()) destinationFile.length() else 0L
 
         val request = Request.Builder()
             .url(url)
@@ -27,19 +46,27 @@ class NdkDownloader(private val client: OkHttpClient) {
             .build()
 
         client.newCall(request).execute().use { response ->
+            if (response.code == 416) {
+                throw IOException("HTTP 416 Range Not Satisfiable")
+            }
+
             if (!response.isSuccessful && response.code != 206) {
                 throw IOException("Download failed with HTTP ${response.code}: ${response.message}")
             }
 
             val body = response.body ?: throw IOException("Empty response body from $url")
             val isPartial = response.code == 206
-            val totalBytes = (if (isPartial) existingLength else 0L) + body.contentLength()
-            var currentBytes = if (isPartial) existingLength else 0L
+
+            // If server returned 200 instead of 206, it ignored Range, so start from 0
+            val startOffset = if (isPartial) existingLength else 0L
+            val totalBytes = startOffset + body.contentLength()
+            var currentBytes = startOffset
 
             var lastTime = System.currentTimeMillis()
             var bytesSinceLastTime = 0L
             var currentSpeed = 0L
 
+            destinationFile.parentFile?.mkdirs()
             FileOutputStream(destinationFile, isPartial).use { output ->
                 val buffer = ByteArray(64 * 1024)
                 val source = body.byteStream()

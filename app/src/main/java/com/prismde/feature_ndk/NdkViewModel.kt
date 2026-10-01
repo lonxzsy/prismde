@@ -61,7 +61,7 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
             val validation = NdkValidator.validate(installDir)
             version.copy(
                 isInstalled = validation.isValid,
-                installPath = if (validation.isValid) installDir.absolutePath else null
+                installPath = if (validation.isValid) (validation.actualNdkDir ?: installDir).absolutePath else null
             )
         }
         _uiState.value = _uiState.value.copy(versions = list)
@@ -77,7 +77,13 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         viewModelScope.launch {
-            val archiveFile = File(context.cacheDir, "ndk_${ndk.versionTag}.tar.xz")
+            val extension = when {
+                ndk.downloadUrl.contains(".tar.gz") || ndk.downloadUrl.contains(".tgz") -> "tar.gz"
+                ndk.downloadUrl.contains(".tar.xz") -> "tar.xz"
+                ndk.downloadUrl.contains(".zip") -> "zip"
+                else -> "tar.gz"
+            }
+            val archiveFile = File(context.cacheDir, "ndk_${ndk.versionTag}.$extension")
             val targetDir = File(ndkStorageDir, ndk.versionTag)
 
             try {
@@ -109,12 +115,15 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
                         statusMessage = "NDK ${ndk.versionTag} успешно установлен и активирован!"
                     )
                 } else {
+                    archiveFile.delete()
+                    targetDir.deleteRecursively()
                     _uiState.value = _uiState.value.copy(
                         downloadingTag = null,
-                        statusMessage = "Ошибка при распаковке архива."
+                        statusMessage = "Ошибка при распаковке архива. Пожалуйста, попробуйте снова."
                     )
                 }
             } catch (e: Exception) {
+                archiveFile.delete()
                 _uiState.value = _uiState.value.copy(
                     downloadingTag = null,
                     statusMessage = "Ошибка загрузки: ${e.message}"
