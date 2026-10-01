@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Prism triangle logo -->
+    <path
+        android:fillColor="#D0BCFF"
+        android:pathData="M54,28L28,74L80,74Z" />
+    <path
+        android:fillColor="#EADDFF"
+        android:pathData="M54,28L54,74L80,74Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,50L40,58L48,66"
+        android:strokeColor="#381E72"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,50L68,58L60,66"
+        android:strokeColor="#381E72"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

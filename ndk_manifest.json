@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "default_version": "r26c",
+  "releases": [
+    {
+      "tag": "r27",
+      "name": "Android NDK r27 (Latest)",
+      "llvm_version": "Clang 18.0.1",
+      "url": "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/android-ndk-r27-aarch64.tar.xz",
+      "size_bytes": 430000000,
+      "sha256": ""
+    },
+    {
+      "tag": "r26c",
+      "name": "Android NDK r26c (LTS - Recommended)",
+      "llvm_version": "Clang 17.0.2",
+      "url": "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/android-ndk-r26c-aarch64.tar.xz",
+      "size_bytes": 385000000,
+      "sha256": ""
+    },
+    {
+      "tag": "r25c",
+      "name": "Android NDK r25c (LTS)",
+      "llvm_version": "Clang 14.0.7",
+      "url": "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/android-ndk-r25c-aarch64.tar.xz",
+      "size_bytes": 350000000,
+      "sha256": ""
+    },
+    {
+      "tag": "r23c",
+      "name": "Android NDK r23c (Legacy)",
+      "llvm_version": "Clang 12.0.8",
+      "url": "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/android-ndk-r23c-aarch64.tar.xz",
+      "size_bytes": 310000000,
+      "sha256": ""
+    }
+  ]
+}

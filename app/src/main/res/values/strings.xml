@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">PrismDE</string>
+    <string name="editor">Редактор</string>
+    <string name="files">Файлы</string>
+    <string name="build">Сборка</string>
+    <string name="settings">Настройки</string>
+    <string name="ndk_manager">Менеджер NDK</string>
+    <string name="terminal">Терминал</string>
+</resources>
