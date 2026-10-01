@@ -18,8 +18,8 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.TipsAndUpdates
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ButtonDefaults
@@ -208,9 +208,9 @@ fun DiagnosticCard(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Rounded.Lightbulb,
+                            imageVector = Icons.Rounded.TipsAndUpdates,
                             contentDescription = null,
-                            tint = if (isDark) Color(0xFFFFD54F) else Color(0xFFF57F17),
+                            tint = titleColor,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(6.dp))

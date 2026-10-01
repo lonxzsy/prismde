@@ -49,6 +49,26 @@ fun SoraEditorView(
                 isLineNumberEnabled = true
                 isWordwrap = false
 
+                // Sleek, thin scrollbar configuration
+                val density = context.resources.displayMetrics.density
+                scrollBarSize = (density * 3.5f).toInt().coerceAtLeast(6)
+                isScrollbarFadingEnabled = true
+                scrollBarFadeDuration = 300
+                scrollBarDefaultDelayBeforeFade = 1200
+
+                val thumbColor = if (isDark) {
+                    android.graphics.Color.argb(110, 220, 220, 235)
+                } else {
+                    android.graphics.Color.argb(100, 70, 70, 85)
+                }
+                val thumbDrawable = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    setColor(thumbColor)
+                    cornerRadius = density * 2f
+                }
+                verticalScrollbarThumbDrawable = thumbDrawable
+                horizontalScrollbarThumbDrawable = thumbDrawable
+
                 colorScheme = buildEditorColorScheme(m3ColorScheme, isDark)
                 lastAppliedDark = isDark
 
@@ -65,10 +85,24 @@ fun SoraEditorView(
             }
         },
         update = { editor ->
-            // Update color scheme if theme or luminance changed
+            // Update color scheme and scrollbars if theme or luminance changed
             if (lastAppliedDark != isDark) {
                 lastAppliedDark = isDark
                 editor.colorScheme = buildEditorColorScheme(m3ColorScheme, isDark)
+
+                val density = editor.context.resources.displayMetrics.density
+                val thumbColor = if (isDark) {
+                    android.graphics.Color.argb(110, 220, 220, 235)
+                } else {
+                    android.graphics.Color.argb(100, 70, 70, 85)
+                }
+                val thumbDrawable = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    setColor(thumbColor)
+                    cornerRadius = density * 2f
+                }
+                editor.verticalScrollbarThumbDrawable = thumbDrawable
+                editor.horizontalScrollbarThumbDrawable = thumbDrawable
             }
 
             // Switch language if opened file changed

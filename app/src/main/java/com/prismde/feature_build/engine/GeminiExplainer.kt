@@ -12,17 +12,29 @@ import org.json.JSONObject
 
 class GeminiExplainer(private val client: OkHttpClient) {
 
+    // Priority models list: modern 2.x and 1.5 variants. If a model returns 404, fallback to next.
+    private val candidateModels = listOf(
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-2.5-pro",
+        "gemini-1.5-pro",
+        "gemini-pro"
+    )
+
     suspend fun explainDiagnostic(
         diagnostic: Diagnostic,
         sourceCodeContext: String,
         apiKey: String
     ): Result<String> = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("Gemini API key is not configured in Settings."))
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Ключ Gemini API не настроен в Настройках."))
         }
 
         val prompt = """
-            Ты эксперт по разработке на C/C++ и Android NDK.
+            Ты эксперт по разработке на C/C++ и Android NDK в мобильной IDE PrismDE.
             Помоги разработчику исправить ошибку компилятора:
             
             Файл: ${diagnostic.filePath}
@@ -35,7 +47,7 @@ class GeminiExplainer(private val client: OkHttpClient) {
             $sourceCodeContext
             ```
             
-            Ответь кратко, на чистом русском языке:
+            Ответь кратко, профессионально, на чистом русском языке:
             1. В чем точная причина ошибки.
             2. Конкретный код исправления (без лишней воды).
         """.trimIndent()
@@ -54,35 +66,60 @@ class GeminiExplainer(private val client: OkHttpClient) {
             put("contents", contents)
         }
 
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
-        val request = Request.Builder()
-            .url(url)
-            .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
-            .build()
+        val mediaType = "application/json".toMediaType()
+        var lastErrorMsg = "Не удалось связаться с Gemini API."
 
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        Exception("Gemini API returned code ${response.code}: ${response.message}")
-                    )
+        for (model in candidateModels) {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey"
+            val request = Request.Builder()
+                .url(url)
+                .post(jsonBody.toString().toRequestBody(mediaType))
+                .build()
+
+            try {
+                val callResult = client.newCall(request).execute().use { response ->
+                    val responseStr = response.body?.string() ?: ""
+
+                    if (response.isSuccessful) {
+                        val responseJson = JSONObject(responseStr)
+                        val candidates = responseJson.optJSONArray("candidates")
+                        if (candidates != null && candidates.length() > 0) {
+                            val firstCandidate = candidates.getJSONObject(0)
+                            val content = firstCandidate.getJSONObject("content")
+                            val parts = content.getJSONArray("parts")
+                            val text = parts.getJSONObject(0).getString("text")
+                            return@use Result.success(text)
+                        } else {
+                            return@use Result.failure(Exception("Пустой ответ от модели ($model)."))
+                        }
+                    }
+
+                    // Parse Google's error response body
+                    val errorDetail = try {
+                        val errObj = JSONObject(responseStr).optJSONObject("error")
+                        errObj?.optString("message") ?: responseStr
+                    } catch (_: Exception) {
+                        responseStr.ifBlank { response.message }
+                    }
+
+                    lastErrorMsg = "Gemini ($model, HTTP ${response.code}): $errorDetail"
+
+                    // If 404 (model not found / deprecated for this tier), continue to next model
+                    if (response.code == 404) {
+                        null
+                    } else {
+                        Result.failure(Exception(lastErrorMsg))
+                    }
                 }
 
-                val responseStr = response.body?.string() ?: ""
-                val responseJson = JSONObject(responseStr)
-                val candidates = responseJson.optJSONArray("candidates")
-                if (candidates != null && candidates.length() > 0) {
-                    val firstCandidate = candidates.getJSONObject(0)
-                    val content = firstCandidate.getJSONObject("content")
-                    val parts = content.getJSONArray("parts")
-                    val text = parts.getJSONObject(0).getString("text")
-                    Result.success(text)
-                } else {
-                    Result.failure(Exception("Пустой ответ от модели."))
+                if (callResult != null) {
+                    return@withContext callResult
                 }
+            } catch (e: Exception) {
+                lastErrorMsg = "Ошибка сети при обращении к $model: ${e.message}"
             }
-        } catch (e: Exception) {
-            Result.failure(e)
         }
+
+        Result.failure(Exception(lastErrorMsg))
     }
 }
