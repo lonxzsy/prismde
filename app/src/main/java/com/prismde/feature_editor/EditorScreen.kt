@@ -22,12 +22,23 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -219,6 +230,16 @@ fun EditorScreen(
                             codeEditorInstance = editor
                         }
                     )
+
+                    // Floating animated banner indicating the exact line & symbol
+                    val jumpTarget = editorState.targetJumpDiagnostic
+                    if (jumpTarget != null) {
+                        JumpDiagnosticBanner(
+                            jumpTarget = jumpTarget,
+                            onDismiss = { editorViewModel.clearJump() },
+                            modifier = Modifier.align(Alignment.TopCenter)
+                        )
+                    }
                 }
             }
 
@@ -243,6 +264,7 @@ fun EditorScreen(
         logs = buildState.logs,
         onDismiss = { buildViewModel.hideBottomSheet() },
         onJumpToCode = { diagnostic ->
+            buildViewModel.hideBottomSheet()
             editorViewModel.jumpToDiagnostic(diagnostic)
         },
         onApplyFix = { diagnostic ->
@@ -297,5 +319,65 @@ fun EditorScreen(
             },
             onDismiss = { showProjectPicker = false }
         )
+    }
+}
+
+@Composable
+private fun JumpDiagnosticBanner(
+    jumpTarget: com.prismde.core.model.Diagnostic,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isVisible by remember(jumpTarget) { mutableStateOf(true) }
+
+    LaunchedEffect(jumpTarget) {
+        kotlinx.coroutines.delay(4000)
+        isVisible = false
+        onDismiss()
+    }
+
+    AnimatedVisibility(
+        visible = isVisible,
+        enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+        modifier = modifier.padding(12.dp)
+    ) {
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFFD32F2F),
+                contentColor = Color.White
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ErrorOutline,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Строка ${jumpTarget.line}, символ ${jumpTarget.column}: ${jumpTarget.humanTitle}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Закрыть",
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            isVisible = false
+                            onDismiss()
+                        }
+                )
+            }
+        }
     }
 }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.Diagnostic
+import com.prismde.core.model.DiagnosticSeverity
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
 import com.prismde.feature_build.engine.BuildOutputEvent
@@ -48,14 +49,25 @@ class BuildViewModel : ViewModel() {
                     }
                     is BuildOutputEvent.DiagnosticFound -> {
                         val current = _uiState.value.diagnostics.toMutableList()
-                        // Replace or append
-                        val existingIndex = current.indexOfFirst { it.filePath == event.diagnostic.filePath && it.line == event.diagnostic.line }
+                        val existingIndex = current.indexOfFirst { 
+                            it.id == event.diagnostic.id || 
+                            (it.filePath == event.diagnostic.filePath && it.line == event.diagnostic.line && it.column == event.diagnostic.column && it.severity == event.diagnostic.severity)
+                        }
                         if (existingIndex >= 0) {
                             current[existingIndex] = event.diagnostic
                         } else {
                             current.add(event.diagnostic)
                         }
-                        _uiState.value = _uiState.value.copy(diagnostics = current)
+                        // Sort so errors appear first, then warnings, then notes
+                        val sorted = current.sortedBy { diag ->
+                            when (diag.severity) {
+                                DiagnosticSeverity.FATAL -> 0
+                                DiagnosticSeverity.ERROR -> 1
+                                DiagnosticSeverity.WARNING -> 2
+                                DiagnosticSeverity.NOTE -> 3
+                            }
+                        }
+                        _uiState.value = _uiState.value.copy(diagnostics = sorted)
                     }
                     is BuildOutputEvent.Completed -> {
                         _uiState.value = _uiState.value.copy(

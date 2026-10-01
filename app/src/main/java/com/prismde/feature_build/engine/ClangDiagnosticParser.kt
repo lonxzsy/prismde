@@ -52,7 +52,7 @@ class ClangDiagnosticParser {
             else -> DiagnosticSeverity.ERROR
         }
 
-        val (title, explanation, defaultFix) = HumanExplanationEngine.explain(rawMsg)
+        val result = HumanExplanationEngine.explain(rawMsg, severity)
 
         val diagnostic = Diagnostic(
             filePath = filePath,
@@ -60,9 +60,10 @@ class ClangDiagnosticParser {
             column = colStr.toIntOrNull() ?: 1,
             severity = severity,
             rawMessage = rawMsg,
-            humanTitle = title,
-            humanExplanation = explanation,
-            suggestedFix = defaultFix
+            humanTitle = result.title,
+            humanExplanation = result.explanation,
+            offlineHint = result.offlineHint,
+            suggestedFix = result.suggestedFix
         )
 
         lastDiagnostic = diagnostic

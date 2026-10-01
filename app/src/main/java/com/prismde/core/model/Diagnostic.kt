@@ -18,6 +18,7 @@ data class Diagnostic(
     val rawMessage: String,
     val humanTitle: String,
     val humanExplanation: String,
+    val offlineHint: String? = null,
     val suggestedFix: String? = null,
     val fixRange: DiagnosticRange? = null
 )

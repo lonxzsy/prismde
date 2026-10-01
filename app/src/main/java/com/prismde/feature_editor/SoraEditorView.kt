@@ -84,7 +84,7 @@ fun SoraEditorView(
         }
     )
 
-    // Handle single-tap jump to line and column from compiler diagnostics!
+    // Handle single-tap jump to exact line and column with glowing red pulse animation!
     LaunchedEffect(targetJumpDiagnostic) {
         val target = targetJumpDiagnostic ?: return@LaunchedEffect
         editorInstance?.let { editor ->
@@ -94,8 +94,42 @@ fun SoraEditorView(
                 if (targetLine < editor.lineCount) {
                     val lineLength = editor.text.getColumnCount(targetLine)
                     val safeCol = targetCol.coerceIn(0, lineLength)
-                    editor.setSelection(targetLine, safeCol)
+
+                    // Position cursor or select character at targetCol
+                    if (safeCol < lineLength) {
+                        val endCol = (safeCol + 1).coerceAtMost(lineLength)
+                        editor.setSelectionRegion(targetLine, safeCol, targetLine, endCol)
+                    } else {
+                        editor.setSelection(targetLine, safeCol)
+                    }
+
+                    // Jump vertically and ensure both row AND column are horizontally scrolled into view
                     editor.jumpToLine(targetLine)
+                    editor.ensureSelectionVisible()
+                    editor.requestFocus()
+
+                    // Animate red blinking for ~2.5 seconds to clearly indicate the problem location
+                    val originalCurrentLine = editor.colorScheme.getColor(EditorColorScheme.CURRENT_LINE)
+                    val originalSelectedBg = editor.colorScheme.getColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND)
+                    val pulseRedLine = android.graphics.Color.argb(160, 239, 83, 80) // Translucent glowing red
+                    val pulseRedSelection = android.graphics.Color.argb(230, 244, 67, 54) // Bright red highlight
+
+                    try {
+                        repeat(5) {
+                            editor.colorScheme.setColor(EditorColorScheme.CURRENT_LINE, pulseRedLine)
+                            editor.colorScheme.setColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND, pulseRedSelection)
+                            editor.postInvalidate()
+                            kotlinx.coroutines.delay(260)
+                            editor.colorScheme.setColor(EditorColorScheme.CURRENT_LINE, originalCurrentLine)
+                            editor.colorScheme.setColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND, originalSelectedBg)
+                            editor.postInvalidate()
+                            kotlinx.coroutines.delay(200)
+                        }
+                    } finally {
+                        editor.colorScheme.setColor(EditorColorScheme.CURRENT_LINE, originalCurrentLine)
+                        editor.colorScheme.setColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND, originalSelectedBg)
+                        editor.postInvalidate()
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
