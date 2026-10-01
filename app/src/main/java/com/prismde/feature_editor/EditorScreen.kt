@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,7 +17,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.FolderSpecial
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,14 +69,7 @@ fun EditorScreen(
     Scaffold(
         floatingActionButton = {
             EditorFloatingBar(
-                isBuilding = buildState.isBuilding,
-                onBuildClick = {
-                    val project = editorState.currentProject
-                    if (project != null) {
-                        editorViewModel.saveActiveFile()
-                        buildViewModel.startBuild(project, activeNdk, buildConfig)
-                    }
-                },
+                isModified = editorState.isModified,
                 onSaveClick = { editorViewModel.saveActiveFile() },
                 onUndoClick = { codeEditorInstance?.undo() },
                 onRedoClick = { codeEditorInstance?.redo() }
@@ -84,7 +82,7 @@ fun EditorScreen(
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // Top Bar with Project Switcher & Build Presets
+            // Top Bar with Project Switcher & Build Actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -121,15 +119,64 @@ fun EditorScreen(
                     )
                 }
 
-                IconButton(
-                    onClick = { showPresetDialog = true }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        Icons.Rounded.Tune,
-                        contentDescription = "Параметры сборки",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // Top Bar "Собрать" Button
+                    Button(
+                        onClick = {
+                            val project = editorState.currentProject
+                            if (project != null) {
+                                editorViewModel.saveActiveFile()
+                                buildViewModel.startBuild(project, activeNdk, buildConfig)
+                            }
+                        },
+                        enabled = !buildState.isBuilding,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        if (buildState.isBuilding) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Сборка...",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = "Собрать",
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Собрать",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { showPresetDialog = true }
+                    ) {
+                        Icon(
+                            Icons.Rounded.Tune,
+                            contentDescription = "Параметры сборки",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -137,6 +184,7 @@ fun EditorScreen(
             EditorTabs(
                 openFiles = editorState.openFiles,
                 activeFile = editorState.activeFile,
+                modifiedFiles = editorState.modifiedFiles,
                 onSelectFile = { editorViewModel.openFile(it) },
                 onCloseFile = { editorViewModel.closeFile(it) }
             )

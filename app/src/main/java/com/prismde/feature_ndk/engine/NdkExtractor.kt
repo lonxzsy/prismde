@@ -63,6 +63,8 @@ class NdkExtractor {
                     throw IllegalArgumentException("Неизвестный или неподдерживаемый формат архива: ${archiveFile.name}")
                 }
             }
+            onProgress("Настройка прав доступа к файлам компилятора...")
+            com.prismde.core.model.NdkVersion.ensureNdkPermissions(targetDir)
             true
         } catch (e: Exception) {
             e.printStackTrace()

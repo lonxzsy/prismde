@@ -27,6 +27,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.io.File
@@ -35,6 +41,7 @@ import java.io.File
 fun EditorTabs(
     openFiles: List<File>,
     activeFile: File?,
+    modifiedFiles: Set<File> = emptySet(),
     onSelectFile: (File) -> Unit,
     onCloseFile: (File) -> Unit,
     modifier: Modifier = Modifier
@@ -86,6 +93,19 @@ fun EditorTabs(
                         fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                         color = textColor
                     )
+                    val isFileModified = file in modifiedFiles
+                    AnimatedVisibility(
+                        visible = isFileModified,
+                        enter = fadeIn(animationSpec = tween(220)) + scaleIn(animationSpec = tween(220)),
+                        exit = fadeOut(animationSpec = tween(220)) + scaleOut(animationSpec = tween(220))
+                    ) {
+                        Text(
+                            text = " *",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
                     Spacer(Modifier.width(4.dp))
                     IconButton(
                         onClick = { onCloseFile(file) },

@@ -15,6 +15,7 @@ data class EditorUiState(
     val openFiles: List<File> = emptyList(),
     val activeFile: File? = null,
     val activeContent: String = "",
+    val modifiedFiles: Set<File> = emptySet(),
     val isModified: Boolean = false,
     val targetJumpDiagnostic: Diagnostic? = null
 )
@@ -25,6 +26,7 @@ class EditorViewModel : ViewModel() {
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
     private val fileContentCache = mutableMapOf<File, String>()
+    private val fileSavedContent = mutableMapOf<File, String>()
 
     fun setProject(project: Project) {
         _uiState.value = _uiState.value.copy(currentProject = project)
@@ -42,12 +44,17 @@ class EditorViewModel : ViewModel() {
             "// Ошибка чтения файла: ${e.message}"
         }
         fileContentCache[file] = content
+        if (!fileSavedContent.containsKey(file)) {
+            fileSavedContent[file] = content
+        }
+
+        val isFileModified = file in _uiState.value.modifiedFiles
 
         _uiState.value = _uiState.value.copy(
             openFiles = currentOpen,
             activeFile = file,
             activeContent = content,
-            isModified = false
+            isModified = isFileModified
         )
     }
 
@@ -55,6 +62,8 @@ class EditorViewModel : ViewModel() {
         val currentOpen = _uiState.value.openFiles.toMutableList()
         currentOpen.remove(file)
         fileContentCache.remove(file)
+        fileSavedContent.remove(file)
+        val updatedModified = _uiState.value.modifiedFiles - file
 
         val nextActive = if (file == _uiState.value.activeFile) {
             currentOpen.lastOrNull()
@@ -63,21 +72,33 @@ class EditorViewModel : ViewModel() {
         }
 
         val nextContent = nextActive?.let { fileContentCache[it] ?: it.readText() } ?: ""
+        val nextIsModified = nextActive != null && nextActive in updatedModified
 
         _uiState.value = _uiState.value.copy(
             openFiles = currentOpen,
             activeFile = nextActive,
             activeContent = nextContent,
-            isModified = false
+            modifiedFiles = updatedModified,
+            isModified = nextIsModified
         )
     }
 
     fun updateContent(newContent: String) {
         val file = _uiState.value.activeFile ?: return
         fileContentCache[file] = newContent
+        val saved = fileSavedContent[file] ?: ""
+        val hasChanged = newContent != saved
+
+        val updatedModified = if (hasChanged) {
+            _uiState.value.modifiedFiles + file
+        } else {
+            _uiState.value.modifiedFiles - file
+        }
+
         _uiState.value = _uiState.value.copy(
             activeContent = newContent,
-            isModified = true
+            modifiedFiles = updatedModified,
+            isModified = hasChanged
         )
     }
 
@@ -88,7 +109,12 @@ class EditorViewModel : ViewModel() {
             try {
                 file.parentFile?.mkdirs()
                 file.writeText(content)
-                _uiState.value = _uiState.value.copy(isModified = false)
+                fileSavedContent[file] = content
+                val updatedModified = _uiState.value.modifiedFiles - file
+                _uiState.value = _uiState.value.copy(
+                    modifiedFiles = updatedModified,
+                    isModified = false
+                )
             } catch (e: Exception) {
                 e.printStackTrace()
             }

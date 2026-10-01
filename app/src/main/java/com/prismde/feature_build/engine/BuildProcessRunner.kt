@@ -43,6 +43,9 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine("NDK: ${ndk.displayName} (версия ${ndk.versionTag})"))
         _events.emit(BuildOutputEvent.LogLine("Целевой ABI: ${config.selectedAbi.abiString} (API ${config.minApiLevel})"))
 
+        // Ensure all NDK tools, busybox applets and scripts have executable permissions
+        ndk.ensurePermissions()
+
         val libsDir = File(project.rootDir, "libs/${config.selectedAbi.abiString}")
         libsDir.mkdirs()
 
@@ -238,7 +241,13 @@ class BuildProcessRunner {
                 env["PATH"] = "${extraBinDir.absolutePath}:$existingPath"
             }
             val tempDir = File(workingDir, ".prism_tmp").also { it.mkdirs() }
+            try {
+                tempDir.setReadable(true, false)
+                tempDir.setWritable(true, false)
+                tempDir.setExecutable(true, false)
+            } catch (_: Throwable) {}
             env["TMPDIR"] = tempDir.absolutePath
+            env["NDK_ANDROID_TMPDIR"] = tempDir.absolutePath
             env["TEMP"] = tempDir.absolutePath
             env["HOME"] = workingDir.absolutePath
 

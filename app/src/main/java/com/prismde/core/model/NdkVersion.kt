@@ -127,6 +127,106 @@ data class NdkVersion(
         found?.setExecutable(true, false)
         return found
     }
+
+    fun ensurePermissions() {
+        getEffectiveNdkDir()?.let { ensureNdkPermissions(it) }
+    }
+
+    companion object {
+        fun ensureNdkPermissions(ndkDir: File) {
+            if (!ndkDir.exists()) return
+
+            // 1. Try system chmod -R 755
+            try {
+                val process = ProcessBuilder("/system/bin/chmod", "-R", "755", ndkDir.absolutePath).start()
+                process.waitFor()
+            } catch (_: Throwable) {}
+
+            // 2. Explicitly ensure busybox and all prebuilt tools exist and are executable
+            val prebuiltBinDirs = listOf(
+                File(ndkDir, "prebuilt/linux-arm64/bin"),
+                File(ndkDir, "prebuilt/linux-aarch64/bin"),
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-arm64/bin"),
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-aarch64/bin")
+            )
+
+            for (prebuiltBin in prebuiltBinDirs) {
+                if (!prebuiltBin.exists() || !prebuiltBin.isDirectory) continue
+
+                val busybox = File(prebuiltBin, "busybox")
+                if (busybox.exists()) {
+                    busybox.setExecutable(true, false)
+                    busybox.setReadable(true, false)
+                    val essentialTools = listOf(
+                        "mkdir", "make", "sh", "rm", "cp", "mv", "sed", "awk", "cat",
+                        "echo", "uname", "tar", "grep", "find", "chmod", "basename", "dirname"
+                    )
+                    for (tool in essentialTools) {
+                        val toolFile = File(prebuiltBin, tool)
+                        if (!toolFile.exists()) {
+                            try {
+                                android.system.Os.symlink("busybox", toolFile.absolutePath)
+                            } catch (_: Throwable) {
+                                try { busybox.copyTo(toolFile, overwrite = true) } catch (_: Throwable) {}
+                            }
+                        }
+                        toolFile.setExecutable(true, false)
+                        toolFile.setReadable(true, false)
+                    }
+                }
+
+                prebuiltBin.listFiles()?.forEach { f ->
+                    if (f.isFile) {
+                        f.setExecutable(true, false)
+                        f.setReadable(true, false)
+                    }
+                }
+            }
+
+            // 3. Ensure LLVM bin directory tools are executable
+            val llvmBinDirs = listOf(
+                File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
+                File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
+                File(ndkDir, "bin"),
+                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin")
+            )
+            for (binDir in llvmBinDirs) {
+                if (!binDir.exists() || !binDir.isDirectory) continue
+                binDir.listFiles()?.forEach { f ->
+                    if (f.isFile) {
+                        f.setExecutable(true, false)
+                        f.setReadable(true, false)
+                    }
+                }
+            }
+
+            // 4. Ensure scripts are executable
+            listOf(
+                File(ndkDir, "ndk-build"),
+                File(ndkDir, "ndk-build-android"),
+                File(ndkDir, "android-ndk-aide/ndk-build"),
+                File(ndkDir, "android-ndk-aide/ndk-build-android")
+            ).forEach { script ->
+                if (script.exists()) {
+                    script.setExecutable(true, false)
+                    script.setReadable(true, false)
+                }
+            }
+
+            // 5. Ensure tmp directory exists and is writable
+            listOf(
+                File(ndkDir, "tmp"),
+                File(ndkDir, "android-ndk-aide/tmp")
+            ).forEach { tmpDir ->
+                try {
+                    tmpDir.mkdirs()
+                    tmpDir.setWritable(true, false)
+                    tmpDir.setReadable(true, false)
+                    tmpDir.setExecutable(true, false)
+                } catch (_: Throwable) {}
+            }
+        }
+    }
 }
 
 object DefaultNdkCatalog {
