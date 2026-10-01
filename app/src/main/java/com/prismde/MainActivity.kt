@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -21,28 +22,32 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
 import com.prismde.core.datastore.SettingsRepository
 import com.prismde.core.model.DefaultNdkCatalog
 import com.prismde.core.model.Project
+import com.prismde.core.model.ProjectType
 import com.prismde.core.theme.PrismTheme
 import com.prismde.feature_build.BuildViewModel
+import com.prismde.feature_build.engine.ProjectDetector
 import com.prismde.feature_editor.EditorScreen
 import com.prismde.feature_editor.EditorViewModel
 import com.prismde.feature_files.FileTreeScreen
+import com.prismde.feature_files.project.ProjectManager
 import com.prismde.feature_ndk.NdkScreen
 import com.prismde.feature_ndk.NdkViewModel
 import com.prismde.feature_settings.SettingsScreen
 import com.prismde.feature_setup.SetupWizardScreen
 import com.prismde.feature_update.UpdateViewModel
 import com.prismde.feature_update.components.UpdateBottomSheet
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -58,18 +63,27 @@ class MainActivity : ComponentActivity() {
 
         val settingsRepo = SettingsRepository(applicationContext)
 
-        // Load sample project by default
-        val sampleProjectDir = File(filesDir, "projects/sample_jni_project")
-        val sampleProject = Project(
-            id = "sample_jni",
-            name = "sample_jni",
-            rootPath = sampleProjectDir.absolutePath
-        )
-        editorViewModel.setProject(sampleProject)
+        // Restore last project or pick / create starter project
+        lifecycleScope.launch {
+            val lastPath = settingsRepo.lastProjectPathFlow.first()
+            val project = if (lastPath != null && File(lastPath).exists()) {
+                val dir = File(lastPath)
+                Project(name = dir.name, rootPath = dir.absolutePath, detectedType = ProjectDetector.detect(dir))
+            } else {
+                val existing = ProjectManager.listProjects(applicationContext)
+                if (existing.isNotEmpty()) {
+                    existing.first()
+                } else {
+                    ProjectManager.createProject(applicationContext, "sample_jni_project", ProjectType.PURE_JNI_SO)
+                }
+            }
+            editorViewModel.setProject(project)
+            settingsRepo.setLastProjectPath(project.rootPath)
 
-        val firstCppFile = File(sampleProjectDir, "jni/native-lib.cpp")
-        if (firstCppFile.exists()) {
-            editorViewModel.openFile(firstCppFile)
+            val firstFile = project.rootDir.walkTopDown().firstOrNull { it.isFile && !it.name.startsWith(".") }
+            if (firstFile != null) {
+                editorViewModel.openFile(firstFile)
+            }
         }
 
         setContent {
@@ -83,105 +97,117 @@ class MainActivity : ComponentActivity() {
             val editorState by editorViewModel.uiState.collectAsState()
 
             val activeNdk = ndkState.versions.find { it.versionTag == ndkState.activeTag }
+                ?: ndkState.versions.find { it.versionTag == DefaultNdkCatalog.DEFAULT_ACTIVE_TAG }
                 ?: DefaultNdkCatalog.AVAILABLE_VERSIONS.first()
 
-            val isDark = when (darkMode) {
-                "dark" -> true
+            val darkTheme = when (darkMode) {
                 "light" -> false
-                else -> androidx.compose.foundation.isSystemInDarkTheme()
+                "dark" -> true
+                else -> isSystemInDarkTheme()
             }
 
-            PrismTheme(darkTheme = isDark, dynamicColor = dynamicColor) {
+            var currentTab by remember { mutableIntStateOf(0) }
+
+            val handleSelectProject: (Project) -> Unit = { newProj ->
+                editorViewModel.setProject(newProj)
+                lifecycleScope.launch {
+                    settingsRepo.setLastProjectPath(newProj.rootPath)
+                }
+                val firstFile = newProj.rootDir.walkTopDown().firstOrNull { it.isFile && !it.name.startsWith(".") }
+                if (firstFile != null) {
+                    editorViewModel.openFile(firstFile)
+                }
+            }
+
+            PrismTheme(
+                darkTheme = darkTheme,
+                dynamicColor = dynamicColor
+            ) {
                 if (!isSetupCompleted) {
                     SetupWizardScreen(
                         settingsRepository = settingsRepo,
                         ndkViewModel = ndkViewModel,
                         onCompleteSetup = {
-                            // Setup completed - transitions into main IDE
+                            currentTab = 0
                         }
                     )
                 } else {
-                    var currentTab by remember { mutableIntStateOf(0) }
-
-                    // Auto-check for updates on launch
-                    LaunchedEffect(Unit) {
-                        updateViewModel.checkForUpdates(manual = false)
-                    }
-
                     Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    bottomBar = {
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = currentTab == 0,
-                                onClick = { currentTab = 0 },
-                                icon = { Icon(Icons.Rounded.Code, contentDescription = "Редактор") },
-                                label = { Text("Редактор") }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 1,
-                                onClick = { currentTab = 1 },
-                                icon = { Icon(Icons.Rounded.Folder, contentDescription = "Файлы") },
-                                label = { Text("Файлы") }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 2,
-                                onClick = { currentTab = 2 },
-                                icon = { Icon(Icons.Rounded.Memory, contentDescription = "NDK") },
-                                label = { Text("NDK") }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 3,
-                                onClick = { currentTab = 3 },
-                                icon = { Icon(Icons.Rounded.Settings, contentDescription = "Настройки") },
-                                label = { Text("Настройки") }
-                            )
+                        bottomBar = {
+                            NavigationBar {
+                                NavigationBarItem(
+                                    selected = currentTab == 0,
+                                    onClick = { currentTab = 0 },
+                                    icon = { Icon(Icons.Rounded.Code, contentDescription = "Редактор") },
+                                    label = { Text("Редактор") }
+                                )
+                                NavigationBarItem(
+                                    selected = currentTab == 1,
+                                    onClick = { currentTab = 1 },
+                                    icon = { Icon(Icons.Rounded.Folder, contentDescription = "Файлы") },
+                                    label = { Text("Файлы") }
+                                )
+                                NavigationBarItem(
+                                    selected = currentTab == 2,
+                                    onClick = { currentTab = 2 },
+                                    icon = { Icon(Icons.Rounded.Memory, contentDescription = "NDK") },
+                                    label = { Text("NDK") }
+                                )
+                                NavigationBarItem(
+                                    selected = currentTab == 3,
+                                    onClick = { currentTab = 3 },
+                                    icon = { Icon(Icons.Rounded.Settings, contentDescription = "Настройки") },
+                                    label = { Text("Настройки") }
+                                )
+                            }
                         }
-                    }
-                ) { innerPadding ->
-                    AnimatedContent(
-                        targetState = currentTab,
-                        transitionSpec = { fadeIn() togetherWith fadeOut() },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding),
-                        label = "tabTransition"
-                    ) { tabIndex ->
-                        when (tabIndex) {
-                            0 -> EditorScreen(
-                                editorViewModel = editorViewModel,
-                                buildViewModel = buildViewModel,
-                                activeNdk = activeNdk,
-                                geminiApiKey = geminiKey
-                            )
-                            1 -> FileTreeScreen(
-                                currentProject = editorState.currentProject,
-                                activeFile = editorState.activeFile,
-                                onOpenFile = { file ->
-                                    editorViewModel.openFile(file)
-                                    currentTab = 0 // Switch to editor immediately
-                                },
-                                onCreateFile = { name, content, isFolder ->
-                                    val project = editorState.currentProject ?: return@FileTreeScreen
-                                    val target = File(project.rootDir, name)
-                                    if (isFolder) {
-                                        target.mkdirs()
-                                    } else {
-                                        target.parentFile?.mkdirs()
-                                        target.writeText(content)
-                                        editorViewModel.openFile(target)
+                    ) { innerPadding ->
+                        AnimatedContent(
+                            targetState = currentTab,
+                            transitionSpec = { fadeIn() togetherWith fadeOut() },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding),
+                            label = "tabTransition"
+                        ) { tabIndex ->
+                            when (tabIndex) {
+                                0 -> EditorScreen(
+                                    editorViewModel = editorViewModel,
+                                    buildViewModel = buildViewModel,
+                                    activeNdk = activeNdk,
+                                    geminiApiKey = geminiKey,
+                                    onSelectProject = handleSelectProject
+                                )
+                                1 -> FileTreeScreen(
+                                    currentProject = editorState.currentProject,
+                                    activeFile = editorState.activeFile,
+                                    onOpenFile = { file ->
+                                        editorViewModel.openFile(file)
                                         currentTab = 0
-                                    }
-                                }
-                            )
-                            2 -> NdkScreen(
-                                viewModel = ndkViewModel
-                            )
-                            3 -> SettingsScreen(
-                                settingsRepository = settingsRepo,
-                                onNavigateNdkManager = { currentTab = 2 },
-                                onCheckUpdates = { updateViewModel.checkForUpdates(manual = true) }
-                            )
+                                    },
+                                    onCreateFile = { name, content, isFolder ->
+                                        val project = editorState.currentProject ?: return@FileTreeScreen
+                                        val target = File(project.rootDir, name)
+                                        if (isFolder) {
+                                            target.mkdirs()
+                                        } else {
+                                            target.parentFile?.mkdirs()
+                                            target.writeText(content)
+                                            editorViewModel.openFile(target)
+                                            currentTab = 0
+                                        }
+                                    },
+                                    onSelectProject = handleSelectProject
+                                )
+                                2 -> NdkScreen(
+                                    viewModel = ndkViewModel
+                                )
+                                3 -> SettingsScreen(
+                                    settingsRepository = settingsRepo,
+                                    onNavigateNdkManager = { currentTab = 2 },
+                                    onCheckUpdates = { updateViewModel.checkForUpdates(manual = true) }
+                                )
+                            }
                         }
                     }
 
@@ -197,5 +223,4 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-}
 }

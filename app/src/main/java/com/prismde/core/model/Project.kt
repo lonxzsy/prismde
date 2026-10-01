@@ -3,9 +3,9 @@ package com.prismde.core.model
 import java.io.File
 
 data class Project(
-    val id: String,
     val name: String,
     val rootPath: String,
+    val id: String = rootPath,
     val detectedType: ProjectType = ProjectType.AUTO_DETECT,
     val buildConfiguration: BuildConfiguration = BuildConfiguration()
 ) {

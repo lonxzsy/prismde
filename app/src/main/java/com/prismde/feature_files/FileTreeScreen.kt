@@ -1,6 +1,8 @@
 package com.prismde.feature_files
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,14 +18,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,9 +39,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.prismde.core.model.Project
+import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import java.io.File
 
 @Composable
@@ -44,9 +52,11 @@ fun FileTreeScreen(
     activeFile: File?,
     onOpenFile: (File) -> Unit,
     onCreateFile: (name: String, content: String, isFolder: Boolean) -> Unit,
+    onSelectProject: (Project) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showProjectPicker by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableStateOf(0) }
 
     Scaffold(
@@ -71,21 +81,47 @@ fun FileTreeScreen(
         ) {
             if (currentProject == null) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Нет открытого проекта",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Rounded.FolderOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = "Нет активного проекта",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Выберите существующий проект или создайте новый проект из шаблона.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(20.dp))
+                        Button(
+                            onClick = { showProjectPicker = true },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Rounded.FolderSpecial, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Выбрать или создать проект")
+                        }
+                    }
                 }
             } else {
                 // Project Header Banner
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
+                        .padding(12.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable { showProjectPicker = true },
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 ) {
@@ -111,9 +147,20 @@ fun FileTreeScreen(
                             Text(
                                 text = currentProject.rootPath,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
                             )
                         }
+
+                        OutlinedButton(
+                            onClick = { showProjectPicker = true },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Rounded.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Проекты")
+                        }
+
                         IconButton(onClick = { refreshKey++ }) {
                             Icon(Icons.Rounded.Refresh, contentDescription = "Обновить дерево")
                         }
@@ -156,6 +203,18 @@ fun FileTreeScreen(
                 onCreateFile(name, content, isFolder)
                 refreshKey++
             }
+        )
+    }
+
+    if (showProjectPicker) {
+        ProjectPickerBottomSheet(
+            currentProject = currentProject,
+            onSelectProject = { project ->
+                showProjectPicker = false
+                onSelectProject(project)
+                refreshKey++
+            },
+            onDismiss = { showProjectPicker = false }
         )
     }
 }

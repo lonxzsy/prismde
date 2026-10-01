@@ -71,8 +71,9 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
 
-    // DataStore
+    // DataStore & Storage
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.documentfile)
 
     // Sora Code Editor
     implementation(libs.sora.editor.core)

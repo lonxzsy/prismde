@@ -1,15 +1,24 @@
 package com.prismde.feature_editor
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -21,15 +30,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.NdkVersion
+import com.prismde.core.model.Project
 import com.prismde.feature_build.BuildViewModel
 import com.prismde.feature_build.components.BuildBottomSheet
 import com.prismde.feature_build.components.ExportSoDialog
+import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import com.prismde.feature_settings.BuildPresetDialog
 import io.github.rosemoe.sora.widget.CodeEditor
-import java.io.File
 
 @Composable
 fun EditorScreen(
@@ -37,6 +49,7 @@ fun EditorScreen(
     buildViewModel: BuildViewModel,
     activeNdk: NdkVersion,
     geminiApiKey: String,
+    onSelectProject: (Project) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val editorState by editorViewModel.uiState.collectAsState()
@@ -45,6 +58,7 @@ fun EditorScreen(
     var codeEditorInstance by remember { mutableStateOf<CodeEditor?>(null) }
     var buildConfig by remember { mutableStateOf(BuildConfiguration()) }
     var showPresetDialog by remember { mutableStateOf(false) }
+    var showProjectPicker by remember { mutableStateOf(false) }
 
     Scaffold(
         floatingActionButton = {
@@ -69,6 +83,52 @@ fun EditorScreen(
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
+            // Top Bar with Project Switcher & Build Presets
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { showProjectPicker = true }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.FolderSpecial,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = editorState.currentProject?.name ?: "Выберите проект",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                        Icons.Rounded.ArrowDropDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                IconButton(
+                    onClick = { showPresetDialog = true }
+                ) {
+                    Icon(
+                        Icons.Rounded.Tune,
+                        contentDescription = "Параметры сборки",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             // Tabs Bar
             EditorTabs(
                 openFiles = editorState.openFiles,
@@ -98,10 +158,14 @@ fun EditorScreen(
                     SoraEditorView(
                         file = editorState.activeFile,
                         content = editorState.activeContent,
-                        onContentChanged = { editorViewModel.updateContent(it) },
+                        onContentChanged = { newText ->
+                            editorViewModel.updateContent(newText)
+                        },
                         diagnostics = buildState.diagnostics,
                         targetJumpDiagnostic = editorState.targetJumpDiagnostic,
-                        onEditorReady = { codeEditorInstance = it }
+                        onEditorReady = { editor ->
+                            codeEditorInstance = editor
+                        }
                     )
                 }
             }
@@ -118,7 +182,7 @@ fun EditorScreen(
         }
     }
 
-    // Build & Diagnostics Bottom Sheet
+    // Build Output BottomSheet
     BuildBottomSheet(
         isVisible = buildState.showBottomSheet,
         isBuilding = buildState.isBuilding,
@@ -168,6 +232,18 @@ fun EditorScreen(
                 buildConfig = it
                 showPresetDialog = false
             }
+        )
+    }
+
+    // Project Picker Bottom Sheet
+    if (showProjectPicker) {
+        ProjectPickerBottomSheet(
+            currentProject = editorState.currentProject,
+            onSelectProject = { project ->
+                showProjectPicker = false
+                onSelectProject(project)
+            },
+            onDismiss = { showProjectPicker = false }
         )
     }
 }
