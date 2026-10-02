@@ -3,6 +3,7 @@ package com.prismde.feature_settings
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.automirrored.rounded.NavigateNext
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -28,8 +31,6 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.automirrored.rounded.Logout
-import androidx.compose.material.icons.automirrored.rounded.NavigateNext
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Palette
@@ -50,6 +51,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -59,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -110,6 +113,8 @@ fun SettingsScreen(
     var isRefreshingQuota by remember { mutableStateOf(false) }
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var dynamicAntigravityModels by remember { mutableStateOf(AntigravityAuthManager.DEFAULT_ANTIGRAVITY_MODELS) }
+
+    var configTab by remember(aiProvider) { mutableIntStateOf(if (aiProvider == "antigravity") 0 else 1) }
 
     // Automatically refresh models and quota if token exists on entry
     LaunchedEffect(antigravityAccessToken) {
@@ -264,22 +269,181 @@ fun SettingsScreen(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                // Provider Selection Tabs
-                val selectedTabIndex = if (aiProvider == "antigravity") 0 else 1
+
+                // Dedicated Active Service Selector
+                Text(
+                    text = "Используемый AI сервис:",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Выберите, какой сервис будет анализировать ошибки и предлагать исправления кода в проекте:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                // Option 1: Google Antigravity
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            coroutineScope.launch { settingsRepository.setAiProvider("antigravity") }
+                            configTab = 0
+                        },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (aiProvider == "antigravity") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = if (aiProvider == "antigravity") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = (aiProvider == "antigravity"),
+                            onClick = {
+                                coroutineScope.launch { settingsRepository.setAiProvider("antigravity") }
+                                configTab = 0
+                            }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Google Antigravity", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Рекомендуется", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Text(
+                                text = "Модели поколения Gemini 3 и Claude с квотой Google аккаунта",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            val authStatusText = if (antigravityAccessToken.isNotBlank()) "🟢 Подключен (${antigravityUserEmail.ifBlank { "Google" }})" else "⚪ Требуется вход ниже"
+                            Text(
+                                text = authStatusText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (antigravityAccessToken.isNotBlank()) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Option 2: Google AI Studio
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            coroutineScope.launch { settingsRepository.setAiProvider("gemini_api") }
+                            configTab = 1
+                        },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (aiProvider == "gemini_api") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = if (aiProvider == "gemini_api") BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = (aiProvider == "gemini_api"),
+                            onClick = {
+                                coroutineScope.launch { settingsRepository.setAiProvider("gemini_api") }
+                                configTab = 1
+                            }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Google AI Studio (Gemini API)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Модели Gemini 2.5 / 2.0 через личный API-ключ",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            val keyStatusText = if (geminiKey.isNotBlank()) "🟢 API-ключ сохранен" else "⚪ Ключ не введен"
+                            Text(
+                                text = keyStatusText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (geminiKey.isNotBlank()) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // Active status summary pill
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Сейчас активен: ${if (aiProvider == "antigravity") "Google Antigravity ($antigravityModel)" else "Google AI Studio ($geminiModel)"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+
+                Spacer(Modifier.height(18.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(14.dp))
+
+                // Tabs for configuration panels
+                Text(
+                    text = "Настройки параметров сервисов:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(8.dp))
+
                 TabRow(
-                    selectedTabIndex = selectedTabIndex,
+                    selectedTabIndex = configTab,
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.clip(RoundedCornerShape(12.dp))
                 ) {
                     Tab(
-                        selected = selectedTabIndex == 0,
-                        onClick = { coroutineScope.launch { settingsRepository.setAiProvider("antigravity") } },
+                        selected = configTab == 0,
+                        onClick = { configTab = 0 },
                         text = { Text("Google Antigravity", fontWeight = FontWeight.Bold) },
                         icon = { Icon(Icons.Rounded.SmartToy, contentDescription = null, modifier = Modifier.size(18.dp)) }
                     )
                     Tab(
-                        selected = selectedTabIndex == 1,
-                        onClick = { coroutineScope.launch { settingsRepository.setAiProvider("gemini_api") } },
+                        selected = configTab == 1,
+                        onClick = { configTab = 1 },
                         text = { Text("Gemini API Key", fontWeight = FontWeight.Bold) },
                         icon = { Icon(Icons.Rounded.Key, contentDescription = null, modifier = Modifier.size(18.dp)) }
                     )
@@ -287,13 +451,13 @@ fun SettingsScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                if (aiProvider == "antigravity") {
-                    // Google Antigravity OAuth Flow
+                if (configTab == 0) {
+                    // Google Antigravity Configuration Panel
                     val isAuthenticated = antigravityAccessToken.isNotBlank()
 
                     if (!isAuthenticated) {
                         Text(
-                            text = "Google Antigravity OAuth",
+                            text = "Подключение к Google Antigravity",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -388,6 +552,8 @@ fun SettingsScreen(
                                             quota = quotaPercent,
                                             resetTime = resetTime
                                         )
+                                        // Automatically set as active service!
+                                        settingsRepository.setAiProvider("antigravity")
                                         authCodeInput = ""
                                     } else {
                                         authErrorMessage = tokenRes.exceptionOrNull()?.message ?: "Не удалось авторизоваться"
@@ -406,7 +572,7 @@ fun SettingsScreen(
                             } else {
                                 Icon(Icons.Rounded.CheckCircle, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
-                                Text("3. Подключить Antigravity")
+                                Text("3. Подключить Antigravity и активировать")
                             }
                         }
                     } else {
@@ -627,7 +793,7 @@ fun SettingsScreen(
                         }
                     }
                 } else {
-                    // Google AI Studio Direct API Key
+                    // Google AI Studio Configuration Panel
                     Text(
                         text = "Google AI Studio (Gemini API)",
                         style = MaterialTheme.typography.titleMedium,

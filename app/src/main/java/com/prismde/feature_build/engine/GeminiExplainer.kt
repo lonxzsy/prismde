@@ -62,7 +62,15 @@ class GeminiExplainer(
             2. Рекомендации и правильный подход к решению.
         """.trimIndent()
 
-        return executeAiPrompt(prompt, config)
+        val rawResult = executeAiPrompt(prompt, config)
+        return rawResult.map { text ->
+            val header = if (config.provider == "antigravity") {
+                "> 🤖 **Сервис:** Google Antigravity • Модель `${config.model}`\n\n"
+            } else {
+                "> 🤖 **Сервис:** Google AI Studio • Модель `${config.model}`\n\n"
+            }
+            header + text
+        }
     }
 
     suspend fun explainDiagnostic(
@@ -134,14 +142,21 @@ class GeminiExplainer(
 
         val mediaType = "application/json".toMediaType()
 
-        if (config.provider == "antigravity" && config.antigravityAccessToken.isNotBlank()) {
+        if (config.provider == "antigravity") {
+            if (config.antigravityAccessToken.isBlank()) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("Выбран сервис Google Antigravity, но аккаунт не подключен. Откройте Настройки -> секцию Google Antigravity и выполните вход.")
+                )
+            }
             return@withContext executeAntigravityRequest(prompt, jsonBody, mediaType, config)
         }
 
         // Standard Gemini API Key Flow
         val cleanKey = config.apiKey.trim()
         if (cleanKey.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("Ключ Gemini API не настроен в Настройках (или войдите в Google Antigravity)."))
+            return@withContext Result.failure(
+                IllegalArgumentException("Выбран сервис Google AI Studio, но Gemini API ключ не введен. Перейдите в Настройки и укажите API ключ.")
+            )
         }
 
         val modelsToTry = mutableListOf<String>()
@@ -215,43 +230,87 @@ class GeminiExplainer(
         config: AiConfig
     ): Result<String> {
         var token = config.antigravityAccessToken
-
-        // Antigravity models (Gemini 3 series or Claude)
         val selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.8-flash-high"
-        
-        // 1. Try via Cloudcode Antigravity internal endpoint
+        var lastErrorMsg = "Неизвестная ошибка Antigravity"
+
+        // 1. Try via Cloudcode Antigravity internal endpoint with GenerateContentRequest schema
         val cloudcodePayload = JSONObject().apply {
             put("model", selectedModel)
-            put("prompt", prompt)
-            put("contents", jsonBody.getJSONArray("contents"))
+            put("project", "")
+            put("request", JSONObject().apply {
+                put("contents", jsonBody.getJSONArray("contents"))
+            })
         }
 
         val requestCloudcode = Request.Builder()
             .url("https://cloudcode-pa.googleapis.com/v1internal:generateContent")
             .header("Authorization", "Bearer $token")
             .header("Content-Type", "application/json")
+            .header("User-Agent", "Antigravity-IDE")
+            .header("X-Vertex-AI-LLM-Shared-Request-Type", "CODE_COMPLETION")
+            .header("goog-originating-logical-product-id", "cloudcode")
             .post(cloudcodePayload.toString().toRequestBody(mediaType))
             .build()
 
         try {
             val res = client.newCall(requestCloudcode).execute().use { response ->
+                val body = response.body?.string() ?: ""
                 if (response.isSuccessful) {
-                    val body = response.body?.string() ?: ""
                     val json = JSONObject(body)
-                    val text = json.optString("text").ifBlank {
-                        json.optJSONArray("candidates")?.optJSONObject(0)
-                            ?.optJSONObject("content")?.optJSONArray("parts")
-                            ?.optJSONObject(0)?.optString("text") ?: ""
+                    val candParent = json.optJSONObject("response") ?: json
+                    val candidates = candParent.optJSONArray("candidates") ?: json.optJSONArray("candidates")
+                    if (candidates != null && candidates.length() > 0) {
+                        val first = candidates.getJSONObject(0)
+                        val text = first.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                            ?: first.optString("text")
+                        if (!text.isNullOrBlank()) {
+                            return@use Result.success(text)
+                        }
                     }
-                    if (text.isNotBlank()) {
-                        Result.success(text)
-                    } else null
-                } else null
+                    val directText = json.optString("text")
+                    if (directText.isNotBlank()) {
+                        return@use Result.success(directText)
+                    }
+                }
+                lastErrorMsg = "Cloudcode (HTTP ${response.code}): $body"
+                null
             }
             if (res != null) return res
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            lastErrorMsg = "Cloudcode network: ${e.message}"
+        }
 
-        // 2. Fallback to Google Generative Language using OAuth Bearer token
+        // 2. Try Cloudcode models endpoint
+        val requestModelCloudcode = Request.Builder()
+            .url("https://cloudcode-pa.googleapis.com/v1beta/models/$selectedModel:generateContent")
+            .header("Authorization", "Bearer $token")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "Antigravity-IDE")
+            .post(jsonBody.toString().toRequestBody(mediaType))
+            .build()
+
+        try {
+            val res = client.newCall(requestModelCloudcode).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val json = JSONObject(body)
+                    val candParent = json.optJSONObject("response") ?: json
+                    val candidates = candParent.optJSONArray("candidates") ?: json.optJSONArray("candidates")
+                    if (candidates != null && candidates.length() > 0) {
+                        val text = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                            ?: candidates.getJSONObject(0).optString("text")
+                        if (text.isNotBlank()) return@use Result.success(text)
+                    }
+                }
+                lastErrorMsg = "Cloudcode models (HTTP ${response.code}): $body"
+                null
+            }
+            if (res != null) return res
+        } catch (e: Exception) {
+            lastErrorMsg = "Cloudcode models network: ${e.message}"
+        }
+
+        // 3. Fallback to Google Generative Language using OAuth Bearer token
         val genericModel = selectedModel.removePrefix("gemini-").let { "gemini-$it" }
         val models = listOf(selectedModel, genericModel, "gemini-2.5-flash", "gemini-2.0-flash")
 
@@ -278,22 +337,25 @@ class GeminiExplainer(
                             return@use Result.success(text)
                         }
                     }
+                    lastErrorMsg = "OAuth Google GenAI ($m, HTTP ${response.code}): $responseStr"
                     null
                 }
                 if (callResult != null) return callResult
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                lastErrorMsg = "OAuth GenAI ($m) network: ${e.message}"
+            }
         }
 
-        // If direct token was unauthorized and we have a refresh token, attempt refresh
+        // 4. Token refresh attempt if refresh token is present
         if (config.antigravityRefreshToken.isNotBlank()) {
             val refreshResult = antigravityAuthManager.refreshAccessToken(config.antigravityRefreshToken)
             val newToken = refreshResult.getOrNull()
-            if (newToken != null) {
+            if (newToken != null && newToken != token) {
                 return executeAntigravityRequest(prompt, jsonBody, mediaType, config.copy(antigravityAccessToken = newToken))
             }
         }
 
-        return Result.failure(Exception("Не удалось получить ответ от Antigravity. Проверьте авторизацию в Настройках."))
+        return Result.failure(Exception("Не удалось получить ответ от Google Antigravity ($selectedModel). $lastErrorMsg"))
     }
 
     private fun stripMarkdownCodeBlocks(rawText: String): String {

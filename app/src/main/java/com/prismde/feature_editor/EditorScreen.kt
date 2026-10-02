@@ -375,8 +375,8 @@ fun EditorScreen(
                 val originalText = editor.text.toString()
                 val targetLine = (diagnostic.line - 1).coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
 
-                // Prompt 2: Request dedicated, clean code fix from Gemini without explanation noise
-                aiApplyingMessage = "AI генерирует точное исправление..."
+                val serviceLabel = if (aiConfig.provider == "antigravity") "Antigravity (${aiConfig.model})" else "Gemini API (${aiConfig.model})"
+                aiApplyingMessage = "AI ($serviceLabel) генерирует исправление..."
 
                 val allLines = originalText.lines()
                 val contextSnippet = if (allLines.size <= 300) {
