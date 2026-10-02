@@ -227,131 +227,101 @@ class GeminiExplainer(
         prompt: String,
         jsonBody: JSONObject,
         mediaType: okhttp3.MediaType,
-        config: AiConfig
+        config: AiConfig,
+        hasRetriedToken: Boolean = false
     ): Result<String> {
-        var token = config.antigravityAccessToken
+        val token = config.antigravityAccessToken
         val selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.8-flash-high"
-        var lastErrorMsg = "Неизвестная ошибка Antigravity"
+        val project = antigravityAuthManager.loadCodeAssist(token)
 
-        // 1. Try via Cloudcode Antigravity internal endpoint with GenerateContentRequest schema
         val cloudcodePayload = JSONObject().apply {
+            put("project", project)
             put("model", selectedModel)
-            put("project", "")
             put("request", JSONObject().apply {
                 put("contents", jsonBody.getJSONArray("contents"))
             })
         }
 
-        val requestCloudcode = Request.Builder()
-            .url("https://cloudcode-pa.googleapis.com/v1internal:generateContent")
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .header("User-Agent", "Antigravity-IDE")
-            .header("X-Vertex-AI-LLM-Shared-Request-Type", "CODE_COMPLETION")
-            .header("goog-originating-logical-product-id", "cloudcode")
-            .post(cloudcodePayload.toString().toRequestBody(mediaType))
-            .build()
+        var lastErrorMsg = "Неизвестная ошибка Antigravity"
+        var needsTokenRefresh = false
 
-        try {
-            val res = client.newCall(requestCloudcode).execute().use { response ->
-                val body = response.body?.string() ?: ""
-                if (response.isSuccessful) {
-                    val json = JSONObject(body)
-                    val candParent = json.optJSONObject("response") ?: json
-                    val candidates = candParent.optJSONArray("candidates") ?: json.optJSONArray("candidates")
-                    if (candidates != null && candidates.length() > 0) {
-                        val first = candidates.getJSONObject(0)
-                        val text = first.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
-                            ?: first.optString("text")
-                        if (!text.isNullOrBlank()) {
-                            return@use Result.success(text)
-                        }
-                    }
-                    val directText = json.optString("text")
-                    if (directText.isNotBlank()) {
-                        return@use Result.success(directText)
-                    }
-                }
-                lastErrorMsg = "Cloudcode (HTTP ${response.code}): $body"
-                null
-            }
-            if (res != null) return res
-        } catch (e: Exception) {
-            lastErrorMsg = "Cloudcode network: ${e.message}"
-        }
+        // Target native Antigravity endpoints in order of preference
+        val candidateEndpoints = listOf(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse" to true,
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent" to false,
+            "https://cloudcode-pa.googleapis.com/v1internal:generateContent" to false
+        )
 
-        // 2. Try Cloudcode models endpoint
-        val requestModelCloudcode = Request.Builder()
-            .url("https://cloudcode-pa.googleapis.com/v1beta/models/$selectedModel:generateContent")
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .header("User-Agent", "Antigravity-IDE")
-            .post(jsonBody.toString().toRequestBody(mediaType))
-            .build()
-
-        try {
-            val res = client.newCall(requestModelCloudcode).execute().use { response ->
-                val body = response.body?.string() ?: ""
-                if (response.isSuccessful) {
-                    val json = JSONObject(body)
-                    val candParent = json.optJSONObject("response") ?: json
-                    val candidates = candParent.optJSONArray("candidates") ?: json.optJSONArray("candidates")
-                    if (candidates != null && candidates.length() > 0) {
-                        val text = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
-                            ?: candidates.getJSONObject(0).optString("text")
-                        if (text.isNotBlank()) return@use Result.success(text)
-                    }
-                }
-                lastErrorMsg = "Cloudcode models (HTTP ${response.code}): $body"
-                null
-            }
-            if (res != null) return res
-        } catch (e: Exception) {
-            lastErrorMsg = "Cloudcode models network: ${e.message}"
-        }
-
-        // 3. Fallback to Google Generative Language using OAuth Bearer token
-        val genericModel = selectedModel.removePrefix("gemini-").let { "gemini-$it" }
-        val models = listOf(selectedModel, genericModel, "gemini-2.5-flash", "gemini-2.0-flash")
-
-        for (m in models) {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent"
+        for ((url, isSse) in candidateEndpoints) {
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $token")
                 .header("Content-Type", "application/json")
-                .post(jsonBody.toString().toRequestBody(mediaType))
+                .header("User-Agent", "Antigravity-IDE")
+                .header("X-Vertex-AI-LLM-Shared-Request-Type", "CODE_COMPLETION")
+                .header("goog-originating-logical-product-id", "cloudcode")
+                .post(cloudcodePayload.toString().toRequestBody(mediaType))
                 .build()
 
             try {
                 val callResult = client.newCall(request).execute().use { response ->
-                    val responseStr = response.body?.string() ?: ""
-                    if (response.isSuccessful) {
-                        val responseJson = JSONObject(responseStr)
-                        val candidates = responseJson.optJSONArray("candidates")
-                        if (candidates != null && candidates.length() > 0) {
-                            val firstCandidate = candidates.getJSONObject(0)
-                            val content = firstCandidate.getJSONObject("content")
-                            val parts = content.getJSONArray("parts")
-                            val text = parts.getJSONObject(0).getString("text")
-                            return@use Result.success(text)
-                        }
+                    if (response.code == 401 || response.code == 403) {
+                        needsTokenRefresh = true
+                        lastErrorMsg = "Сессия истекла (HTTP ${response.code})"
+                        return@use null
                     }
-                    lastErrorMsg = "OAuth Google GenAI ($m, HTTP ${response.code}): $responseStr"
+                    if (response.isSuccessful) {
+                        val body = response.body ?: return@use null
+                        if (isSse) {
+                            val fullText = StringBuilder()
+                            body.charStream().buffered().forEachLine { line ->
+                                if (line.startsWith("data:")) {
+                                    val dataChunk = line.removePrefix("data:").trim()
+                                    if (dataChunk.isNotBlank() && dataChunk != "[DONE]") {
+                                        try {
+                                            val jsonChunk = JSONObject(dataChunk)
+                                            val candParent = jsonChunk.optJSONObject("response") ?: jsonChunk
+                                            val candidates = candParent.optJSONArray("candidates") ?: jsonChunk.optJSONArray("candidates")
+                                            val text = candidates?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                                            if (!text.isNullOrBlank()) fullText.append(text)
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                            if (fullText.isNotBlank()) {
+                                return@use Result.success(fullText.toString())
+                            }
+                        } else {
+                            val bodyStr = body.string()
+                            val json = JSONObject(bodyStr)
+                            val candParent = json.optJSONObject("response") ?: json
+                            val candidates = candParent.optJSONArray("candidates") ?: json.optJSONArray("candidates")
+                            if (candidates != null && candidates.length() > 0) {
+                                val text = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                                    ?: candidates.getJSONObject(0).optString("text")
+                                if (!text.isNullOrBlank()) return@use Result.success(text)
+                            }
+                            val direct = json.optString("text")
+                            if (direct.isNotBlank()) return@use Result.success(direct)
+                        }
+                    } else {
+                        val err = response.body?.string() ?: ""
+                        lastErrorMsg = "Antigravity (${response.code}): $err"
+                    }
                     null
                 }
                 if (callResult != null) return callResult
             } catch (e: Exception) {
-                lastErrorMsg = "OAuth GenAI ($m) network: ${e.message}"
+                lastErrorMsg = "Сетевая ошибка: ${e.message}"
             }
         }
 
-        // 4. Token refresh attempt if refresh token is present
-        if (config.antigravityRefreshToken.isNotBlank()) {
+        // If 401/403 or token expired and we have refresh token, refresh once
+        if (needsTokenRefresh && !hasRetriedToken && config.antigravityRefreshToken.isNotBlank()) {
             val refreshResult = antigravityAuthManager.refreshAccessToken(config.antigravityRefreshToken)
             val newToken = refreshResult.getOrNull()
-            if (newToken != null && newToken != token) {
-                return executeAntigravityRequest(prompt, jsonBody, mediaType, config.copy(antigravityAccessToken = newToken))
+            if (newToken != null && newToken.isNotBlank()) {
+                return executeAntigravityRequest(prompt, jsonBody, mediaType, config.copy(antigravityAccessToken = newToken), hasRetriedToken = true)
             }
         }
 

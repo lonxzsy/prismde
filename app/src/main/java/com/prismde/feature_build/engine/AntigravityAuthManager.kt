@@ -238,6 +238,47 @@ class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) 
         }
     }
 
+    private var cachedProjectId: String? = null
+
+    /**
+     * Resolves the Antigravity user companion project ID.
+     */
+    suspend fun loadCodeAssist(accessToken: String): String = withContext(Dispatchers.IO) {
+        val cached = cachedProjectId
+        if (!cached.isNullOrBlank()) return@withContext cached
+
+        val urls = listOf(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        )
+        for (url in urls) {
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $accessToken")
+                .header("Content-Type", "application/json")
+                .post("{}".toRequestBody("application/json".toMediaType()))
+                .build()
+
+            try {
+                val found = client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: ""
+                        val json = JSONObject(body)
+                        json.optString("cloudaicompanionProject").takeIf { it.isNotBlank() }
+                            ?: json.optString("cloudaicompanion_project").takeIf { it.isNotBlank() }
+                    } else null
+                }
+                if (!found.isNullOrBlank()) {
+                    cachedProjectId = found
+                    return@withContext found
+                }
+            } catch (_: Exception) {}
+        }
+        val fallback = "default-cli-project"
+        cachedProjectId = fallback
+        fallback
+    }
+
     /**
      * Fetches models list and quota information from Antigravity/Code Assist API.
      */
