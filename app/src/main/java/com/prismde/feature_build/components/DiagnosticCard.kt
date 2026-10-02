@@ -14,11 +14,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.TipsAndUpdates
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Badge
@@ -64,7 +64,7 @@ fun DiagnosticCard(
     diagnostic: Diagnostic,
     onJumpToCode: (Diagnostic) -> Unit,
     onApplyFix: ((Diagnostic) -> Unit)? = null,
-    onApplyAiFix: ((Diagnostic, String) -> Unit)? = null,
+    onApplyAiFix: ((Diagnostic) -> Unit)? = null,
     onAskAi: ((Diagnostic) -> Unit)? = null,
     aiExplanation: String? = null,
     isAiLoading: Boolean = false,
@@ -263,7 +263,7 @@ fun DiagnosticCard(
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.OpenInNew,
+                        imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp)
                     )
@@ -362,29 +362,27 @@ fun DiagnosticCard(
                     )
 
                     // Prominent Apply AI Fix Button
-                    if (!aiCodeFix.isNullOrBlank()) {
-                        Spacer(Modifier.height(10.dp))
-                        Button(
-                            onClick = { onApplyAiFix?.invoke(diagnostic, aiCodeFix) },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isDark) Color(0xFF6750A4) else MaterialTheme.colorScheme.primary,
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoFixHigh,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "Применить решение AI в код",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { onApplyAiFix?.invoke(diagnostic) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isDark) Color(0xFF6750A4) else MaterialTheme.colorScheme.primary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.AutoFixHigh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Применить исправление в код",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

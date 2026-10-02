@@ -118,6 +118,10 @@ class BuildViewModel : ViewModel() {
         }
     }
 
+    suspend fun generateAiFix(diagnostic: Diagnostic, sourceContext: String, apiKey: String): Result<String> {
+        return geminiExplainer.generateCodeFix(diagnostic, sourceContext, apiKey)
+    }
+
     fun hideBottomSheet() {
         _uiState.value = _uiState.value.copy(showBottomSheet = false)
     }

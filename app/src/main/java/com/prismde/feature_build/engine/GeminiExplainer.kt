@@ -23,19 +23,18 @@ class GeminiExplainer(private val client: OkHttpClient) {
         "gemini-pro"
     )
 
+    /**
+     * PROMPT 1: Human-readable diagnostic analysis and explanation.
+     * Focused entirely on teaching and explaining the issue to the developer in Russian.
+     */
     suspend fun explainDiagnostic(
         diagnostic: Diagnostic,
         sourceCodeContext: String,
         apiKey: String
-    ): Result<String> = withContext(Dispatchers.IO) {
-        val cleanKey = apiKey.trim()
-        if (cleanKey.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("Ключ Gemini API не настроен в Настройках."))
-        }
-
+    ): Result<String> {
         val prompt = """
             Ты эксперт по разработке на C/C++ и Android NDK в мобильной IDE PrismDE.
-            Помоги разработчику исправить ошибку компилятора:
+            Помоги разработчику понять и разобрать ошибку компилятора:
             
             Файл: ${diagnostic.filePath}
             Строка: ${diagnostic.line}, Колонка: ${diagnostic.column}
@@ -47,10 +46,56 @@ class GeminiExplainer(private val client: OkHttpClient) {
             $sourceCodeContext
             ```
             
-            Ответь кратко, профессионально, на чистом русском языке:
-            1. В чем точная причина ошибки.
-            2. Конкретный код исправления (без лишней воды).
+            Ответь структурированно, профессионально и понятно на чистом русском языке:
+            1. В чем точная причина ошибки и почему компилятор на нее указывает.
+            2. Рекомендации и правильный подход к решению.
         """.trimIndent()
+
+        return executeGeminiPrompt(prompt, apiKey)
+    }
+
+    /**
+     * PROMPT 2: Specialized machine code generator.
+     * Generates ONLY the exact replacement code slice for editor automation, with zero markdown noise or commentary.
+     */
+    suspend fun generateCodeFix(
+        diagnostic: Diagnostic,
+        sourceCodeContext: String,
+        apiKey: String
+    ): Result<String> {
+        val prompt = """
+            Ты инструмент автоматического исправления кода в мобильной IDE PrismDE.
+            Твоя задача — исправить ошибку компилятора в C/C++ файле.
+            
+            Файл: ${diagnostic.filePath}
+            Строка ошибки: ${diagnostic.line}, Колонка: ${diagnostic.column}
+            Сообщение компилятора: ${diagnostic.rawMessage}
+            
+            Контекст кода:
+            ```cpp
+            $sourceCodeContext
+            ```
+            
+            СТРОГИЕ ПРАВИЛА:
+            1. Верни ТОЛЬКО исправленный фрагмент кода, заменяющий ошибочную строку или проблемный блок.
+            2. НЕ ПИШИ никаких объяснений, приветствий, текста до или после кода.
+            3. Если код оборачивается в блок, используй только сам код. Никаких лишних комментариев.
+        """.trimIndent()
+
+        val rawResult = executeGeminiPrompt(prompt, apiKey)
+        return rawResult.map { rawText ->
+            stripMarkdownCodeBlocks(rawText)
+        }
+    }
+
+    private suspend fun executeGeminiPrompt(
+        prompt: String,
+        apiKey: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Ключ Gemini API не настроен в Настройках."))
+        }
 
         val jsonBody = JSONObject().apply {
             val contents = JSONArray().apply {
@@ -121,5 +166,18 @@ class GeminiExplainer(private val client: OkHttpClient) {
         }
 
         Result.failure(Exception(lastErrorMsg))
+    }
+
+    private fun stripMarkdownCodeBlocks(rawText: String): String {
+        val trimmed = rawText.trim()
+        val multilineMatch = Regex("""```(?:\w+)?\s*\n([\s\S]*?)\n```""").find(trimmed)
+        if (multilineMatch != null) {
+            return multilineMatch.groupValues[1].trimEnd()
+        }
+        val singleLineMatch = Regex("""```(?:\w+)?\s*([^\n]+?)\s*```""").find(trimmed)
+        if (singleLineMatch != null) {
+            return singleLineMatch.groupValues[1].trim()
+        }
+        return trimmed
     }
 }

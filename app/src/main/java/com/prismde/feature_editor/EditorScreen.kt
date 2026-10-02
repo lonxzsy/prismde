@@ -360,7 +360,7 @@ fun EditorScreen(
                 }
             }
         },
-        onApplyAiFix = { diagnostic, replacementCode ->
+        onApplyAiFix = { diagnostic ->
             buildViewModel.hideBottomSheet()
             editorViewModel.jumpToDiagnostic(diagnostic)
             coroutineScope.launch {
@@ -373,6 +373,28 @@ fun EditorScreen(
                 val editor = codeEditorInstance ?: return@launch
                 val originalText = editor.text.toString()
                 val targetLine = (diagnostic.line - 1).coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+
+                // Prompt 2: Request dedicated, clean code fix from Gemini without explanation noise
+                aiApplyingMessage = "AI генерирует точное исправление..."
+
+                val allLines = originalText.lines()
+                val contextSnippet = if (allLines.size <= 300) {
+                    originalText
+                } else {
+                    val start = (diagnostic.line - 40).coerceAtLeast(0)
+                    allLines.drop(start).take(80).joinToString("\n")
+                }
+
+                val fixResult = buildViewModel.generateAiFix(diagnostic, contextSnippet, geminiApiKey)
+                val replacementCode = fixResult.getOrNull()
+
+                if (replacementCode.isNullOrBlank()) {
+                    val error = fixResult.exceptionOrNull()?.message ?: "Не удалось сгенерировать код исправления"
+                    aiApplyingMessage = "Ошибка: $error"
+                    kotlinx.coroutines.delay(3500)
+                    aiApplyingMessage = null
+                    return@launch
+                }
 
                 // 1. Calculate intelligent diff plan (smart matching context, prefix/suffix trimming)
                 val plan = AiDiffMatcher.computePlan(originalText, targetLine, replacementCode)
