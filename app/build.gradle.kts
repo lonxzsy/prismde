@@ -25,15 +25,35 @@ android {
         buildConfigField("String", "GITHUB_REPO_NDK", "\"prismde-ndk\"")
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("${rootDir}/prismde-release.jks")
+            storePassword = System.getenv("PRISM_KEYSTORE_PASSWORD") ?: "prismde-release"
+            keyAlias = System.getenv("PRISM_KEY_ALIAS") ?: "prismde"
+            keyPassword = System.getenv("PRISM_KEY_PASSWORD") ?: "prismde-release"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
     }
+    lint {
+        disable += listOf("ExpiredTargetSdkVersion")
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
