@@ -57,6 +57,7 @@ import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
 import com.prismde.feature_build.BuildViewModel
 import com.prismde.feature_build.components.BuildBottomSheet
+import com.prismde.feature_build.engine.AiConfig
 import com.prismde.feature_build.components.ExportSoDialog
 import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import com.prismde.feature_settings.BuildPresetDialog
@@ -74,7 +75,7 @@ fun EditorScreen(
     editorViewModel: EditorViewModel,
     buildViewModel: BuildViewModel,
     activeNdk: NdkVersion,
-    geminiApiKey: String,
+    aiConfig: AiConfig,
     onSelectProject: (Project) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -385,7 +386,7 @@ fun EditorScreen(
                     allLines.drop(start).take(80).joinToString("\n")
                 }
 
-                val fixResult = buildViewModel.generateAiFix(diagnostic, contextSnippet, geminiApiKey)
+                val fixResult = buildViewModel.generateAiFix(diagnostic, contextSnippet, aiConfig)
                 val replacementCode = fixResult.getOrNull()
 
                 if (replacementCode.isNullOrBlank()) {
@@ -480,7 +481,7 @@ fun EditorScreen(
                 val start = (diagnostic.line - 40).coerceAtLeast(0)
                 allLines.drop(start).take(80).joinToString("\n")
             }
-            buildViewModel.askAiExplanation(diagnostic, contextSnippet, geminiApiKey)
+            buildViewModel.askAiExplanation(diagnostic, contextSnippet, aiConfig)
         },
         aiExplanations = buildState.aiExplanations,
         aiLoadingMap = buildState.aiLoadingMap

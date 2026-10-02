@@ -35,6 +35,7 @@ import com.prismde.core.model.Project
 import com.prismde.core.model.ProjectType
 import com.prismde.core.theme.PrismTheme
 import com.prismde.feature_build.BuildViewModel
+import com.prismde.feature_build.engine.AiConfig
 import com.prismde.feature_build.engine.ProjectDetector
 import com.prismde.feature_editor.EditorScreen
 import com.prismde.feature_editor.EditorViewModel
@@ -98,7 +99,7 @@ class MainActivity : ComponentActivity() {
             val isSetupCompleted by settingsRepo.isSetupCompletedFlow.collectAsState(initial = settingsRepo.isSetupCompletedSync)
             val darkMode by settingsRepo.darkModeFlow.collectAsState(initial = "system")
             val dynamicColor by settingsRepo.dynamicColorFlow.collectAsState(initial = true)
-            val geminiKey by settingsRepo.geminiApiKeyFlow.collectAsState(initial = "")
+            val aiConfig by settingsRepo.aiConfigFlow.collectAsState(initial = AiConfig())
 
             val ndkState by ndkViewModel.uiState.collectAsState()
             val updateState by updateViewModel.uiState.collectAsState()
@@ -183,7 +184,7 @@ class MainActivity : ComponentActivity() {
                                     editorViewModel = editorViewModel,
                                     buildViewModel = buildViewModel,
                                     activeNdk = activeNdk,
-                                    geminiApiKey = geminiKey,
+                                    aiConfig = aiConfig,
                                     onSelectProject = handleSelectProject
                                 )
                                 1 -> FileTreeScreen(

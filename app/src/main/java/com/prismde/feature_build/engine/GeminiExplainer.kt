@@ -10,27 +10,38 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
-class GeminiExplainer(private val client: OkHttpClient) {
+data class AiConfig(
+    val provider: String = "gemini_api", // "gemini_api" or "antigravity"
+    val apiKey: String = "",
+    val model: String = "gemini-2.5-flash",
+    val antigravityAccessToken: String = "",
+    val antigravityRefreshToken: String = ""
+)
 
-    // Priority models list: modern 2.x and 1.5 variants. If a model returns 404, fallback to next.
+class GeminiExplainer(
+    private val client: OkHttpClient,
+    private val antigravityAuthManager: AntigravityAuthManager = AntigravityAuthManager(client)
+) {
+
+    // Default fallback list for Gemini API
     private val candidateModels = listOf(
         "gemini-2.5-flash",
+        "gemini-2.5-pro",
         "gemini-2.0-flash",
+        "gemini-2.0-flash-thinking-exp",
         "gemini-1.5-flash-latest",
         "gemini-1.5-flash",
-        "gemini-2.5-pro",
         "gemini-1.5-pro",
         "gemini-pro"
     )
 
     /**
      * PROMPT 1: Human-readable diagnostic analysis and explanation.
-     * Focused entirely on teaching and explaining the issue to the developer in Russian.
      */
     suspend fun explainDiagnostic(
         diagnostic: Diagnostic,
         sourceCodeContext: String,
-        apiKey: String
+        config: AiConfig
     ): Result<String> {
         val prompt = """
             Ты эксперт по разработке на C/C++ и Android NDK в мобильной IDE PrismDE.
@@ -51,17 +62,24 @@ class GeminiExplainer(private val client: OkHttpClient) {
             2. Рекомендации и правильный подход к решению.
         """.trimIndent()
 
-        return executeGeminiPrompt(prompt, apiKey)
+        return executeAiPrompt(prompt, config)
+    }
+
+    suspend fun explainDiagnostic(
+        diagnostic: Diagnostic,
+        sourceCodeContext: String,
+        apiKey: String
+    ): Result<String> {
+        return explainDiagnostic(diagnostic, sourceCodeContext, AiConfig(provider = "gemini_api", apiKey = apiKey))
     }
 
     /**
      * PROMPT 2: Specialized machine code generator.
-     * Generates ONLY the exact replacement code slice for editor automation, with zero markdown noise or commentary.
      */
     suspend fun generateCodeFix(
         diagnostic: Diagnostic,
         sourceCodeContext: String,
-        apiKey: String
+        config: AiConfig
     ): Result<String> {
         val prompt = """
             Ты инструмент автоматического исправления кода в мобильной IDE PrismDE.
@@ -82,21 +100,24 @@ class GeminiExplainer(private val client: OkHttpClient) {
             3. Если код оборачивается в блок, используй только сам код. Никаких лишних комментариев.
         """.trimIndent()
 
-        val rawResult = executeGeminiPrompt(prompt, apiKey)
+        val rawResult = executeAiPrompt(prompt, config)
         return rawResult.map { rawText ->
             stripMarkdownCodeBlocks(rawText)
         }
     }
 
-    private suspend fun executeGeminiPrompt(
-        prompt: String,
+    suspend fun generateCodeFix(
+        diagnostic: Diagnostic,
+        sourceCodeContext: String,
         apiKey: String
-    ): Result<String> = withContext(Dispatchers.IO) {
-        val cleanKey = apiKey.trim()
-        if (cleanKey.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("Ключ Gemini API не настроен в Настройках."))
-        }
+    ): Result<String> {
+        return generateCodeFix(diagnostic, sourceCodeContext, AiConfig(provider = "gemini_api", apiKey = apiKey))
+    }
 
+    private suspend fun executeAiPrompt(
+        prompt: String,
+        config: AiConfig
+    ): Result<String> = withContext(Dispatchers.IO) {
         val jsonBody = JSONObject().apply {
             val contents = JSONArray().apply {
                 put(JSONObject().apply {
@@ -112,9 +133,30 @@ class GeminiExplainer(private val client: OkHttpClient) {
         }
 
         val mediaType = "application/json".toMediaType()
+
+        if (config.provider == "antigravity" && config.antigravityAccessToken.isNotBlank()) {
+            return@withContext executeAntigravityRequest(prompt, jsonBody, mediaType, config)
+        }
+
+        // Standard Gemini API Key Flow
+        val cleanKey = config.apiKey.trim()
+        if (cleanKey.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Ключ Gemini API не настроен в Настройках (или войдите в Google Antigravity)."))
+        }
+
+        val modelsToTry = mutableListOf<String>()
+        if (config.model.isNotBlank()) {
+            modelsToTry.add(config.model.trim())
+        }
+        for (m in candidateModels) {
+            if (!modelsToTry.contains(m)) {
+                modelsToTry.add(m)
+            }
+        }
+
         var lastErrorMsg = "Не удалось связаться с Gemini API."
 
-        for (model in candidateModels) {
+        for (model in modelsToTry) {
             val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey"
             val request = Request.Builder()
                 .url(url)
@@ -139,7 +181,6 @@ class GeminiExplainer(private val client: OkHttpClient) {
                         }
                     }
 
-                    // Parse Google's error response body
                     val errorDetail = try {
                         val errObj = JSONObject(responseStr).optJSONObject("error")
                         errObj?.optString("message") ?: responseStr
@@ -149,7 +190,6 @@ class GeminiExplainer(private val client: OkHttpClient) {
 
                     lastErrorMsg = "Gemini ($model, HTTP ${response.code}): $errorDetail"
 
-                    // If 404 (model not found / deprecated for this tier), continue to next model
                     if (response.code == 404) {
                         null
                     } else {
@@ -166,6 +206,94 @@ class GeminiExplainer(private val client: OkHttpClient) {
         }
 
         Result.failure(Exception(lastErrorMsg))
+    }
+
+    private suspend fun executeAntigravityRequest(
+        prompt: String,
+        jsonBody: JSONObject,
+        mediaType: okhttp3.MediaType,
+        config: AiConfig
+    ): Result<String> {
+        var token = config.antigravityAccessToken
+
+        // Antigravity models (Gemini 3 series or Claude)
+        val selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.8-flash-high"
+        
+        // 1. Try via Cloudcode Antigravity internal endpoint
+        val cloudcodePayload = JSONObject().apply {
+            put("model", selectedModel)
+            put("prompt", prompt)
+            put("contents", jsonBody.getJSONArray("contents"))
+        }
+
+        val requestCloudcode = Request.Builder()
+            .url("https://cloudcode-pa.googleapis.com/v1internal:generateContent")
+            .header("Authorization", "Bearer $token")
+            .header("Content-Type", "application/json")
+            .post(cloudcodePayload.toString().toRequestBody(mediaType))
+            .build()
+
+        try {
+            val res = client.newCall(requestCloudcode).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = JSONObject(body)
+                    val text = json.optString("text").ifBlank {
+                        json.optJSONArray("candidates")?.optJSONObject(0)
+                            ?.optJSONObject("content")?.optJSONArray("parts")
+                            ?.optJSONObject(0)?.optString("text") ?: ""
+                    }
+                    if (text.isNotBlank()) {
+                        Result.success(text)
+                    } else null
+                } else null
+            }
+            if (res != null) return res
+        } catch (_: Exception) {}
+
+        // 2. Fallback to Google Generative Language using OAuth Bearer token
+        val genericModel = selectedModel.removePrefix("gemini-").let { "gemini-$it" }
+        val models = listOf(selectedModel, genericModel, "gemini-2.5-flash", "gemini-2.0-flash")
+
+        for (m in models) {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent"
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $token")
+                .header("Content-Type", "application/json")
+                .post(jsonBody.toString().toRequestBody(mediaType))
+                .build()
+
+            try {
+                val callResult = client.newCall(request).execute().use { response ->
+                    val responseStr = response.body?.string() ?: ""
+                    if (response.isSuccessful) {
+                        val responseJson = JSONObject(responseStr)
+                        val candidates = responseJson.optJSONArray("candidates")
+                        if (candidates != null && candidates.length() > 0) {
+                            val firstCandidate = candidates.getJSONObject(0)
+                            val content = firstCandidate.getJSONObject("content")
+                            val parts = content.getJSONArray("parts")
+                            val text = parts.getJSONObject(0).getString("text")
+                            return@use Result.success(text)
+                        }
+                    }
+                    null
+                }
+                if (callResult != null) return callResult
+            } catch (_: Exception) {}
+        }
+
+        // If direct token was unauthorized and we have a refresh token, attempt refresh
+        if (config.antigravityRefreshToken.isNotBlank()) {
+            val refreshResult = antigravityAuthManager.refreshAccessToken(config.antigravityRefreshToken)
+            val newToken = refreshResult.getOrNull()
+            if (newToken != null) {
+                return executeAntigravityRequest(prompt, jsonBody, mediaType, config.copy(antigravityAccessToken = newToken))
+            }
+        }
+
+        return Result.failure(Exception("Не удалось получить ответ от Antigravity. Проверьте авторизацию в Настройках."))
     }
 
     private fun stripMarkdownCodeBlocks(rawText: String): String {

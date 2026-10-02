@@ -7,6 +7,7 @@ import com.prismde.core.model.Diagnostic
 import com.prismde.core.model.DiagnosticSeverity
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
+import com.prismde.feature_build.engine.AiConfig
 import com.prismde.feature_build.engine.BuildOutputEvent
 import com.prismde.feature_build.engine.BuildProcessRunner
 import com.prismde.feature_build.engine.GeminiExplainer
@@ -98,13 +99,13 @@ class BuildViewModel : ViewModel() {
         }
     }
 
-    fun askAiExplanation(diagnostic: Diagnostic, sourceContext: String, apiKey: String) {
+    fun askAiExplanation(diagnostic: Diagnostic, sourceContext: String, config: AiConfig) {
         val currentLoading = _uiState.value.aiLoadingMap.toMutableMap()
         currentLoading[diagnostic.id] = true
         _uiState.value = _uiState.value.copy(aiLoadingMap = currentLoading)
 
         viewModelScope.launch {
-            val result = geminiExplainer.explainDiagnostic(diagnostic, sourceContext, apiKey)
+            val result = geminiExplainer.explainDiagnostic(diagnostic, sourceContext, config)
             val updatedLoading = _uiState.value.aiLoadingMap.toMutableMap()
             updatedLoading[diagnostic.id] = false
 
@@ -118,8 +119,16 @@ class BuildViewModel : ViewModel() {
         }
     }
 
+    fun askAiExplanation(diagnostic: Diagnostic, sourceContext: String, apiKey: String) {
+        askAiExplanation(diagnostic, sourceContext, AiConfig(provider = "gemini_api", apiKey = apiKey))
+    }
+
+    suspend fun generateAiFix(diagnostic: Diagnostic, sourceContext: String, config: AiConfig): Result<String> {
+        return geminiExplainer.generateCodeFix(diagnostic, sourceContext, config)
+    }
+
     suspend fun generateAiFix(diagnostic: Diagnostic, sourceContext: String, apiKey: String): Result<String> {
-        return geminiExplainer.generateCodeFix(diagnostic, sourceContext, apiKey)
+        return geminiExplainer.generateCodeFix(diagnostic, sourceContext, AiConfig(provider = "gemini_api", apiKey = apiKey))
     }
 
     fun hideBottomSheet() {
