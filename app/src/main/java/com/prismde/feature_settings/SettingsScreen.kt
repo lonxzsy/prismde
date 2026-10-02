@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.OpenInBrowser
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.SystemUpdate
+import com.prismde.feature_setup.DonationModalSheet
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -106,7 +108,7 @@ fun SettingsScreen(
 
     val aiProvider by settingsRepository.aiProviderFlow.collectAsState(initial = "gemini_api")
     val geminiModel by settingsRepository.geminiModelFlow.collectAsState(initial = "gemini-2.5-flash")
-    val antigravityModel by settingsRepository.antigravityModelFlow.collectAsState(initial = "gemini-3.6-flash-high")
+    val antigravityModel by settingsRepository.antigravityModelFlow.collectAsState(initial = "gemini-3.8-flash")
     val antigravityAccessToken by settingsRepository.antigravityAccessTokenFlow.collectAsState(initial = "")
     val antigravityRefreshToken by settingsRepository.antigravityRefreshTokenFlow.collectAsState(initial = "")
     val antigravityUserEmail by settingsRepository.antigravityUserEmailFlow.collectAsState(initial = "")
@@ -125,13 +127,21 @@ fun SettingsScreen(
     var isRefreshingQuota by remember { mutableStateOf(false) }
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var dynamicAntigravityModels by remember { mutableStateOf(AntigravityAuthManager.DEFAULT_ANTIGRAVITY_MODELS) }
+    var showDonationSheet by remember { mutableStateOf(false) }
 
-    // Auto-migrate stale / non-existent model ids to a valid model
+    // Auto-migrate stale / non-existent model ids to the curated 7 models
     LaunchedEffect(antigravityModel) {
-        if (antigravityModel.startsWith("gemini-2") || antigravityModel.startsWith("gemini-1") ||
-            antigravityModel == "gemini-3.8-flash-high" || antigravityModel == "gemini-3.7-flash-medium" ||
-            antigravityModel == "gemini-3.7-flash-high" || antigravityModel.isBlank()) {
-            settingsRepository.setAntigravityModel("gemini-3.6-flash-high")
+        val validIds = AntigravityAuthManager.DEFAULT_ANTIGRAVITY_MODELS.map { it.id }.toSet()
+        if (antigravityModel !in validIds) {
+            val migrated = when (antigravityModel) {
+                "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low" -> "gemini-3.6-flash"
+                "gemini-pro-agent", "gemini-3.1-pro-low", "gemini-3-pro" -> "gemini-3.1-pro"
+                "claude-sonnet-4-6", "claude-sonnet-4-20250514" -> "claude-sonnet-4.6"
+                "claude-opus-4-6-thinking", "claude-opus-4.5" -> "claude-opus-4.6"
+                "gpt-oss-120b-medium" -> "gpt-oss-120b"
+                else -> "gemini-3.8-flash"
+            }
+            settingsRepository.setAntigravityModel(migrated)
         }
     }
 
@@ -855,9 +865,13 @@ fun SettingsScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        val display = dynamicAntigravityModels.find { it.id == antigravityModel }?.displayName ?: antigravityModel
+                                        val selectedModelObj = dynamicAntigravityModels.find { it.id == antigravityModel }
+                                        val display = selectedModelObj?.displayName ?: antigravityModel
                                         Text(text = display, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                        Text(text = "Идентификатор: $antigravityModel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (!selectedModelObj?.description.isNullOrBlank()) {
+                                            Text(text = selectedModelObj!!.description!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                        }
+                                        Text(text = "Идентификатор: $antigravityModel", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
                                 }
@@ -870,9 +884,12 @@ fun SettingsScreen(
                                 dynamicAntigravityModels.forEach { m ->
                                     DropdownMenuItem(
                                         text = {
-                                            Column {
+                                            Column(modifier = Modifier.padding(vertical = 2.dp)) {
                                                 Text(m.displayName, fontWeight = FontWeight.SemiBold)
-                                                Text(m.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                if (!m.description.isNullOrBlank()) {
+                                                    Text(m.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                                }
+                                                Text(m.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         },
                                         onClick = {
@@ -1006,7 +1023,62 @@ fun SettingsScreen(
             }
         }
 
+        Spacer(Modifier.height(20.dp))
+
+        // SECTION: Support / Donation
+        SettingsSectionHeader(title = "Поддержка проекта", icon = Icons.Rounded.Favorite)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color(0xFFE91E63).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Favorite,
+                            contentDescription = null,
+                            tint = Color(0xFFE91E63),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Донат на развитие PrismDE", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text("Поддержите автора проекта донатом на кофе или развитие IDE", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                OutlinedButton(
+                    onClick = { showDonationSheet = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Color(0xFFE91E63), modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Реквизиты для доната")
+                }
+            }
+        }
+
         Spacer(Modifier.height(40.dp))
+    }
+
+    if (showDonationSheet) {
+        DonationModalSheet(
+            onDismiss = { showDonationSheet = false }
+        )
     }
 }
 

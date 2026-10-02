@@ -48,27 +48,24 @@ class GeminiExplainer(
 
             ТРЕБОВАНИЯ К ОТВЕТУ (БЕЗ ВОДЫ):
             - Никаких приветствий, вводных вежливых фраз и общих рассуждений. Сразу к делу.
+            - НЕ используй никакие эмодзи в тексте ответа.
             - Ответ должен состоять ТОЛЬКО из двух кратких и конкретных пунктов:
             
-            1. 🔍 **Причина:** (1-2 ёмких предложения, что конкретно не так на строке ${diagnostic.line}).
-            2. 💡 **Как исправить:** (конкретное указание и краткий пример исправленного кода).
+            1. **Причина:** (1-2 ёмких предложения, что конкретно не так на строке ${diagnostic.line}).
+            2. **Как исправить:** (конкретное указание и краткий пример исправленного кода).
         """.trimIndent()
 
         val rawResult = executeAiPrompt(prompt, config)
         return rawResult.map { text ->
             val modelName = if (config.provider == "antigravity") {
-                val m = config.model.trim()
-                if (m.isBlank() || m.startsWith("gemini-2") || m.startsWith("gemini-1") ||
-                    m == "gemini-3.8-flash-high" || m == "gemini-3.7-flash-medium" || m == "gemini-3.7-flash-high") {
-                    "gemini-3.6-flash-high"
-                } else m
+                config.model.trim().ifBlank { "gemini-3.8-flash" }
             } else {
                 config.model.trim().ifBlank { "gemini-2.5-flash" }
             }
             val header = if (config.provider == "antigravity") {
-                "> 🤖 **Сервис:** Google Antigravity • Модель `$modelName`\n\n"
+                "> **Сервис:** Google Antigravity • **Модель:** `$modelName`\n\n"
             } else {
-                "> 🤖 **Сервис:** Google AI Studio • Модель `$modelName`\n\n"
+                "> **Сервис:** Google AI Studio • **Модель:** `$modelName`\n\n"
             }
             header + text
         }
@@ -221,12 +218,8 @@ class GeminiExplainer(
         hasRetriedToken: Boolean = false
     ): Result<String> {
         val token = config.antigravityAccessToken
-        var selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.6-flash-high"
-        if (selectedModel.startsWith("gemini-2") || selectedModel.startsWith("gemini-1") ||
-            selectedModel == "gemini-3.8-flash-high" || selectedModel == "gemini-3.7-flash-medium" ||
-            selectedModel == "gemini-3.7-flash-high") {
-            selectedModel = "gemini-3.6-flash-high"
-        }
+        val rawModel = config.model.trim().ifBlank { "gemini-3.8-flash" }
+        val selectedModel = mapAntigravityRuntimeModel(rawModel)
 
         val project = antigravityAuthManager.loadCodeAssist(token)
 
@@ -340,5 +333,30 @@ class GeminiExplainer(
             return singleLineMatch.groupValues[1].trim()
         }
         return trimmed
+    }
+
+    companion object {
+        fun mapAntigravityRuntimeModel(configModel: String): String {
+            val m = configModel.trim().lowercase()
+            return when (m) {
+                "gemini-3.8-flash" -> "gemini-3.8-flash-tiered"
+                "gemini-3.7-flash" -> "gemini-3.7-flash-tiered"
+                "gemini-3.6-flash" -> "gemini-3.6-flash-high"
+                "gemini-3.1-pro", "gemini-3-pro" -> "gemini-pro-agent"
+                "claude-sonnet-4.6", "claude-sonnet-4-20250514", "claude-sonnet-4-6" -> "claude-sonnet-4-6"
+                "claude-opus-4.6", "claude-opus-4.5", "claude-opus-4-6-thinking" -> "claude-opus-4-6-thinking"
+                "gpt-oss-120b", "gpt-oss-120b-medium" -> "gpt-oss-120b-medium"
+                else -> when {
+                    m.startsWith("claude-sonnet") -> "claude-sonnet-4-6"
+                    m.startsWith("claude-opus") -> "claude-opus-4-6-thinking"
+                    m.startsWith("gpt-oss") -> "gpt-oss-120b-medium"
+                    m.startsWith("gemini-3.8") -> "gemini-3.8-flash-tiered"
+                    m.startsWith("gemini-3.7") -> "gemini-3.7-flash-tiered"
+                    m.startsWith("gemini-3.6") -> "gemini-3.6-flash-high"
+                    m.startsWith("gemini-3.1") || m.startsWith("gemini-3-pro") -> "gemini-pro-agent"
+                    else -> "gemini-3.8-flash-tiered"
+                }
+            }
+        }
     }
 }

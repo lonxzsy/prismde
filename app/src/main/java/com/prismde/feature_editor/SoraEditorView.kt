@@ -31,6 +31,7 @@ fun SoraEditorView(
     diagnostics: List<Diagnostic>,
     targetJumpDiagnostic: Diagnostic?,
     diffGreenRange: IntRange? = null,
+    diffRedRange: IntRange? = null,
     modifier: Modifier = Modifier,
     onEditorReady: (CodeEditor) -> Unit = {}
 ) {
@@ -112,12 +113,22 @@ fun SoraEditorView(
                 editor.setEditorLanguage(PrismCodeLanguage.forFile(file))
             }
 
-            // Update diff green highlighting in language
+            // Update diff green and red highlighting in language
             val currentLang = editor.editorLanguage
-            if (currentLang is PrismCodeLanguage && currentLang.diffGreenRange != diffGreenRange) {
-                currentLang.diffGreenRange = diffGreenRange
-                editor.rerunAnalysis()
-                editor.postInvalidate()
+            if (currentLang is PrismCodeLanguage) {
+                var needsInvalidate = false
+                if (currentLang.diffGreenRange != diffGreenRange) {
+                    currentLang.diffGreenRange = diffGreenRange
+                    needsInvalidate = true
+                }
+                if (currentLang.diffRedRange != diffRedRange) {
+                    currentLang.diffRedRange = diffRedRange
+                    needsInvalidate = true
+                }
+                if (needsInvalidate) {
+                    editor.rerunAnalysis()
+                    editor.postInvalidate()
+                }
             }
 
             // Only update text if different to avoid cursor resetting
@@ -229,5 +240,13 @@ private fun buildEditorColorScheme(colorScheme: ColorScheme, isDark: Boolean): E
             android.graphics.Color.argb(65, 76, 175, 80)
         }
         setColor(EditorColorScheme.STATIC_SPAN_BACKGROUND, diffGreenBg)
+
+        // Diff glowing red background for lines being removed
+        val diffRedBg = if (isDark) {
+            android.graphics.Color.argb(90, 229, 57, 53)
+        } else {
+            android.graphics.Color.argb(70, 239, 83, 80)
+        }
+        setColor(PrismCodeLanguage.DIFF_RED_SPAN_BACKGROUND, diffRedBg)
     }
 }

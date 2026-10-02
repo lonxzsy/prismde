@@ -89,9 +89,11 @@ fun EditorScreen(
     val coroutineScope = rememberCoroutineScope()
     var aiApplyingMessage by remember { mutableStateOf<String?>(null) }
     var pendingAiDiff by remember { mutableStateOf<PendingAiDiff?>(null) }
+    var diffRedRange by remember { mutableStateOf<IntRange?>(null) }
 
     LaunchedEffect(editorState.activeFile) {
         pendingAiDiff = null
+        diffRedRange = null
     }
 
     Scaffold(
@@ -104,11 +106,13 @@ fun EditorScreen(
                 hasPendingAiDiff = pendingAiDiff != null,
                 onAcceptChanges = {
                     pendingAiDiff = null
+                    diffRedRange = null
                     codeEditorInstance?.let { editor ->
                         editor.setSelection(editor.cursor.leftLine, editor.cursor.leftColumn)
                         val lang = editor.editorLanguage
                         if (lang is PrismCodeLanguage) {
                             lang.diffGreenRange = null
+                            lang.diffRedRange = null
                             editor.rerunAnalysis()
                             editor.postInvalidate()
                         }
@@ -116,6 +120,7 @@ fun EditorScreen(
                     editorViewModel.saveActiveFile()
                 },
                 onDiscardChanges = {
+                    diffRedRange = null
                     val diff = pendingAiDiff
                     if (diff != null) {
                         codeEditorInstance?.let { editor ->
@@ -124,6 +129,7 @@ fun EditorScreen(
                             val lang = editor.editorLanguage
                             if (lang is PrismCodeLanguage) {
                                 lang.diffGreenRange = null
+                                lang.diffRedRange = null
                                 editor.rerunAnalysis()
                                 editor.postInvalidate()
                             }
@@ -276,6 +282,7 @@ fun EditorScreen(
                         diagnostics = buildState.diagnostics,
                         targetJumpDiagnostic = editorState.targetJumpDiagnostic,
                         diffGreenRange = pendingAiDiff?.let { it.startLine..it.endLine },
+                        diffRedRange = diffRedRange,
                         onEditorReady = { editor ->
                             codeEditorInstance = editor
                         }
@@ -429,11 +436,29 @@ fun EditorScreen(
                 aiApplyingMessage = "AI применяет изменения..."
                 kotlinx.coroutines.delay(100)
 
-                // 3. Clear the exact slice to replace
+                // 3. Highlight the exact slice that will be removed with glowing red!
                 val safeStart = plan.startLine.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
                 val safeEnd = plan.endLine.coerceIn(safeStart, (editor.lineCount - 1).coerceAtLeast(0))
                 val endLineLen = editor.text.getColumnCount(safeEnd)
 
+                val lang = editor.editorLanguage
+                diffRedRange = safeStart..safeEnd
+                if (lang is PrismCodeLanguage) {
+                    lang.diffRedRange = safeStart..safeEnd
+                    editor.rerunAnalysis()
+                    editor.postInvalidate()
+                }
+                editor.jumpToLine(safeStart)
+                editor.ensureSelectionVisible()
+
+                aiApplyingMessage = "Удаление заменяемого кода..."
+                kotlinx.coroutines.delay(450)
+
+                // Clear the red range and delete the slice to replace
+                diffRedRange = null
+                if (lang is PrismCodeLanguage) {
+                    lang.diffRedRange = null
+                }
                 editor.text.delete(safeStart, 0, safeEnd, endLineLen)
                 editor.setSelection(safeStart, 0)
                 editor.jumpToLine(safeStart)
@@ -470,7 +495,6 @@ fun EditorScreen(
                     endLine = newEndLine
                 )
 
-                val lang = editor.editorLanguage
                 if (lang is PrismCodeLanguage) {
                     lang.diffGreenRange = diffRange
                     editor.rerunAnalysis()
@@ -479,7 +503,7 @@ fun EditorScreen(
 
                 editorViewModel.updateContent(editor.text.toString())
 
-                aiApplyingMessage = "✔ Изменения внесены. Проверьте и примите или отклоните."
+                aiApplyingMessage = "Изменения внесены. Проверьте и примите или отклоните."
                 kotlinx.coroutines.delay(3000)
                 aiApplyingMessage = null
             }

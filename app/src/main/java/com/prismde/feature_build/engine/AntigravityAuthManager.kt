@@ -16,7 +16,8 @@ data class AntigravityModel(
     val id: String,
     val displayName: String,
     val remainingFraction: Float? = null,
-    val resetTime: String? = null
+    val resetTime: String? = null,
+    val description: String? = null
 )
 
 data class AntigravityTokenInfo(
@@ -96,29 +97,51 @@ class AntigravityAuthManager(
                 "https://www.googleapis.com/auth/experimentsandconfigs"
 
         val DEFAULT_ANTIGRAVITY_MODELS = listOf(
-            // Claude & GPT
-            AntigravityModel("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)", 1.0f),
-            AntigravityModel("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)", 1.0f),
-            AntigravityModel("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)", 1.0f),
+            // Screenshot 1: Gemini 3 series
+            AntigravityModel(
+                id = "gemini-3.8-flash",
+                displayName = "Gemini 3.8 Flash",
+                remainingFraction = 1.0f,
+                description = "Базовая быстрая модель по умолчанию; обслуживает фоновые субагенты."
+            ),
+            AntigravityModel(
+                id = "gemini-3.7-flash",
+                displayName = "Gemini 3.7 Flash",
+                remainingFraction = 1.0f,
+                description = "Сбалансированный агент для быстрых правок и рефакторинга."
+            ),
+            AntigravityModel(
+                id = "gemini-3.6-flash",
+                displayName = "Gemini 3.6 Flash",
+                remainingFraction = 1.0f,
+                description = "Предыдущая ревизия линейки Flash."
+            ),
+            AntigravityModel(
+                id = "gemini-3.1-pro",
+                displayName = "Gemini 3.1 Pro",
+                remainingFraction = 1.0f,
+                description = "Флагманский агент для глубокого планирования архитектуры ( /plan )."
+            ),
 
-            // Gemini 3.6 Flash series (all reflections)
-            AntigravityModel("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)", 1.0f),
-            AntigravityModel("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)", 1.0f),
-            AntigravityModel("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)", 1.0f),
-
-            // Gemini 3.1 Pro series
-            AntigravityModel("gemini-pro-agent", "Gemini 3.1 Pro (High)", 1.0f),
-            AntigravityModel("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)", 1.0f),
-
-            // Gemini 3.5 Flash series (all reflections)
-            AntigravityModel("gemini-3-flash-agent", "Gemini 3.5 Flash (High)", 1.0f),
-            AntigravityModel("gemini-3.5-flash-low", "Gemini 3.5 Flash (Medium)", 1.0f),
-            AntigravityModel("gemini-3.5-flash-extra-low", "Gemini 3.5 Flash (Low)", 1.0f),
-            AntigravityModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", 1.0f),
-
-            // Gemini 3 Flash & 3.1 Flash Lite
-            AntigravityModel("gemini-3-flash", "Gemini 3 Flash", 1.0f),
-            AntigravityModel("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", 1.0f)
+            // Screenshot 2: Claude & GPT
+            AntigravityModel(
+                id = "claude-sonnet-4.6",
+                displayName = "Claude Sonnet 4.6 (Thinking)",
+                remainingFraction = 1.0f,
+                description = "Написание и пошаговая реализация кода."
+            ),
+            AntigravityModel(
+                id = "claude-opus-4.6",
+                displayName = "Claude Opus 4.6 (Thinking)",
+                remainingFraction = 1.0f,
+                description = "Архитектурный аудит и валидация логики сложных систем."
+            ),
+            AntigravityModel(
+                id = "gpt-oss-120b",
+                displayName = "GPT-OSS 120B",
+                remainingFraction = 1.0f,
+                description = "Локально-ориентированная открытая модель рассуждений."
+            )
         )
 
         val DEFAULT_GEMINI_API_MODELS = listOf(
@@ -461,15 +484,6 @@ class AntigravityAuthManager(
             }
         } catch (_: Exception) {}
 
-        // If models API returned empty, use DEFAULT_ANTIGRAVITY_MODELS
-        val finalModels = if (modelsList.isNotEmpty()) {
-            // Sort models by default priority order
-            val priorityMap = DEFAULT_ANTIGRAVITY_MODELS.mapIndexed { index, m -> m.id to index }.toMap()
-            modelsList.sortedBy { priorityMap[it.id] ?: 99 }
-        } else {
-            DEFAULT_ANTIGRAVITY_MODELS
-        }
-
         // 2. Fetch User Quota Summary (groups: Gemini 5h & weekly, Claude/GPT 5h & weekly)
         try {
             val quotaReq = Request.Builder()
@@ -493,7 +507,11 @@ class AntigravityAuthManager(
 
         // Determine primary quota fraction and reset time from Gemini 5h limit or first bucket
         val geminiGroup = quotaGroups.firstOrNull { it.groupName.contains("Gemini", ignoreCase = true) }
-        val gemini5h = geminiGroup?.buckets?.firstOrNull { it.window == "5h" }
+        val gemini5h = geminiGroup?.buckets?.firstOrNull { it.window == "5h" } ?: geminiGroup?.buckets?.firstOrNull()
+
+        val claudeGroup = quotaGroups.firstOrNull { it.groupName.contains("Claude", ignoreCase = true) || it.groupName.contains("GPT", ignoreCase = true) }
+        val claude5h = claudeGroup?.buckets?.firstOrNull { it.window == "5h" } ?: claudeGroup?.buckets?.firstOrNull()
+
         if (gemini5h != null) {
             primaryQuotaFraction = gemini5h.remainingFraction
             primaryResetTime = gemini5h.resetTime
@@ -502,6 +520,20 @@ class AntigravityAuthManager(
             if (firstBucket != null) {
                 primaryQuotaFraction = firstBucket.remainingFraction
                 primaryResetTime = firstBucket.resetTime
+            }
+        }
+
+        // Return the exact 7 Antigravity models from screenshots with assigned quota & reset times
+        val finalModels = DEFAULT_ANTIGRAVITY_MODELS.map { model ->
+            val isClaudeOrGpt = model.id.startsWith("claude") || model.id.startsWith("gpt")
+            val targetBucket = if (isClaudeOrGpt) (claude5h ?: gemini5h) else gemini5h
+            if (targetBucket != null) {
+                model.copy(
+                    remainingFraction = targetBucket.remainingFraction,
+                    resetTime = targetBucket.resetTime
+                )
+            } else {
+                model
             }
         }
 

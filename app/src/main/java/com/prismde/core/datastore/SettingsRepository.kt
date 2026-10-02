@@ -68,9 +68,20 @@ class SettingsRepository(private val context: Context) {
     val aiProviderFlow: Flow<String> = context.dataStore.data.map { it[KEY_AI_PROVIDER] ?: "gemini_api" }
     val geminiModelFlow: Flow<String> = context.dataStore.data.map { it[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash" }
     val antigravityModelFlow: Flow<String> = context.dataStore.data.map {
-        val model = it[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.6-flash-high"
-        if (model == "gemini-3.8-flash-high" || model == "gemini-3.7-flash-medium" || model == "gemini-3.7-flash-high" || model.isBlank()) {
-            "gemini-3.6-flash-high"
+        val model = it[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.8-flash"
+        val validIds = setOf(
+            "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro",
+            "claude-sonnet-4.6", "claude-opus-4.6", "gpt-oss-120b"
+        )
+        if (model !in validIds) {
+            when (model) {
+                "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low" -> "gemini-3.6-flash"
+                "gemini-pro-agent", "gemini-3.1-pro-low", "gemini-3-pro" -> "gemini-3.1-pro"
+                "claude-sonnet-4-6", "claude-sonnet-4-20250514" -> "claude-sonnet-4.6"
+                "claude-opus-4-6-thinking", "claude-opus-4.5" -> "claude-opus-4.6"
+                "gpt-oss-120b-medium" -> "gpt-oss-120b"
+                else -> "gemini-3.8-flash"
+            }
         } else {
             model
         }
