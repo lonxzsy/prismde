@@ -31,10 +31,30 @@ data class AntigravityUserInfo(
     val picture: String?
 )
 
+data class QuotaBucket(
+    val bucketId: String,
+    val displayName: String,
+    val window: String,
+    val resetTime: String?,
+    val description: String?,
+    val remainingFraction: Float
+) {
+    val remainingPercent: Int
+        get() = (remainingFraction * 100).toInt().coerceIn(0, 100)
+}
+
+data class QuotaGroup(
+    val groupName: String,
+    val description: String?,
+    val buckets: List<QuotaBucket>
+)
+
 data class AntigravityQuotaInfo(
     val models: List<AntigravityModel>,
     val averageQuotaFraction: Float,
-    val resetTime: String?
+    val resetTime: String?,
+    val groups: List<QuotaGroup> = emptyList(),
+    val rawSummaryJson: String? = null
 )
 
 class AntigravityAuthManager(
@@ -76,17 +96,29 @@ class AntigravityAuthManager(
                 "https://www.googleapis.com/auth/experimentsandconfigs"
 
         val DEFAULT_ANTIGRAVITY_MODELS = listOf(
-            AntigravityModel("claude-sonnet-4-6", "Claude Sonnet 4.6 (Мгновенная, Thinking)", 1.0f),
-            AntigravityModel("gemini-2.5-flash", "Gemini 2.5 Flash (Мгновенная)", 1.0f),
-            AntigravityModel("gemini-3.6-flash-high", "Gemini 3.6 Flash (High, глубокий анализ)", 1.0f),
-            AntigravityModel("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)", 1.0f),
-            AntigravityModel("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)", 1.0f),
-            AntigravityModel("gemini-3-flash", "Gemini 3 Flash", 1.0f),
+            // Claude & GPT
+            AntigravityModel("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)", 1.0f),
             AntigravityModel("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)", 1.0f),
             AntigravityModel("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)", 1.0f),
-            AntigravityModel("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)", 1.0f),
+
+            // Gemini 3.6 Flash series (all reflections)
+            AntigravityModel("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)", 1.0f),
+            AntigravityModel("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)", 1.0f),
+            AntigravityModel("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)", 1.0f),
+
+            // Gemini 3.1 Pro series
+            AntigravityModel("gemini-pro-agent", "Gemini 3.1 Pro (High)", 1.0f),
             AntigravityModel("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)", 1.0f),
-            AntigravityModel("gemini-2.5-pro", "Gemini 2.5 Pro", 1.0f)
+
+            // Gemini 3.5 Flash series (all reflections)
+            AntigravityModel("gemini-3-flash-agent", "Gemini 3.5 Flash (High)", 1.0f),
+            AntigravityModel("gemini-3.5-flash-low", "Gemini 3.5 Flash (Medium)", 1.0f),
+            AntigravityModel("gemini-3.5-flash-extra-low", "Gemini 3.5 Flash (Low)", 1.0f),
+            AntigravityModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", 1.0f),
+
+            // Gemini 3 Flash & 3.1 Flash Lite
+            AntigravityModel("gemini-3-flash", "Gemini 3 Flash", 1.0f),
+            AntigravityModel("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", 1.0f)
         )
 
         val DEFAULT_GEMINI_API_MODELS = listOf(
@@ -97,6 +129,101 @@ class AntigravityAuthManager(
             "gemini-1.5-pro" to "Gemini 1.5 Pro (Большой контекст)",
             "gemini-1.5-flash" to "Gemini 1.5 Flash (Базовая легковесная)"
         )
+
+        fun isAllowedAntigravityModel(key: String, displayName: String): Boolean {
+            val k = key.lowercase()
+            val d = displayName.lowercase()
+            if (k.startsWith("tab_") || k.startsWith("chat_") || k.endsWith("-tiered") || k.contains("-image") || k.contains("preview-") || k.contains("trawler")) {
+                return false
+            }
+            // Explicitly exclude older Gemini 2.x and 1.x models
+            if (k.startsWith("gemini-2") || k.startsWith("gemini-1") || d.contains("gemini 2") || d.contains("gemini 1")) {
+                return false
+            }
+            // Claude & GPT
+            if (k.startsWith("claude-") || k.startsWith("gpt-") || d.contains("claude") || d.contains("gpt")) {
+                return true
+            }
+            // Gemini 3 series with all reflections
+            if (k.startsWith("gemini-3") || k == "gemini-pro-agent" || d.contains("gemini 3")) {
+                return true
+            }
+            return false
+        }
+
+        fun formatResetTime(resetTimeIso: String?): String {
+            if (resetTimeIso.isNullOrBlank()) return ""
+            return try {
+                val instant = java.time.Instant.parse(resetTimeIso)
+                val now = java.time.Instant.now()
+                val duration = java.time.Duration.between(now, instant)
+                val totalSeconds = duration.seconds
+
+                val zone = java.time.ZoneId.systemDefault()
+                val zonedDateTime = instant.atZone(zone)
+                val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+                val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm", java.util.Locale("ru"))
+
+                val timeStr = zonedDateTime.format(timeFormatter)
+                val dateTimeStr = zonedDateTime.format(dateFormatter)
+
+                if (totalSeconds <= 0) {
+                    "сейчас (в $timeStr)"
+                } else {
+                    val days = duration.toDays()
+                    val hours = (duration.toHours() % 24)
+                    val mins = (duration.toMinutes() % 60).coerceAtLeast(1)
+
+                    val relative = when {
+                        days > 0 -> "через $days дн $hours ч"
+                        hours > 0 -> "через $hours ч $mins мин"
+                        else -> "через $mins мин"
+                    }
+                    if (days > 0) {
+                        "$dateTimeStr ($relative)"
+                    } else {
+                        "в $timeStr ($relative)"
+                    }
+                }
+            } catch (_: Exception) {
+                resetTimeIso
+            }
+        }
+
+        fun parseQuotaSummaryJson(jsonStr: String?): List<QuotaGroup> {
+            if (jsonStr.isNullOrBlank()) return emptyList()
+            return try {
+                val json = JSONObject(jsonStr)
+                val groupsArray = json.optJSONArray("groups") ?: return emptyList()
+                val list = mutableListOf<QuotaGroup>()
+                for (i in 0 until groupsArray.length()) {
+                    val gObj = groupsArray.getJSONObject(i)
+                    val gName = gObj.optString("displayName")
+                    val gDesc = gObj.optString("description")
+                    val bucketsArray = gObj.optJSONArray("buckets")
+                    val buckets = mutableListOf<QuotaBucket>()
+                    if (bucketsArray != null) {
+                        for (j in 0 until bucketsArray.length()) {
+                            val bObj = bucketsArray.getJSONObject(j)
+                            buckets.add(
+                                QuotaBucket(
+                                    bucketId = bObj.optString("bucketId"),
+                                    displayName = bObj.optString("displayName"),
+                                    window = bObj.optString("window"),
+                                    resetTime = bObj.optString("resetTime").takeIf { it.isNotBlank() },
+                                    description = bObj.optString("description"),
+                                    remainingFraction = bObj.optDouble("remainingFraction", 1.0).toFloat()
+                                )
+                            )
+                        }
+                    }
+                    list.add(QuotaGroup(gName, gDesc, buckets))
+                }
+                list
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
     }
 
     /**
@@ -291,62 +418,101 @@ class AntigravityAuthManager(
      * Fetches models list and quota information from Antigravity/Code Assist API.
      */
     suspend fun fetchModelsAndQuota(accessToken: String): Result<AntigravityQuotaInfo> = withContext(Dispatchers.IO) {
-        val urls = listOf(
-            "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
-        )
-        for (url in urls) {
-            val request = Request.Builder()
-                .url(url)
+        val modelsList = mutableListOf<AntigravityModel>()
+        var summaryJsonString: String? = null
+        val quotaGroups = mutableListOf<QuotaGroup>()
+        var primaryResetTime: String? = null
+        var primaryQuotaFraction = 1.0f
+
+        // 1. Fetch available models from daily-cloudcode-pa
+        try {
+            val modelsReq = Request.Builder()
+                .url("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")
                 .header("Authorization", "Bearer $accessToken")
                 .header("Content-Type", "application/json")
                 .header("User-Agent", "Antigravity-IDE")
                 .post("{}".toRequestBody("application/json".toMediaType()))
                 .build()
 
-            try {
-                val result = client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val responseStr = response.body?.string() ?: ""
-                        val json = JSONObject(responseStr)
-                        val modelsObj = json.optJSONObject("models")
-                        if (modelsObj != null) {
-                            val list = mutableListOf<AntigravityModel>()
-                            var totalFraction = 0f
-                            var countWithFraction = 0
-                            var latestReset: String? = null
+            client.newCall(modelsReq).execute().use { response ->
+                if (response.isSuccessful) {
+                    val responseStr = response.body?.string() ?: ""
+                    val json = JSONObject(responseStr)
+                    val modelsObj = json.optJSONObject("models")
+                    if (modelsObj != null) {
+                        val keys = modelsObj.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            val mObj = modelsObj.getJSONObject(key)
+                            val displayName = mObj.optString("displayName", "").ifBlank { key }
 
-                            val keys = modelsObj.keys()
-                            while (keys.hasNext()) {
-                                val key = keys.next()
-                                if (key.startsWith("tab_") || key.startsWith("chat_") || key.endsWith("-tiered") || key.endsWith("-image")) {
-                                    continue
-                                }
-                                val mObj = modelsObj.getJSONObject(key)
-                                val displayName = mObj.optString("displayName", "").ifBlank { key }
-                                val quotaObj = mObj.optJSONObject("quotaInfo")
-                                val remaining = quotaObj?.optDouble("remainingFraction", 1.0)?.toFloat()
-                                val reset = quotaObj?.optString("resetTime")
-
-                                if (remaining != null) {
-                                    totalFraction += remaining
-                                    countWithFraction++
-                                }
-                                if (!reset.isNullOrBlank()) {
-                                    latestReset = reset
-                                }
-
-                                list.add(AntigravityModel(key, displayName, remaining, reset))
+                            if (!isAllowedAntigravityModel(key, displayName)) {
+                                continue
                             }
 
-                            val avg = if (countWithFraction > 0) totalFraction / countWithFraction else 1.0f
-                            Result.success(AntigravityQuotaInfo(list, avg, latestReset))
-                        } else null
-                    } else null
+                            val quotaObj = mObj.optJSONObject("quotaInfo")
+                            val remaining = quotaObj?.optDouble("remainingFraction", 1.0)?.toFloat()
+                            val reset = quotaObj?.optString("resetTime")
+
+                            modelsList.add(AntigravityModel(key, displayName, remaining, reset))
+                        }
+                    }
                 }
-                if (result != null) return@withContext result
-            } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+
+        // If models API returned empty, use DEFAULT_ANTIGRAVITY_MODELS
+        val finalModels = if (modelsList.isNotEmpty()) {
+            // Sort models by default priority order
+            val priorityMap = DEFAULT_ANTIGRAVITY_MODELS.mapIndexed { index, m -> m.id to index }.toMap()
+            modelsList.sortedBy { priorityMap[it.id] ?: 99 }
+        } else {
+            DEFAULT_ANTIGRAVITY_MODELS
         }
-        Result.success(AntigravityQuotaInfo(DEFAULT_ANTIGRAVITY_MODELS, 1.0f, null))
+
+        // 2. Fetch User Quota Summary (groups: Gemini 5h & weekly, Claude/GPT 5h & weekly)
+        try {
+            val quotaReq = Request.Builder()
+                .url("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
+                .header("Authorization", "Bearer $accessToken")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "Antigravity-IDE")
+                .post("{}".toRequestBody("application/json".toMediaType()))
+                .build()
+
+            client.newCall(quotaReq).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: ""
+                    if (bodyStr.isNotBlank()) {
+                        summaryJsonString = bodyStr
+                        quotaGroups.addAll(parseQuotaSummaryJson(bodyStr))
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Determine primary quota fraction and reset time from Gemini 5h limit or first bucket
+        val geminiGroup = quotaGroups.firstOrNull { it.groupName.contains("Gemini", ignoreCase = true) }
+        val gemini5h = geminiGroup?.buckets?.firstOrNull { it.window == "5h" }
+        if (gemini5h != null) {
+            primaryQuotaFraction = gemini5h.remainingFraction
+            primaryResetTime = gemini5h.resetTime
+        } else if (quotaGroups.isNotEmpty()) {
+            val firstBucket = quotaGroups.first().buckets.firstOrNull()
+            if (firstBucket != null) {
+                primaryQuotaFraction = firstBucket.remainingFraction
+                primaryResetTime = firstBucket.resetTime
+            }
+        }
+
+        Result.success(
+            AntigravityQuotaInfo(
+                models = finalModels,
+                averageQuotaFraction = primaryQuotaFraction,
+                resetTime = primaryResetTime,
+                groups = quotaGroups,
+                rawSummaryJson = summaryJsonString
+            )
+        )
     }
 }

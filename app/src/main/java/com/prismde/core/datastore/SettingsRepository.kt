@@ -40,6 +40,7 @@ class SettingsRepository(private val context: Context) {
         val KEY_ANTIGRAVITY_USER_NAME = stringPreferencesKey("antigravity_user_name")
         val KEY_ANTIGRAVITY_QUOTA_REMAINING = stringPreferencesKey("antigravity_quota_remaining")
         val KEY_ANTIGRAVITY_QUOTA_RESET_TIME = stringPreferencesKey("antigravity_quota_reset_time")
+        val KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON = stringPreferencesKey("antigravity_quota_summary_json")
     }
 
     private val syncPrefs = context.getSharedPreferences("prism_sync_state", Context.MODE_PRIVATE)
@@ -80,13 +81,16 @@ class SettingsRepository(private val context: Context) {
     val antigravityUserNameFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_USER_NAME] ?: "" }
     val antigravityQuotaRemainingFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_QUOTA_REMAINING] ?: "" }
     val antigravityQuotaResetTimeFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_QUOTA_RESET_TIME] ?: "" }
+    val antigravityQuotaSummaryJsonFlow: Flow<String?> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON] }
 
     val aiConfigFlow: Flow<AiConfig> = context.dataStore.data.map { prefs ->
         val provider = prefs[KEY_AI_PROVIDER] ?: "gemini_api"
         val apiKey = prefs[KEY_GEMINI_API_KEY] ?: ""
         val gModel = prefs[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash"
         var aModel = prefs[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.6-flash-high"
-        if (aModel == "gemini-3.8-flash-high" || aModel == "gemini-3.7-flash-medium" || aModel == "gemini-3.7-flash-high" || aModel.isBlank()) {
+        if (aModel.startsWith("gemini-2") || aModel.startsWith("gemini-1") ||
+            aModel == "gemini-3.8-flash-high" || aModel == "gemini-3.7-flash-medium" ||
+            aModel == "gemini-3.7-flash-high" || aModel.isBlank()) {
             aModel = "gemini-3.6-flash-high"
         }
         val token = prefs[KEY_ANTIGRAVITY_ACCESS_TOKEN] ?: ""
@@ -120,7 +124,8 @@ class SettingsRepository(private val context: Context) {
         email: String,
         name: String?,
         quota: String? = null,
-        resetTime: String? = null
+        resetTime: String? = null,
+        summaryJson: String? = null
     ) {
         context.dataStore.edit {
             it[KEY_ANTIGRAVITY_ACCESS_TOKEN] = accessToken
@@ -131,14 +136,16 @@ class SettingsRepository(private val context: Context) {
             it[KEY_ANTIGRAVITY_USER_NAME] = name ?: ""
             if (quota != null) it[KEY_ANTIGRAVITY_QUOTA_REMAINING] = quota
             if (resetTime != null) it[KEY_ANTIGRAVITY_QUOTA_RESET_TIME] = resetTime
+            if (summaryJson != null) it[KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON] = summaryJson
             it[KEY_AI_PROVIDER] = "antigravity"
         }
     }
 
-    suspend fun updateAntigravityQuota(quota: String, resetTime: String?) {
+    suspend fun updateAntigravityQuota(quota: String, resetTime: String?, summaryJson: String? = null) {
         context.dataStore.edit {
             it[KEY_ANTIGRAVITY_QUOTA_REMAINING] = quota
             if (resetTime != null) it[KEY_ANTIGRAVITY_QUOTA_RESET_TIME] = resetTime
+            if (summaryJson != null) it[KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON] = summaryJson
         }
     }
 
@@ -150,6 +157,7 @@ class SettingsRepository(private val context: Context) {
             it.remove(KEY_ANTIGRAVITY_USER_NAME)
             it.remove(KEY_ANTIGRAVITY_QUOTA_REMAINING)
             it.remove(KEY_ANTIGRAVITY_QUOTA_RESET_TIME)
+            it.remove(KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON)
             it[KEY_AI_PROVIDER] = "gemini_api"
         }
     }

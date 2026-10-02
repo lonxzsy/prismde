@@ -348,10 +348,18 @@ fun EditorScreen(
         onDismiss = { buildViewModel.hideBottomSheet() },
         onJumpToCode = { diagnostic ->
             buildViewModel.hideBottomSheet()
+            val targetFile = resolveDiagnosticFile(diagnostic.filePath, editorState.currentProject)
+            if (targetFile != null && targetFile != editorState.activeFile) {
+                editorViewModel.openFile(targetFile)
+            }
             editorViewModel.jumpToDiagnostic(diagnostic)
         },
         onApplyFix = { diagnostic ->
             val fix = diagnostic.suggestedFix ?: return@BuildBottomSheet
+            val targetFile = resolveDiagnosticFile(diagnostic.filePath, editorState.currentProject)
+            if (targetFile != null && targetFile != editorState.activeFile) {
+                editorViewModel.openFile(targetFile)
+            }
             codeEditorInstance?.let { editor ->
                 val line = (diagnostic.line - 1).coerceAtLeast(0)
                 if (line < editor.lineCount) {
@@ -362,11 +370,14 @@ fun EditorScreen(
             }
         },
         onApplyAiFix = { diagnostic ->
+            val targetFile = resolveDiagnosticFile(diagnostic.filePath, editorState.currentProject)
             buildViewModel.hideBottomSheet()
+            if (targetFile != null && targetFile != editorState.activeFile) {
+                editorViewModel.openFile(targetFile)
+            }
             editorViewModel.jumpToDiagnostic(diagnostic)
             coroutineScope.launch {
-                val targetFile = java.io.File(diagnostic.filePath)
-                if (targetFile.exists() && targetFile != editorState.activeFile) {
+                if (targetFile != null && targetFile.canonicalPath != editorState.activeFile?.canonicalPath) {
                     editorViewModel.openFile(targetFile)
                     kotlinx.coroutines.delay(250)
                 }
@@ -474,9 +485,15 @@ fun EditorScreen(
             }
         },
         onAskAi = { diagnostic ->
-            val allLines = editorState.activeContent.lines()
+            val (_, fileText) = getFileContentForDiagnostic(
+                diagnostic = diagnostic,
+                project = editorState.currentProject,
+                activeFile = editorState.activeFile,
+                activeContent = editorState.activeContent
+            )
+            val allLines = fileText.lines()
             val contextSnippet = if (allLines.size <= 300) {
-                editorState.activeContent
+                fileText
             } else {
                 val start = (diagnostic.line - 40).coerceAtLeast(0)
                 allLines.drop(start).take(80).joinToString("\n")

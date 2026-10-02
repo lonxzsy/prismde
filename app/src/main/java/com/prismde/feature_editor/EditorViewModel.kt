@@ -122,8 +122,8 @@ class EditorViewModel : ViewModel() {
     }
 
     fun jumpToDiagnostic(diagnostic: Diagnostic) {
-        val targetFile = File(diagnostic.filePath)
-        if (targetFile.exists() && targetFile != _uiState.value.activeFile) {
+        val targetFile = resolveDiagnosticFile(diagnostic.filePath, _uiState.value.currentProject)
+        if (targetFile != null && targetFile.exists() && targetFile != _uiState.value.activeFile) {
             openFile(targetFile)
         }
         _uiState.value = _uiState.value.copy(targetJumpDiagnostic = diagnostic)
@@ -133,3 +133,69 @@ class EditorViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(targetJumpDiagnostic = null)
     }
 }
+
+/**
+ * Robustly resolves a diagnostic file path (which can be absolute, relative to rootDir,
+ * relative to jniDir, or simply a filename in the project) to an existing File.
+ */
+fun resolveDiagnosticFile(filePath: String, project: Project?): File? {
+    if (filePath.isBlank()) return null
+    val direct = File(filePath)
+    if (direct.isAbsolute && direct.exists() && direct.isFile) {
+        return direct
+    }
+    if (project != null) {
+        // 1. Try relative to project rootDir
+        val relRoot = File(project.rootDir, filePath).normalize()
+        if (relRoot.exists() && relRoot.isFile) return relRoot
+
+        // 2. Try relative to jniDir
+        val relJni = File(project.jniDir, filePath).normalize()
+        if (relJni.exists() && relJni.isFile) return relJni
+
+        // 3. Try stripped ./ or ../
+        val cleanRel = filePath.removePrefix("./").removePrefix("../")
+        val cleanInRoot = File(project.rootDir, cleanRel).normalize()
+        if (cleanInRoot.exists() && cleanInRoot.isFile) return cleanInRoot
+
+        val cleanInJni = File(project.jniDir, cleanRel).normalize()
+        if (cleanInJni.exists() && cleanInJni.isFile) return cleanInJni
+
+        // 4. Search by exact filename or suffix match in project directory
+        val targetName = direct.name
+        val found = project.rootDir.walkTopDown().maxDepth(6).firstOrNull {
+            it.isFile && (it.name == targetName || it.absolutePath.endsWith(cleanRel))
+        }
+        if (found != null) return found
+    }
+    return if (direct.exists() && direct.isFile) direct else null
+}
+
+/**
+ * Returns the exact file and its text content for a compiler diagnostic.
+ * If the file is currently active in the editor, activeContent is returned to include live unsaved edits.
+ * Otherwise, the file is read directly from disk.
+ */
+fun getFileContentForDiagnostic(
+    diagnostic: Diagnostic,
+    project: Project?,
+    activeFile: File?,
+    activeContent: String
+): Pair<File?, String> {
+    val resolvedFile = resolveDiagnosticFile(diagnostic.filePath, project)
+    val content = when {
+        resolvedFile != null && activeFile != null && resolvedFile.canonicalPath == activeFile.canonicalPath -> {
+            activeContent
+        }
+        resolvedFile != null && resolvedFile.exists() && resolvedFile.isFile -> {
+            try {
+                resolvedFile.readText()
+            } catch (_: Exception) {
+                activeContent
+            }
+        }
+        else -> activeContent
+    }
+    return Pair(resolvedFile, content)
+}
+

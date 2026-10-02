@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Button
@@ -112,6 +113,11 @@ fun SettingsScreen(
     val antigravityUserName by settingsRepository.antigravityUserNameFlow.collectAsState(initial = "")
     val antigravityQuotaRemaining by settingsRepository.antigravityQuotaRemainingFlow.collectAsState(initial = "")
     val antigravityQuotaResetTime by settingsRepository.antigravityQuotaResetTimeFlow.collectAsState(initial = "")
+    val antigravityQuotaSummaryJson by settingsRepository.antigravityQuotaSummaryJsonFlow.collectAsState(initial = null)
+
+    val quotaGroups = remember(antigravityQuotaSummaryJson) {
+        AntigravityAuthManager.parseQuotaSummaryJson(antigravityQuotaSummaryJson)
+    }
 
     var geminiKeyInput by remember(geminiKey) { mutableStateOf(geminiKey) }
     var authCodeInput by remember { mutableStateOf("") }
@@ -120,9 +126,11 @@ fun SettingsScreen(
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var dynamicAntigravityModels by remember { mutableStateOf(AntigravityAuthManager.DEFAULT_ANTIGRAVITY_MODELS) }
 
-    // Auto-migrate stale / non-existent model ids to gemini-3.6-flash-high
+    // Auto-migrate stale / non-existent model ids to a valid model
     LaunchedEffect(antigravityModel) {
-        if (antigravityModel == "gemini-3.8-flash-high" || antigravityModel == "gemini-3.7-flash-medium" || antigravityModel == "gemini-3.7-flash-high" || antigravityModel.isBlank()) {
+        if (antigravityModel.startsWith("gemini-2") || antigravityModel.startsWith("gemini-1") ||
+            antigravityModel == "gemini-3.8-flash-high" || antigravityModel == "gemini-3.7-flash-medium" ||
+            antigravityModel == "gemini-3.7-flash-high" || antigravityModel.isBlank()) {
             settingsRepository.setAntigravityModel("gemini-3.6-flash-high")
         }
     }
@@ -137,7 +145,7 @@ fun SettingsScreen(
                     dynamicAntigravityModels = qInfo.models
                 }
                 val quotaPercent = "${(qInfo.averageQuotaFraction * 100).toInt()}%"
-                settingsRepository.updateAntigravityQuota(quotaPercent, qInfo.resetTime)
+                settingsRepository.updateAntigravityQuota(quotaPercent, qInfo.resetTime, qInfo.rawSummaryJson)
             }
         }
     }
@@ -514,7 +522,8 @@ fun SettingsScreen(
                                             email = email,
                                             name = name,
                                             quota = quotaPercent,
-                                            resetTime = resetTime
+                                            resetTime = resetTime,
+                                            summaryJson = quotaInfo?.rawSummaryJson
                                         )
                                         // Automatically set as active service!
                                         settingsRepository.setAiProvider("antigravity")
@@ -601,41 +610,156 @@ fun SettingsScreen(
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                 Spacer(Modifier.height(14.dp))
 
-                                // Quota info
-                                val quotaPercentInt = antigravityQuotaRemaining.removeSuffix("%").toIntOrNull() ?: 100
-                                val quotaFraction = quotaPercentInt / 100f
+                                // Quota info with full breakdown by model groups (Gemini, Claude & GPT)
+                                if (quotaGroups.isNotEmpty()) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        quotaGroups.forEach { group ->
+                                            val isGeminiGroup = group.groupName.contains("Gemini", ignoreCase = true)
+                                            val groupTitle = if (isGeminiGroup) "Модели Gemini" else "Модели Claude и GPT"
+                                            val groupIcon = if (isGeminiGroup) Icons.Rounded.AutoAwesome else Icons.Rounded.SmartToy
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("Остаток квоты токенов:", style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        text = "$quotaPercentInt%",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (quotaPercentInt < 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                                    )
-                                }
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                            ) {
+                                                Column(modifier = Modifier.padding(12.dp)) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = groupIcon,
+                                                            contentDescription = null,
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text(
+                                                            text = groupTitle,
+                                                            style = MaterialTheme.typography.titleSmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                    }
 
-                                Spacer(Modifier.height(6.dp))
+                                                    Spacer(Modifier.height(8.dp))
 
-                                LinearProgressIndicator(
-                                    progress = { quotaFraction },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(8.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                )
+                                                    group.buckets.forEachIndexed { bIndex, bucket ->
+                                                        if (bIndex > 0) {
+                                                            Spacer(Modifier.height(8.dp))
+                                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                                                            Spacer(Modifier.height(8.dp))
+                                                        }
 
-                                if (antigravityQuotaResetTime.isNotBlank()) {
+                                                        val bucketTitle = when (bucket.window) {
+                                                            "5h" -> "Лимит на 5 часов"
+                                                            "weekly" -> "Недельный лимит"
+                                                            else -> bucket.displayName
+                                                        }
+
+                                                        val percent = bucket.remainingPercent
+                                                        val fraction = bucket.remainingFraction.coerceIn(0f, 1f)
+
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = bucketTitle,
+                                                                style = MaterialTheme.typography.bodyMedium
+                                                            )
+                                                            Text(
+                                                                text = "$percent%",
+                                                                style = MaterialTheme.typography.titleMedium,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = if (percent < 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                                            )
+                                                        }
+
+                                                        Spacer(Modifier.height(4.dp))
+
+                                                        LinearProgressIndicator(
+                                                            progress = { fraction },
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .height(6.dp)
+                                                                .clip(RoundedCornerShape(3.dp)),
+                                                            color = if (percent < 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                                        )
+
+                                                        if (!bucket.resetTime.isNullOrBlank()) {
+                                                            Spacer(Modifier.height(4.dp))
+                                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                Icon(
+                                                                    imageVector = Icons.Rounded.Schedule,
+                                                                    contentDescription = null,
+                                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                    modifier = Modifier.size(12.dp)
+                                                                )
+                                                                Spacer(Modifier.width(4.dp))
+                                                                Text(
+                                                                    text = "Сброс: ${AntigravityAuthManager.formatResetTime(bucket.resetTime)}",
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    val quotaPercentInt = antigravityQuotaRemaining.removeSuffix("%").toIntOrNull() ?: 100
+                                    val quotaFraction = quotaPercentInt / 100f
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Остаток квоты токенов:", style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            text = "$quotaPercentInt%",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (quotaPercentInt < 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
                                     Spacer(Modifier.height(6.dp))
-                                    Text(
-                                        text = "Сброс квоты: $antigravityQuotaResetTime",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+
+                                    LinearProgressIndicator(
+                                        progress = { quotaFraction },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(8.dp)
+                                            .clip(RoundedCornerShape(4.dp))
                                     )
+
+                                    if (antigravityQuotaResetTime.isNotBlank()) {
+                                        Spacer(Modifier.height(6.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Schedule,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(
+                                                text = "Сброс квоты: ${AntigravityAuthManager.formatResetTime(antigravityQuotaResetTime)}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
                                 }
 
                                 Spacer(Modifier.height(14.dp))
@@ -653,7 +777,7 @@ fun SettingsScreen(
                                                 if (quotaRes.isSuccess) {
                                                     val qInfo = quotaRes.getOrThrow()
                                                     val quotaPercent = "${(qInfo.averageQuotaFraction * 100).toInt()}%"
-                                                    settingsRepository.updateAntigravityQuota(quotaPercent, qInfo.resetTime)
+                                                    settingsRepository.updateAntigravityQuota(quotaPercent, qInfo.resetTime, qInfo.rawSummaryJson)
                                                     if (qInfo.models.isNotEmpty()) {
                                                         dynamicAntigravityModels = qInfo.models
                                                     }
@@ -670,7 +794,8 @@ fun SettingsScreen(
                                                             email = antigravityUserEmail,
                                                             name = antigravityUserName,
                                                             quota = quotaPercent,
-                                                            resetTime = qInfo?.resetTime
+                                                            resetTime = qInfo?.resetTime,
+                                                            summaryJson = qInfo?.rawSummaryJson
                                                         )
                                                     }
                                                 }

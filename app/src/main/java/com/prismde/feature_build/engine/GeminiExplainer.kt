@@ -36,29 +36,30 @@ class GeminiExplainer(
         config: AiConfig
     ): Result<String> {
         val prompt = """
-            Ты эксперт по разработке на C/C++ и Android NDK в мобильной IDE PrismDE.
-            Помоги разработчику понять и разобрать ошибку компилятора:
-            
-            Файл: ${diagnostic.filePath}
-            Строка: ${diagnostic.line}, Колонка: ${diagnostic.column}
-            Тип: ${diagnostic.severity}
-            Сообщение компилятора: ${diagnostic.rawMessage}
-            
-            Фрагмент исходного кода:
+            Ты эксперт по C/C++ и Android NDK. Разбери ошибку компилятора:
+
+            Файл: ${diagnostic.filePath} (строка ${diagnostic.line}, колонка ${diagnostic.column})
+            Ошибка: ${diagnostic.rawMessage}
+
+            Исходный код:
             ```cpp
             $sourceCodeContext
             ```
+
+            ТРЕБОВАНИЯ К ОТВЕТУ (БЕЗ ВОДЫ):
+            - Никаких приветствий, вводных вежливых фраз и общих рассуждений. Сразу к делу.
+            - Ответ должен состоять ТОЛЬКО из двух кратких и конкретных пунктов:
             
-            Ответь структурированно, профессионально и понятно на чистом русском языке:
-            1. В чем точная причина ошибки и почему компилятор на нее указывает.
-            2. Рекомендации и правильный подход к решению.
+            1. 🔍 **Причина:** (1-2 ёмких предложения, что конкретно не так на строке ${diagnostic.line}).
+            2. 💡 **Как исправить:** (конкретное указание и краткий пример исправленного кода).
         """.trimIndent()
 
         val rawResult = executeAiPrompt(prompt, config)
         return rawResult.map { text ->
             val modelName = if (config.provider == "antigravity") {
                 val m = config.model.trim()
-                if (m.isBlank() || m == "gemini-3.8-flash-high" || m == "gemini-3.7-flash-medium" || m == "gemini-3.7-flash-high") {
+                if (m.isBlank() || m.startsWith("gemini-2") || m.startsWith("gemini-1") ||
+                    m == "gemini-3.8-flash-high" || m == "gemini-3.7-flash-medium" || m == "gemini-3.7-flash-high") {
                     "gemini-3.6-flash-high"
                 } else m
             } else {
@@ -221,7 +222,9 @@ class GeminiExplainer(
     ): Result<String> {
         val token = config.antigravityAccessToken
         var selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.6-flash-high"
-        if (selectedModel == "gemini-3.8-flash-high" || selectedModel == "gemini-3.7-flash-medium" || selectedModel == "gemini-3.7-flash-high") {
+        if (selectedModel.startsWith("gemini-2") || selectedModel.startsWith("gemini-1") ||
+            selectedModel == "gemini-3.8-flash-high" || selectedModel == "gemini-3.7-flash-medium" ||
+            selectedModel == "gemini-3.7-flash-high") {
             selectedModel = "gemini-3.6-flash-high"
         }
 
