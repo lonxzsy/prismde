@@ -30,6 +30,7 @@ fun SoraEditorView(
     onContentChanged: (String) -> Unit,
     diagnostics: List<Diagnostic>,
     targetJumpDiagnostic: Diagnostic?,
+    diffGreenRange: IntRange? = null,
     modifier: Modifier = Modifier,
     onEditorReady: (CodeEditor) -> Unit = {}
 ) {
@@ -111,12 +112,33 @@ fun SoraEditorView(
                 editor.setEditorLanguage(PrismCodeLanguage.forFile(file))
             }
 
+            // Update diff green highlighting in language
+            val currentLang = editor.editorLanguage
+            if (currentLang is PrismCodeLanguage && currentLang.diffGreenRange != diffGreenRange) {
+                currentLang.diffGreenRange = diffGreenRange
+                editor.rerunAnalysis()
+                editor.postInvalidate()
+            }
+
             // Only update text if different to avoid cursor resetting
             if (editor.text.toString() != content) {
                 editor.setText(content)
             }
         }
     )
+
+    // Handle diff green range selection
+    LaunchedEffect(diffGreenRange) {
+        val range = diffGreenRange ?: return@LaunchedEffect
+        editorInstance?.let { editor ->
+            val startL = range.first.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+            val endL = range.last.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+            val endCol = editor.text.getColumnCount(endL)
+            editor.setSelectionRegion(startL, 0, endL, endCol)
+            editor.jumpToLine(startL)
+            editor.ensureSelectionVisible()
+        }
+    }
 
     // Handle single-tap jump to exact line and column with glowing red pulse animation!
     LaunchedEffect(targetJumpDiagnostic) {
@@ -199,5 +221,13 @@ private fun buildEditorColorScheme(colorScheme: ColorScheme, isDark: Boolean): E
         // Diagnostic squiggles
         setColor(EditorColorScheme.PROBLEM_ERROR, colorScheme.error.toArgb())
         setColor(EditorColorScheme.PROBLEM_WARNING, colorScheme.tertiary.toArgb())
+
+        // Diff green background for AI modified lines
+        val diffGreenBg = if (isDark) {
+            android.graphics.Color.argb(85, 56, 142, 60)
+        } else {
+            android.graphics.Color.argb(65, 76, 175, 80)
+        }
+        setColor(EditorColorScheme.STATIC_SPAN_BACKGROUND, diffGreenBg)
     }
 }

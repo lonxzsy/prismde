@@ -60,7 +60,14 @@ import com.prismde.feature_build.components.BuildBottomSheet
 import com.prismde.feature_build.components.ExportSoDialog
 import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import com.prismde.feature_settings.BuildPresetDialog
+import com.prismde.feature_editor.language.PrismCodeLanguage
 import io.github.rosemoe.sora.widget.CodeEditor
+
+data class PendingAiDiff(
+    val originalText: String,
+    val startLine: Int,
+    val endLine: Int
+)
 
 @Composable
 fun EditorScreen(
@@ -80,6 +87,11 @@ fun EditorScreen(
     var showProjectPicker by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     var aiApplyingMessage by remember { mutableStateOf<String?>(null) }
+    var pendingAiDiff by remember { mutableStateOf<PendingAiDiff?>(null) }
+
+    LaunchedEffect(editorState.activeFile) {
+        pendingAiDiff = null
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -87,7 +99,39 @@ fun EditorScreen(
                 isModified = editorState.isModified,
                 onSaveClick = { editorViewModel.saveActiveFile() },
                 onUndoClick = { codeEditorInstance?.undo() },
-                onRedoClick = { codeEditorInstance?.redo() }
+                onRedoClick = { codeEditorInstance?.redo() },
+                hasPendingAiDiff = pendingAiDiff != null,
+                onAcceptChanges = {
+                    pendingAiDiff = null
+                    codeEditorInstance?.let { editor ->
+                        editor.setSelection(editor.cursor.leftLine, editor.cursor.leftColumn)
+                        val lang = editor.editorLanguage
+                        if (lang is PrismCodeLanguage) {
+                            lang.diffGreenRange = null
+                            editor.rerunAnalysis()
+                            editor.postInvalidate()
+                        }
+                    }
+                    editorViewModel.saveActiveFile()
+                },
+                onDiscardChanges = {
+                    val diff = pendingAiDiff
+                    if (diff != null) {
+                        codeEditorInstance?.let { editor ->
+                            editor.setText(diff.originalText)
+                            editor.setSelection(editor.cursor.leftLine, editor.cursor.leftColumn)
+                            val lang = editor.editorLanguage
+                            if (lang is PrismCodeLanguage) {
+                                lang.diffGreenRange = null
+                                editor.rerunAnalysis()
+                                editor.postInvalidate()
+                            }
+                        }
+                        editorViewModel.updateContent(diff.originalText)
+                        editorViewModel.saveActiveFile()
+                    }
+                    pendingAiDiff = null
+                }
             )
         }
     ) { padding ->
@@ -230,6 +274,7 @@ fun EditorScreen(
                         },
                         diagnostics = buildState.diagnostics,
                         targetJumpDiagnostic = editorState.targetJumpDiagnostic,
+                        diffGreenRange = pendingAiDiff?.let { it.startLine..it.endLine },
                         onEditorReady = { editor ->
                             codeEditorInstance = editor
                         }
@@ -326,41 +371,43 @@ fun EditorScreen(
                 }
 
                 val editor = codeEditorInstance ?: return@launch
+                val originalText = editor.text.toString()
                 val targetLine = (diagnostic.line - 1).coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
-                val lineLen = editor.text.getColumnCount(targetLine)
 
-                // 1. Position cursor on target line & ensure visible
-                editor.jumpToLine(targetLine)
-                editor.setSelection(targetLine, lineLen)
+                // 1. Calculate intelligent diff plan (smart matching context, prefix/suffix trimming)
+                val plan = AiDiffMatcher.computePlan(originalText, targetLine, replacementCode)
+
+                // 2. Stylish scanning animation: sweep down from plan.scanStartLine to plan.startLine
+                aiApplyingMessage = "AI анализирует контекст строки..."
+                val scanStart = plan.scanStartLine.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+                val scanEnd = plan.startLine.coerceIn(scanStart, (editor.lineCount - 1).coerceAtLeast(0))
+
+                for (scanLine in scanStart..scanEnd) {
+                    if (scanLine < editor.lineCount) {
+                        val colCount = editor.text.getColumnCount(scanLine)
+                        editor.setSelectionRegion(scanLine, 0, scanLine, colCount)
+                        editor.jumpToLine(scanLine)
+                        editor.ensureSelectionVisible()
+                        kotlinx.coroutines.delay(35)
+                    }
+                }
+
+                aiApplyingMessage = "AI применяет изменения..."
+                kotlinx.coroutines.delay(100)
+
+                // 3. Clear the exact slice to replace
+                val safeStart = plan.startLine.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+                val safeEnd = plan.endLine.coerceIn(safeStart, (editor.lineCount - 1).coerceAtLeast(0))
+                val endLineLen = editor.text.getColumnCount(safeEnd)
+
+                editor.text.delete(safeStart, 0, safeEnd, endLineLen)
+                editor.setSelection(safeStart, 0)
+                editor.jumpToLine(safeStart)
                 editor.ensureSelectionVisible()
-                editor.requestFocus()
 
-                // 2. Real-time "Thinking.." display right on the line
-                aiApplyingMessage = "AI обдумывает исправление..."
-                val thinkingBase = " // 💭 Thinking"
-                editor.text.insert(targetLine, lineLen, "$thinkingBase.")
-                editor.setSelection(targetLine, editor.text.getColumnCount(targetLine))
-                editor.ensureSelectionVisible()
-
-                kotlinx.coroutines.delay(300)
-                var curLen = editor.text.getColumnCount(targetLine)
-                editor.text.replace(targetLine, lineLen, targetLine, curLen, "$thinkingBase..")
-                editor.setSelection(targetLine, editor.text.getColumnCount(targetLine))
-
-                kotlinx.coroutines.delay(350)
-                curLen = editor.text.getColumnCount(targetLine)
-                editor.text.replace(targetLine, lineLen, targetLine, curLen, "$thinkingBase...")
-                editor.setSelection(targetLine, editor.text.getColumnCount(targetLine))
-
-                kotlinx.coroutines.delay(450)
-
-                // 3. Clear line and stream-type replacement character-by-character in real time!
-                val currentLineTotal = editor.text.getColumnCount(targetLine)
-                editor.text.delete(targetLine, 0, targetLine, currentLineTotal)
-                editor.setSelection(targetLine, 0)
-
-                val cleanedReplacement = replacementCode.trimEnd()
-                var curLine = targetLine
+                // 4. Stream-type replacement character-by-character in real time!
+                val cleanedReplacement = plan.replacementText.trimEnd()
+                var curLine = safeStart
                 var curCol = 0
 
                 for (char in cleanedReplacement) {
@@ -374,26 +421,43 @@ fun EditorScreen(
                     }
                     editor.setSelection(curLine, curCol)
                     editor.ensureSelectionVisible()
-                    kotlinx.coroutines.delay(16)
+                    kotlinx.coroutines.delay(14)
                 }
 
                 editor.jumpToLine(curLine)
                 editor.ensureSelectionVisible()
 
-                // 4. Save and finish
-                editorViewModel.updateContent(editor.text.toString())
-                editorViewModel.saveActiveFile()
+                // 5. Diff green highlighting and Pending state
+                val newEndLine = curLine
+                val diffRange = safeStart..newEndLine
+                pendingAiDiff = PendingAiDiff(
+                    originalText = originalText,
+                    startLine = safeStart,
+                    endLine = newEndLine
+                )
 
-                aiApplyingMessage = "✔ Изменения AI успешно внесены!"
-                kotlinx.coroutines.delay(2500)
+                val lang = editor.editorLanguage
+                if (lang is PrismCodeLanguage) {
+                    lang.diffGreenRange = diffRange
+                    editor.rerunAnalysis()
+                    editor.postInvalidate()
+                }
+
+                editorViewModel.updateContent(editor.text.toString())
+
+                aiApplyingMessage = "✔ Изменения внесены. Проверьте и примите или отклоните."
+                kotlinx.coroutines.delay(3000)
                 aiApplyingMessage = null
             }
         },
         onAskAi = { diagnostic ->
-            val contextSnippet = editorState.activeContent.lines()
-                .drop((diagnostic.line - 5).coerceAtLeast(0))
-                .take(10)
-                .joinToString("\n")
+            val allLines = editorState.activeContent.lines()
+            val contextSnippet = if (allLines.size <= 300) {
+                editorState.activeContent
+            } else {
+                val start = (diagnostic.line - 40).coerceAtLeast(0)
+                allLines.drop(start).take(80).joinToString("\n")
+            }
             buildViewModel.askAiExplanation(diagnostic, contextSnippet, geminiApiKey)
         },
         aiExplanations = buildState.aiExplanations,

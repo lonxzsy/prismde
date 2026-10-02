@@ -26,9 +26,16 @@ enum class PrismLanguageType {
     GENERIC
 }
 
-class PrismCodeLanguage(val type: PrismLanguageType) : EmptyLanguage() {
+class PrismCodeLanguage(
+    val type: PrismLanguageType,
+    var diffGreenRange: IntRange? = null
+) : EmptyLanguage() {
 
-    private val analyzeManager = PrismAnalyzeManager(type)
+    private val analyzeManager = PrismAnalyzeManager(type) { diffGreenRange }
+
+    fun updateDiffGreenRange(range: IntRange?) {
+        diffGreenRange = range
+    }
 
     override fun getAnalyzeManager(): AnalyzeManager = analyzeManager
 
@@ -190,7 +197,10 @@ class PrismCodeLanguage(val type: PrismLanguageType) : EmptyLanguage() {
     }
 }
 
-class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeManager<Unit>() {
+class PrismAnalyzeManager(
+    private val type: PrismLanguageType,
+    private val diffRangeProvider: () -> IntRange? = { null }
+) : SimpleAnalyzeManager<Unit>() {
 
     private val cppKeywordsSet = (
         PrismCodeLanguage.CPP_KEYWORDS +
@@ -205,26 +215,40 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
         val lines = content.toString().split('\n')
         val totalLines = lines.size
         val builder = MappedSpans.Builder()
+        val currentDiff = diffRangeProvider()
 
         var inBlockComment = false
+
+        fun makeSpanStyle(colorId: Int, isDiff: Boolean): Long {
+            return if (isDiff) {
+                TextStyle.makeStyle(colorId, EditorColorScheme.STATIC_SPAN_BACKGROUND, false, false, false)
+            } else {
+                TextStyle.makeStyle(colorId)
+            }
+        }
 
         for (lineIndex in 0 until totalLines) {
             if (delegate.isCancelled) {
                 return Styles()
             }
 
+            val isDiffLine = currentDiff != null && lineIndex in currentDiff
             val line = lines[lineIndex]
             val len = line.length
             var col = 0
 
+            if (isDiffLine) {
+                builder.addIfNeeded(lineIndex, 0, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, true))
+            }
+
             // If we carried over a block comment from the previous line
             if (inBlockComment) {
-                builder.addIfNeeded(lineIndex, 0, TextStyle.makeStyle(EditorColorScheme.COMMENT))
+                builder.addIfNeeded(lineIndex, 0, makeSpanStyle(EditorColorScheme.COMMENT, isDiffLine))
                 val endIdx = line.indexOf("*/")
                 if (endIdx != -1) {
                     inBlockComment = false
                     col = endIdx + 2
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                 } else {
                     continue
                 }
@@ -241,11 +265,11 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
 
                 // Block comment /* ... */
                 if (c == '/' && col + 1 < len && line[col + 1] == '*') {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.COMMENT))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.COMMENT, isDiffLine))
                     val endIdx = line.indexOf("*/", col + 2)
                     if (endIdx != -1) {
                         col = endIdx + 2
-                        builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                        builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     } else {
                         inBlockComment = true
                         break
@@ -255,36 +279,36 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
 
                 // Line comment // ... (C/C++, Java)
                 if (c == '/' && col + 1 < len && line[col + 1] == '/' && type != PrismLanguageType.CMAKE && type != PrismLanguageType.MAKEFILE) {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.COMMENT))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.COMMENT, isDiffLine))
                     col = len
                     break
                 }
 
                 // Hash comment # ... (CMake, Makefile, Shell)
                 if (c == '#' && (type == PrismLanguageType.CMAKE || type == PrismLanguageType.MAKEFILE)) {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.COMMENT))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.COMMENT, isDiffLine))
                     col = len
                     break
                 }
 
                 // Preprocessor directive #include, #define (C/C++)
                 if (c == '#' && (type == PrismLanguageType.CPP || type == PrismLanguageType.GENERIC)) {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.ANNOTATION))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.ANNOTATION, isDiffLine))
                     while (col < len && (Character.isLetterOrDigit(line[col]) || line[col] == '#' || line[col] == '_')) {
                         col++
                     }
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     continue
                 }
 
                 // Variable expansion in Makefile $(VAR) or CMake ${VAR}
                 if (c == '$' && col + 1 < len && (line[col + 1] == '(' || line[col + 1] == '{')) {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.ANNOTATION))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.ANNOTATION, isDiffLine))
                     val closeChar = if (line[col + 1] == '(') ')' else '}'
                     val endIdx = line.indexOf(closeChar, col + 2)
                     if (endIdx != -1) {
                         col = endIdx + 1
-                        builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                        builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     } else {
                         col = len
                     }
@@ -293,7 +317,7 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
 
                 // String literal "..."
                 if (c == '"') {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.LITERAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.LITERAL, isDiffLine))
                     col++
                     while (col < len) {
                         if (line[col] == '\\') {
@@ -305,13 +329,13 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
                             col++
                         }
                     }
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     continue
                 }
 
                 // Character literal '...'
                 if (c == '\'') {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.LITERAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.LITERAL, isDiffLine))
                     col++
                     while (col < len) {
                         if (line[col] == '\\') {
@@ -323,17 +347,17 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
                             col++
                         }
                     }
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     continue
                 }
 
                 // Numbers (hex, dec, float)
                 if (Character.isDigit(c)) {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.LITERAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.LITERAL, isDiffLine))
                     while (col < len && (Character.isLetterOrDigit(line[col]) || line[col] == '.')) {
                         col++
                     }
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     continue
                 }
 
@@ -354,8 +378,8 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
                     }
 
                     if (isKeyword) {
-                        builder.addIfNeeded(lineIndex, startCol, TextStyle.makeStyle(EditorColorScheme.KEYWORD))
-                        builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                        builder.addIfNeeded(lineIndex, startCol, makeSpanStyle(EditorColorScheme.KEYWORD, isDiffLine))
+                        builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     } else {
                         // Check if function call e.g. functionName(...)
                         var lookAhead = col
@@ -363,8 +387,8 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
                             lookAhead++
                         }
                         if (lookAhead < len && line[lookAhead] == '(') {
-                            builder.addIfNeeded(lineIndex, startCol, TextStyle.makeStyle(EditorColorScheme.FUNCTION_NAME))
-                            builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                            builder.addIfNeeded(lineIndex, startCol, makeSpanStyle(EditorColorScheme.FUNCTION_NAME, isDiffLine))
+                            builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                         }
                     }
                     continue
@@ -372,12 +396,12 @@ class PrismAnalyzeManager(private val type: PrismLanguageType) : SimpleAnalyzeMa
 
                 // Operators
                 if (c in "+-*/%=<>!&|^~?:") {
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.OPERATOR))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.OPERATOR, isDiffLine))
                     col++
                     if (col < len && line[col] in "=+-&|<>") {
                         col++
                     }
-                    builder.addIfNeeded(lineIndex, col, TextStyle.makeStyle(EditorColorScheme.TEXT_NORMAL))
+                    builder.addIfNeeded(lineIndex, col, makeSpanStyle(EditorColorScheme.TEXT_NORMAL, isDiffLine))
                     continue
                 }
 
