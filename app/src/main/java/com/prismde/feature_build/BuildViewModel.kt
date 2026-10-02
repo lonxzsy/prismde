@@ -33,7 +33,11 @@ data class BuildUiState(
 class BuildViewModel : ViewModel() {
 
     private val runner = BuildProcessRunner()
-    private val httpClient = OkHttpClient()
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val geminiExplainer = GeminiExplainer(httpClient)
 
     private val _uiState = MutableStateFlow(BuildUiState())

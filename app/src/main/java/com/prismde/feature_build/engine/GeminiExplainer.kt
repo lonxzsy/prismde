@@ -19,7 +19,11 @@ data class AiConfig(
 )
 
 class GeminiExplainer(
-    private val client: OkHttpClient,
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .build(),
     private val antigravityAuthManager: AntigravityAuthManager = AntigravityAuthManager(client)
 ) {
 
@@ -234,76 +238,79 @@ class GeminiExplainer(
         var lastErrorMsg = "Неизвестная ошибка Antigravity"
         var needsTokenRefresh = false
 
-        // Target native Antigravity SSE endpoints
-        val candidateEndpoints = listOf(
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
-            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
-        )
+        // Target native Antigravity SSE consumer endpoint
+        val url = "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 
-        for (url in candidateEndpoints) {
-            val request = Request.Builder()
-                .url(url)
-                .header("Authorization", "Bearer $token")
-                .header("Content-Type", "application/json")
-                .header("User-Agent", "Antigravity-IDE")
-                .header("X-Vertex-AI-LLM-Shared-Request-Type", "CODE_COMPLETION")
-                .header("goog-originating-logical-product-id", "cloudcode")
-                .post(cloudcodePayload.toString().toRequestBody(mediaType))
-                .build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "Antigravity-IDE")
+            .header("X-Vertex-AI-LLM-Shared-Request-Type", "CODE_COMPLETION")
+            .header("goog-originating-logical-product-id", "cloudcode")
+            .post(cloudcodePayload.toString().toRequestBody(mediaType))
+            .build()
 
-            try {
-                val callResult = client.newCall(request).execute().use { response ->
-                    if (response.code == 401 || response.code == 403) {
-                        needsTokenRefresh = true
-                        lastErrorMsg = "Сессия истекла (HTTP ${response.code})"
-                        return@use null
-                    }
-                    if (response.isSuccessful) {
-                        val body = response.body ?: return@use null
-                        val fullText = StringBuilder()
-                        body.charStream().buffered().forEachLine { line ->
-                            if (line.startsWith("data:")) {
-                                val dataChunk = line.removePrefix("data:").trim()
-                                if (dataChunk.isNotBlank() && dataChunk != "[DONE]") {
-                                    try {
-                                        val jsonChunk = JSONObject(dataChunk)
-                                        val candParent = jsonChunk.optJSONObject("response") ?: jsonChunk
-                                        val candidates = candParent.optJSONArray("candidates") ?: jsonChunk.optJSONArray("candidates")
-                                        if (candidates != null && candidates.length() > 0) {
-                                            for (cIdx in 0 until candidates.length()) {
-                                                val cand = candidates.getJSONObject(cIdx)
-                                                val content = cand.optJSONObject("content")
-                                                val parts = content?.optJSONArray("parts")
-                                                if (parts != null) {
-                                                    for (pIdx in 0 until parts.length()) {
-                                                        val p = parts.getJSONObject(pIdx)
-                                                        val t = p.optString("text")
-                                                        if (t.isNotBlank()) fullText.append(t)
-                                                    }
-                                                } else {
-                                                    val t = cand.optString("text")
+        try {
+            val callResult = client.newCall(request).execute().use { response ->
+                if (response.code == 401 || response.code == 403) {
+                    needsTokenRefresh = true
+                    lastErrorMsg = "Сессия истекла (HTTP ${response.code})"
+                    return@use null
+                }
+                if (response.isSuccessful) {
+                    val body = response.body ?: return@use null
+                    val fullText = StringBuilder()
+                    body.charStream().buffered().forEachLine { line ->
+                        if (line.startsWith("data:")) {
+                            val dataChunk = line.removePrefix("data:").trim()
+                            if (dataChunk.isNotBlank() && dataChunk != "[DONE]") {
+                                try {
+                                    val jsonChunk = JSONObject(dataChunk)
+                                    val candParent = jsonChunk.optJSONObject("response") ?: jsonChunk
+                                    val candidates = candParent.optJSONArray("candidates") ?: jsonChunk.optJSONArray("candidates")
+                                    if (candidates != null && candidates.length() > 0) {
+                                        for (cIdx in 0 until candidates.length()) {
+                                            val cand = candidates.getJSONObject(cIdx)
+                                            val content = cand.optJSONObject("content")
+                                            val parts = content?.optJSONArray("parts")
+                                            if (parts != null) {
+                                                for (pIdx in 0 until parts.length()) {
+                                                    val p = parts.getJSONObject(pIdx)
+                                                    val t = p.optString("text")
                                                     if (t.isNotBlank()) fullText.append(t)
                                                 }
+                                            } else {
+                                                val t = cand.optString("text")
+                                                if (t.isNotBlank()) fullText.append(t)
                                             }
                                         }
-                                    } catch (_: Exception) {}
-                                }
+                                    }
+                                } catch (_: Exception) {}
                             }
                         }
-                        if (fullText.isNotBlank()) {
-                            return@use Result.success(fullText.toString())
-                        } else {
-                            lastErrorMsg = "Пустой ответ от Antigravity ($selectedModel)"
-                        }
-                    } else {
-                        val err = response.body?.string() ?: ""
-                        lastErrorMsg = "Antigravity ($selectedModel, HTTP ${response.code}): $err"
                     }
-                    null
+                    if (fullText.isNotBlank()) {
+                        return@use Result.success(fullText.toString())
+                    } else {
+                        lastErrorMsg = "Пустой ответ от Antigravity ($selectedModel)"
+                    }
+                } else {
+                    val err = response.body?.string() ?: ""
+                    lastErrorMsg = if (response.code == 429) {
+                        "Сервер Google временно перегружен запросами (HTTP 429). Подождите 10-15 секунд или выберите более быструю модель (например Claude Sonnet 4.6 или Gemini 2.5 Flash)."
+                    } else {
+                        "Antigravity ($selectedModel, HTTP ${response.code}): $err"
+                    }
                 }
-                if (callResult != null) return callResult
-            } catch (e: Exception) {
-                lastErrorMsg = "Сетевая ошибка ($selectedModel): ${e.message}"
+                null
+            }
+            if (callResult != null) return callResult
+        } catch (e: Exception) {
+            lastErrorMsg = if (e is java.net.SocketTimeoutException) {
+                "Время ожидания ответа от модели $selectedModel истекло (таймаут). Попробуйте более легкую или быструю модель (например Claude Sonnet 4.6 или Gemini 2.5 Flash)."
+            } else {
+                "Сетевая ошибка ($selectedModel): ${e.message}"
             }
         }
 

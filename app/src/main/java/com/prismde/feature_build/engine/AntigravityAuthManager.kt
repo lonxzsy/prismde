@@ -37,7 +37,13 @@ data class AntigravityQuotaInfo(
     val resetTime: String?
 )
 
-class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) {
+class AntigravityAuthManager(
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+) {
 
     companion object {
         private fun xorDecode(bytes: IntArray, key: Int = 0x5A): String {
@@ -70,17 +76,17 @@ class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) 
                 "https://www.googleapis.com/auth/experimentsandconfigs"
 
         val DEFAULT_ANTIGRAVITY_MODELS = listOf(
-            AntigravityModel("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)", 1.0f),
+            AntigravityModel("claude-sonnet-4-6", "Claude Sonnet 4.6 (Мгновенная, Thinking)", 1.0f),
+            AntigravityModel("gemini-2.5-flash", "Gemini 2.5 Flash (Мгновенная)", 1.0f),
+            AntigravityModel("gemini-3.6-flash-high", "Gemini 3.6 Flash (High, глубокий анализ)", 1.0f),
             AntigravityModel("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)", 1.0f),
             AntigravityModel("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)", 1.0f),
-            AntigravityModel("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)", 1.0f),
+            AntigravityModel("gemini-3-flash", "Gemini 3 Flash", 1.0f),
             AntigravityModel("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)", 1.0f),
             AntigravityModel("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)", 1.0f),
+            AntigravityModel("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)", 1.0f),
             AntigravityModel("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)", 1.0f),
-            AntigravityModel("gemini-pro-agent", "Gemini 3.1 Pro (High)", 1.0f),
-            AntigravityModel("gemini-3-flash", "Gemini 3 Flash", 1.0f),
-            AntigravityModel("gemini-2.5-pro", "Gemini 2.5 Pro", 1.0f),
-            AntigravityModel("gemini-2.5-flash", "Gemini 3.5 Flash Lite", 1.0f)
+            AntigravityModel("gemini-2.5-pro", "Gemini 2.5 Pro", 1.0f)
         )
 
         val DEFAULT_GEMINI_API_MODELS = listOf(
