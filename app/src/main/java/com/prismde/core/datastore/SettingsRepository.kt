@@ -66,7 +66,14 @@ class SettingsRepository(private val context: Context) {
 
     val aiProviderFlow: Flow<String> = context.dataStore.data.map { it[KEY_AI_PROVIDER] ?: "gemini_api" }
     val geminiModelFlow: Flow<String> = context.dataStore.data.map { it[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash" }
-    val antigravityModelFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.8-flash-high" }
+    val antigravityModelFlow: Flow<String> = context.dataStore.data.map {
+        val model = it[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.6-flash-high"
+        if (model == "gemini-3.8-flash-high" || model == "gemini-3.7-flash-medium" || model == "gemini-3.7-flash-high" || model.isBlank()) {
+            "gemini-3.6-flash-high"
+        } else {
+            model
+        }
+    }
     val antigravityAccessTokenFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_ACCESS_TOKEN] ?: "" }
     val antigravityRefreshTokenFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_REFRESH_TOKEN] ?: "" }
     val antigravityUserEmailFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_USER_EMAIL] ?: "" }
@@ -78,7 +85,10 @@ class SettingsRepository(private val context: Context) {
         val provider = prefs[KEY_AI_PROVIDER] ?: "gemini_api"
         val apiKey = prefs[KEY_GEMINI_API_KEY] ?: ""
         val gModel = prefs[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash"
-        val aModel = prefs[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.8-flash-high"
+        var aModel = prefs[KEY_ANTIGRAVITY_MODEL] ?: "gemini-3.6-flash-high"
+        if (aModel == "gemini-3.8-flash-high" || aModel == "gemini-3.7-flash-medium" || aModel == "gemini-3.7-flash-high" || aModel.isBlank()) {
+            aModel = "gemini-3.6-flash-high"
+        }
         val token = prefs[KEY_ANTIGRAVITY_ACCESS_TOKEN] ?: ""
         val rToken = prefs[KEY_ANTIGRAVITY_REFRESH_TOKEN] ?: ""
 

@@ -23,18 +23,6 @@ class GeminiExplainer(
     private val antigravityAuthManager: AntigravityAuthManager = AntigravityAuthManager(client)
 ) {
 
-    // Default fallback list for Gemini API
-    private val candidateModels = listOf(
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-thinking-exp",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-pro"
-    )
-
     /**
      * PROMPT 1: Human-readable diagnostic analysis and explanation.
      */
@@ -64,10 +52,18 @@ class GeminiExplainer(
 
         val rawResult = executeAiPrompt(prompt, config)
         return rawResult.map { text ->
-            val header = if (config.provider == "antigravity") {
-                "> 🤖 **Сервис:** Google Antigravity • Модель `${config.model}`\n\n"
+            val modelName = if (config.provider == "antigravity") {
+                val m = config.model.trim()
+                if (m.isBlank() || m == "gemini-3.8-flash-high" || m == "gemini-3.7-flash-medium" || m == "gemini-3.7-flash-high") {
+                    "gemini-3.6-flash-high"
+                } else m
             } else {
-                "> 🤖 **Сервис:** Google AI Studio • Модель `${config.model}`\n\n"
+                config.model.trim().ifBlank { "gemini-2.5-flash" }
+            }
+            val header = if (config.provider == "antigravity") {
+                "> 🤖 **Сервис:** Google Antigravity • Модель `$modelName`\n\n"
+            } else {
+                "> 🤖 **Сервис:** Google AI Studio • Модель `$modelName`\n\n"
             }
             header + text
         }
@@ -151,7 +147,7 @@ class GeminiExplainer(
             return@withContext executeAntigravityRequest(prompt, jsonBody, mediaType, config)
         }
 
-        // Standard Gemini API Key Flow
+        // Standard Gemini API Key Flow - strictly queries user-selected model
         val cleanKey = config.apiKey.trim()
         if (cleanKey.isBlank()) {
             return@withContext Result.failure(
@@ -159,68 +155,57 @@ class GeminiExplainer(
             )
         }
 
-        val modelsToTry = mutableListOf<String>()
-        if (config.model.isNotBlank()) {
-            modelsToTry.add(config.model.trim())
-        }
-        for (m in candidateModels) {
-            if (!modelsToTry.contains(m)) {
-                modelsToTry.add(m)
-            }
-        }
+        val targetModel = config.model.trim().ifBlank { "gemini-2.5-flash" }
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$cleanKey"
+        val request = Request.Builder()
+            .url(url)
+            .post(jsonBody.toString().toRequestBody(mediaType))
+            .build()
 
-        var lastErrorMsg = "Не удалось связаться с Gemini API."
+        try {
+            val callResult = client.newCall(request).execute().use { response ->
+                val responseStr = response.body?.string() ?: ""
 
-        for (model in modelsToTry) {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey"
-            val request = Request.Builder()
-                .url(url)
-                .post(jsonBody.toString().toRequestBody(mediaType))
-                .build()
-
-            try {
-                val callResult = client.newCall(request).execute().use { response ->
-                    val responseStr = response.body?.string() ?: ""
-
-                    if (response.isSuccessful) {
-                        val responseJson = JSONObject(responseStr)
-                        val candidates = responseJson.optJSONArray("candidates")
-                        if (candidates != null && candidates.length() > 0) {
-                            val firstCandidate = candidates.getJSONObject(0)
-                            val content = firstCandidate.getJSONObject("content")
-                            val parts = content.getJSONArray("parts")
-                            val text = parts.getJSONObject(0).getString("text")
-                            return@use Result.success(text)
-                        } else {
-                            return@use Result.failure(Exception("Пустой ответ от модели ($model)."))
+                if (response.isSuccessful) {
+                    val responseJson = JSONObject(responseStr)
+                    val candidates = responseJson.optJSONArray("candidates")
+                    if (candidates != null && candidates.length() > 0) {
+                        val firstCandidate = candidates.getJSONObject(0)
+                        val content = firstCandidate.optJSONObject("content")
+                        val parts = content?.optJSONArray("parts")
+                        if (parts != null && parts.length() > 0) {
+                            val fullText = StringBuilder()
+                            for (i in 0 until parts.length()) {
+                                val part = parts.getJSONObject(i)
+                                val text = part.optString("text")
+                                if (text.isNotBlank()) {
+                                    fullText.append(text)
+                                }
+                            }
+                            if (fullText.isNotBlank()) {
+                                return@use Result.success(fullText.toString())
+                            }
                         }
-                    }
-
-                    val errorDetail = try {
-                        val errObj = JSONObject(responseStr).optJSONObject("error")
-                        errObj?.optString("message") ?: responseStr
-                    } catch (_: Exception) {
-                        responseStr.ifBlank { response.message }
-                    }
-
-                    lastErrorMsg = "Gemini ($model, HTTP ${response.code}): $errorDetail"
-
-                    if (response.code == 404) {
-                        null
+                        return@use Result.failure(Exception("Пустой ответ от модели ($targetModel)."))
                     } else {
-                        Result.failure(Exception(lastErrorMsg))
+                        return@use Result.failure(Exception("Пустой ответ от модели ($targetModel)."))
                     }
                 }
 
-                if (callResult != null) {
-                    return@withContext callResult
+                val errorDetail = try {
+                    val errObj = JSONObject(responseStr).optJSONObject("error")
+                    errObj?.optString("message") ?: responseStr
+                } catch (_: Exception) {
+                    responseStr.ifBlank { response.message }
                 }
-            } catch (e: Exception) {
-                lastErrorMsg = "Ошибка сети при обращении к $model: ${e.message}"
-            }
-        }
 
-        Result.failure(Exception(lastErrorMsg))
+                Result.failure(Exception("Gemini API ($targetModel, HTTP ${response.code}): $errorDetail"))
+            }
+
+            return@withContext callResult
+        } catch (e: Exception) {
+            return@withContext Result.failure(Exception("Ошибка сети при обращении к $targetModel: ${e.message}"))
+        }
     }
 
     private suspend fun executeAntigravityRequest(
@@ -231,7 +216,11 @@ class GeminiExplainer(
         hasRetriedToken: Boolean = false
     ): Result<String> {
         val token = config.antigravityAccessToken
-        val selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.8-flash-high"
+        var selectedModel = if (config.model.isNotBlank()) config.model.trim() else "gemini-3.6-flash-high"
+        if (selectedModel == "gemini-3.8-flash-high" || selectedModel == "gemini-3.7-flash-medium" || selectedModel == "gemini-3.7-flash-high") {
+            selectedModel = "gemini-3.6-flash-high"
+        }
+
         val project = antigravityAuthManager.loadCodeAssist(token)
 
         val cloudcodePayload = JSONObject().apply {
@@ -245,14 +234,13 @@ class GeminiExplainer(
         var lastErrorMsg = "Неизвестная ошибка Antigravity"
         var needsTokenRefresh = false
 
-        // Target native Antigravity endpoints in order of preference
+        // Target native Antigravity SSE endpoints
         val candidateEndpoints = listOf(
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse" to true,
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent" to false,
-            "https://cloudcode-pa.googleapis.com/v1internal:generateContent" to false
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
         )
 
-        for ((url, isSse) in candidateEndpoints) {
+        for (url in candidateEndpoints) {
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $token")
@@ -272,47 +260,50 @@ class GeminiExplainer(
                     }
                     if (response.isSuccessful) {
                         val body = response.body ?: return@use null
-                        if (isSse) {
-                            val fullText = StringBuilder()
-                            body.charStream().buffered().forEachLine { line ->
-                                if (line.startsWith("data:")) {
-                                    val dataChunk = line.removePrefix("data:").trim()
-                                    if (dataChunk.isNotBlank() && dataChunk != "[DONE]") {
-                                        try {
-                                            val jsonChunk = JSONObject(dataChunk)
-                                            val candParent = jsonChunk.optJSONObject("response") ?: jsonChunk
-                                            val candidates = candParent.optJSONArray("candidates") ?: jsonChunk.optJSONArray("candidates")
-                                            val text = candidates?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
-                                            if (!text.isNullOrBlank()) fullText.append(text)
-                                        } catch (_: Exception) {}
-                                    }
+                        val fullText = StringBuilder()
+                        body.charStream().buffered().forEachLine { line ->
+                            if (line.startsWith("data:")) {
+                                val dataChunk = line.removePrefix("data:").trim()
+                                if (dataChunk.isNotBlank() && dataChunk != "[DONE]") {
+                                    try {
+                                        val jsonChunk = JSONObject(dataChunk)
+                                        val candParent = jsonChunk.optJSONObject("response") ?: jsonChunk
+                                        val candidates = candParent.optJSONArray("candidates") ?: jsonChunk.optJSONArray("candidates")
+                                        if (candidates != null && candidates.length() > 0) {
+                                            for (cIdx in 0 until candidates.length()) {
+                                                val cand = candidates.getJSONObject(cIdx)
+                                                val content = cand.optJSONObject("content")
+                                                val parts = content?.optJSONArray("parts")
+                                                if (parts != null) {
+                                                    for (pIdx in 0 until parts.length()) {
+                                                        val p = parts.getJSONObject(pIdx)
+                                                        val t = p.optString("text")
+                                                        if (t.isNotBlank()) fullText.append(t)
+                                                    }
+                                                } else {
+                                                    val t = cand.optString("text")
+                                                    if (t.isNotBlank()) fullText.append(t)
+                                                }
+                                            }
+                                        }
+                                    } catch (_: Exception) {}
                                 }
                             }
-                            if (fullText.isNotBlank()) {
-                                return@use Result.success(fullText.toString())
-                            }
+                        }
+                        if (fullText.isNotBlank()) {
+                            return@use Result.success(fullText.toString())
                         } else {
-                            val bodyStr = body.string()
-                            val json = JSONObject(bodyStr)
-                            val candParent = json.optJSONObject("response") ?: json
-                            val candidates = candParent.optJSONArray("candidates") ?: json.optJSONArray("candidates")
-                            if (candidates != null && candidates.length() > 0) {
-                                val text = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
-                                    ?: candidates.getJSONObject(0).optString("text")
-                                if (!text.isNullOrBlank()) return@use Result.success(text)
-                            }
-                            val direct = json.optString("text")
-                            if (direct.isNotBlank()) return@use Result.success(direct)
+                            lastErrorMsg = "Пустой ответ от Antigravity ($selectedModel)"
                         }
                     } else {
                         val err = response.body?.string() ?: ""
-                        lastErrorMsg = "Antigravity (${response.code}): $err"
+                        lastErrorMsg = "Antigravity ($selectedModel, HTTP ${response.code}): $err"
                     }
                     null
                 }
                 if (callResult != null) return callResult
             } catch (e: Exception) {
-                lastErrorMsg = "Сетевая ошибка: ${e.message}"
+                lastErrorMsg = "Сетевая ошибка ($selectedModel): ${e.message}"
             }
         }
 

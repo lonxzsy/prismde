@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.OpenInBrowser
@@ -57,6 +58,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -103,7 +105,7 @@ fun SettingsScreen(
 
     val aiProvider by settingsRepository.aiProviderFlow.collectAsState(initial = "gemini_api")
     val geminiModel by settingsRepository.geminiModelFlow.collectAsState(initial = "gemini-2.5-flash")
-    val antigravityModel by settingsRepository.antigravityModelFlow.collectAsState(initial = "gemini-3.8-flash-high")
+    val antigravityModel by settingsRepository.antigravityModelFlow.collectAsState(initial = "gemini-3.6-flash-high")
     val antigravityAccessToken by settingsRepository.antigravityAccessTokenFlow.collectAsState(initial = "")
     val antigravityRefreshToken by settingsRepository.antigravityRefreshTokenFlow.collectAsState(initial = "")
     val antigravityUserEmail by settingsRepository.antigravityUserEmailFlow.collectAsState(initial = "")
@@ -117,6 +119,13 @@ fun SettingsScreen(
     var isRefreshingQuota by remember { mutableStateOf(false) }
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var dynamicAntigravityModels by remember { mutableStateOf(AntigravityAuthManager.DEFAULT_ANTIGRAVITY_MODELS) }
+
+    // Auto-migrate stale / non-existent model ids to gemini-3.6-flash-high
+    LaunchedEffect(antigravityModel) {
+        if (antigravityModel == "gemini-3.8-flash-high" || antigravityModel == "gemini-3.7-flash-medium" || antigravityModel == "gemini-3.7-flash-high" || antigravityModel.isBlank()) {
+            settingsRepository.setAntigravityModel("gemini-3.6-flash-high")
+        }
+    }
 
     // Automatically refresh models and quota if token exists on entry
     LaunchedEffect(antigravityAccessToken) {
@@ -321,61 +330,84 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(Modifier.height(10.dp))
-
-                // Compact status pill
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Service status summary card (Material Design 3)
+                val isConnected = if (aiProvider == "antigravity") antigravityAccessToken.isNotBlank() else geminiKey.isNotBlank()
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
                 ) {
-                    val isConnected = if (aiProvider == "antigravity") antigravityAccessToken.isNotBlank() else geminiKey.isNotBlank()
-                    Box(
+                    Column(
                         modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (isConnected) Color(0xFF2E7D32) else Color(0xFFFF9800))
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (aiProvider == "antigravity") {
-                            if (antigravityAccessToken.isNotBlank()) {
-                                "Подключен: ${antigravityUserEmail.ifBlank { "Google" }} • $antigravityModel"
-                            } else {
-                                "Не авторизован • Войдите через Google ниже"
-                            }
-                        } else {
-                            if (geminiKey.isNotBlank()) {
-                                "API-ключ сохранен • $geminiModel"
-                            } else {
-                                "Ключ не задан • Введите ключ ниже"
-                            }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (aiProvider == "antigravity") {
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = "Рекомендуется",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                Icon(
+                                    imageVector = if (isConnected) Icons.Rounded.CheckCircle else Icons.Rounded.Info,
+                                    contentDescription = null,
+                                    tint = if (isConnected) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (aiProvider == "antigravity") "Google Antigravity" else "Google AI Studio",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (aiProvider == "antigravity") {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "Рекомендуется",
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
                         }
+
+                        Spacer(Modifier.height(4.dp))
+
+                        Text(
+                            text = if (aiProvider == "antigravity") {
+                                if (antigravityAccessToken.isNotBlank()) {
+                                    "Аккаунт: ${antigravityUserEmail.ifBlank { "Google" }} • Модель: $antigravityModel"
+                                } else {
+                                    "Не авторизован • Нажмите «Войти в Google» ниже"
+                                }
+                            } else {
+                                if (geminiKey.isNotBlank()) {
+                                    "API-ключ сохранен • Модель: $geminiModel"
+                                } else {
+                                    "API-ключ не задан • Введите ключ ниже"
+                                }
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -540,18 +572,28 @@ fun SettingsScreen(
                                             )
                                         }
                                     }
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF2E7D32).copy(alpha = 0.15f))
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFF2E7D32).copy(alpha = 0.15f)
                                     ) {
-                                        Text(
-                                            text = "Активен",
-                                            color = Color(0xFF2E7D32),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.CheckCircle,
+                                                contentDescription = null,
+                                                tint = Color(0xFF2E7D32),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(
+                                                text = "Подключен",
+                                                color = Color(0xFF2E7D32),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
 

@@ -70,23 +70,24 @@ class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) 
                 "https://www.googleapis.com/auth/experimentsandconfigs"
 
         val DEFAULT_ANTIGRAVITY_MODELS = listOf(
-            AntigravityModel("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)", 1.0f),
-            AntigravityModel("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)", 1.0f),
-            AntigravityModel("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)", 1.0f),
-            AntigravityModel("gemini-3.7-flash-high", "Gemini 3.7 Flash (High)", 1.0f),
-            AntigravityModel("gemini-3.7-flash-medium", "Gemini 3.7 Flash (Medium)", 1.0f),
             AntigravityModel("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)", 1.0f),
-            AntigravityModel("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)", 1.0f),
+            AntigravityModel("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)", 1.0f),
+            AntigravityModel("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)", 1.0f),
             AntigravityModel("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)", 1.0f),
             AntigravityModel("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)", 1.0f),
-            AntigravityModel("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)", 1.0f)
+            AntigravityModel("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)", 1.0f),
+            AntigravityModel("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)", 1.0f),
+            AntigravityModel("gemini-pro-agent", "Gemini 3.1 Pro (High)", 1.0f),
+            AntigravityModel("gemini-3-flash", "Gemini 3 Flash", 1.0f),
+            AntigravityModel("gemini-2.5-pro", "Gemini 2.5 Pro", 1.0f),
+            AntigravityModel("gemini-2.5-flash", "Gemini 3.5 Flash Lite", 1.0f)
         )
 
         val DEFAULT_GEMINI_API_MODELS = listOf(
             "gemini-2.5-flash" to "Gemini 2.5 Flash (Рекомендуемая, быстрая)",
             "gemini-2.5-pro" to "Gemini 2.5 Pro (Глубокий анализ кода)",
             "gemini-2.0-flash" to "Gemini 2.0 Flash (Высокая скорость)",
-            "gemini-2.0-flash-thinking-exp" to "Gemini 2.0 Flash Thinking (Пошаговые рассуждения)",
+            "gemini-2.0-flash-lite" to "Gemini 2.0 Flash Lite (Легковесная)",
             "gemini-1.5-pro" to "Gemini 1.5 Pro (Большой контекст)",
             "gemini-1.5-flash" to "Gemini 1.5 Flash (Базовая легковесная)"
         )
@@ -248,14 +249,15 @@ class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) 
         if (!cached.isNullOrBlank()) return@withContext cached
 
         val urls = listOf(
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
         )
         for (url in urls) {
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $accessToken")
                 .header("Content-Type", "application/json")
+                .header("User-Agent", "Antigravity-IDE")
                 .post("{}".toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -274,7 +276,7 @@ class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) 
                 }
             } catch (_: Exception) {}
         }
-        val fallback = "default-cli-project"
+        val fallback = "aicode-consumers"
         cachedProjectId = fallback
         fallback
     }
@@ -283,55 +285,62 @@ class AntigravityAuthManager(private val client: OkHttpClient = OkHttpClient()) 
      * Fetches models list and quota information from Antigravity/Code Assist API.
      */
     suspend fun fetchModelsAndQuota(accessToken: String): Result<AntigravityQuotaInfo> = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")
-            .header("Authorization", "Bearer $accessToken")
-            .header("Content-Type", "application/json")
-            .post("{}".toRequestBody("application/json".toMediaType()))
-            .build()
+        val urls = listOf(
+            "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+        )
+        for (url in urls) {
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $accessToken")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "Antigravity-IDE")
+                .post("{}".toRequestBody("application/json".toMediaType()))
+                .build()
 
-        try {
-            client.newCall(request).execute().use { response ->
-                val responseStr = response.body?.string() ?: ""
-                if (response.isSuccessful) {
-                    val json = JSONObject(responseStr)
-                    val modelsObj = json.optJSONObject("models")
-                    if (modelsObj != null) {
-                        val list = mutableListOf<AntigravityModel>()
-                        var totalFraction = 0f
-                        var countWithFraction = 0
-                        var latestReset: String? = null
+            try {
+                val result = client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val responseStr = response.body?.string() ?: ""
+                        val json = JSONObject(responseStr)
+                        val modelsObj = json.optJSONObject("models")
+                        if (modelsObj != null) {
+                            val list = mutableListOf<AntigravityModel>()
+                            var totalFraction = 0f
+                            var countWithFraction = 0
+                            var latestReset: String? = null
 
-                        val keys = modelsObj.keys()
-                        while (keys.hasNext()) {
-                            val key = keys.next()
-                            val mObj = modelsObj.getJSONObject(key)
-                            val displayName = mObj.optString("displayName", key)
-                            val quotaObj = mObj.optJSONObject("quotaInfo")
-                            val remaining = quotaObj?.optDouble("remainingFraction", 1.0)?.toFloat()
-                            val reset = quotaObj?.optString("resetTime")
+                            val keys = modelsObj.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                if (key.startsWith("tab_") || key.startsWith("chat_") || key.endsWith("-tiered") || key.endsWith("-image")) {
+                                    continue
+                                }
+                                val mObj = modelsObj.getJSONObject(key)
+                                val displayName = mObj.optString("displayName", "").ifBlank { key }
+                                val quotaObj = mObj.optJSONObject("quotaInfo")
+                                val remaining = quotaObj?.optDouble("remainingFraction", 1.0)?.toFloat()
+                                val reset = quotaObj?.optString("resetTime")
 
-                            if (remaining != null) {
-                                totalFraction += remaining
-                                countWithFraction++
+                                if (remaining != null) {
+                                    totalFraction += remaining
+                                    countWithFraction++
+                                }
+                                if (!reset.isNullOrBlank()) {
+                                    latestReset = reset
+                                }
+
+                                list.add(AntigravityModel(key, displayName, remaining, reset))
                             }
-                            if (!reset.isNullOrBlank()) {
-                                latestReset = reset
-                            }
 
-                            list.add(AntigravityModel(key, displayName, remaining, reset))
-                        }
-
-                        val avg = if (countWithFraction > 0) totalFraction / countWithFraction else 1.0f
-                        return@use Result.success(AntigravityQuotaInfo(list, avg, latestReset))
-                    }
+                            val avg = if (countWithFraction > 0) totalFraction / countWithFraction else 1.0f
+                            Result.success(AntigravityQuotaInfo(list, avg, latestReset))
+                        } else null
+                    } else null
                 }
-                // Fallback to default high-tier models if internal endpoint is restricted or empty
-                Result.success(AntigravityQuotaInfo(DEFAULT_ANTIGRAVITY_MODELS, 1.0f, null))
-            }
-        } catch (_: Exception) {
-            // Safe fallback with default Antigravity models
-            Result.success(AntigravityQuotaInfo(DEFAULT_ANTIGRAVITY_MODELS, 1.0f, null))
+                if (result != null) return@withContext result
+            } catch (_: Exception) {}
         }
+        Result.success(AntigravityQuotaInfo(DEFAULT_ANTIGRAVITY_MODELS, 1.0f, null))
     }
 }
