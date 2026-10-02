@@ -6,25 +6,31 @@ import java.io.File
 
 object ProjectDetector {
 
+    val COMPILABLE_EXTENSIONS = setOf("c", "cpp", "cc", "cxx", "c++", "cp", "s", "S")
+    val HEADER_EXTENSIONS = setOf("h", "hpp", "hxx", "hh", "inc", "inl")
+    private val IGNORED_DIRS = setOf("build", ".git", ".gradle", "libs", "obj", "bin", ".idea")
+
     fun detect(rootDir: File): ProjectType {
         if (!rootDir.exists() || !rootDir.isDirectory) {
             return ProjectType.SINGLE_FILE_EXECUTABLE
         }
 
-        val jniDir = File(rootDir, "jni")
+        val isJniNamed = rootDir.name.equals("jni", ignoreCase = true)
+        val jniDir = if (isJniNamed) rootDir else File(rootDir, "jni")
         val hasJni = jniDir.exists() && jniDir.isDirectory
         val hasRootGradle = File(rootDir, "build.gradle").exists() || File(rootDir, "build.gradle.kts").exists()
-        val hasRootCMake = File(rootDir, "CMakeLists.txt").exists()
+        val hasRootCMake = File(rootDir, "CMakeLists.txt").exists() || (hasJni && File(jniDir, "CMakeLists.txt").exists())
+        val hasAndroidMk = File(rootDir, "Android.mk").exists() || (hasJni && File(jniDir, "Android.mk").exists()) || File(rootDir, "Application.mk").exists()
 
-        // Pure JNI project case: has jni/ folder and no Android Studio / Gradle wrapper at root
-        if (hasJni && !hasRootGradle) {
+        // Pure JNI project case: has Android.mk, or is/contains jni/ folder without root Gradle wrapper
+        if (hasAndroidMk || (hasJni && !hasRootGradle)) {
             val jniFiles = jniDir.listFiles() ?: emptyArray()
             val hasSources = jniFiles.any {
-                it.extension.lowercase() in listOf("c", "cpp", "cc", "cxx") ||
+                it.extension.lowercase() in COMPILABLE_EXTENSIONS ||
                         it.name == "Android.mk" ||
                         it.name == "CMakeLists.txt"
             }
-            if (hasSources) {
+            if (hasSources || hasAndroidMk) {
                 return ProjectType.PURE_JNI_SO
             }
         }
@@ -43,11 +49,11 @@ object ProjectDetector {
         fun scan(dir: File) {
             dir.listFiles()?.forEach { file ->
                 if (file.isDirectory) {
-                    if (file.name !in listOf("build", ".git", ".gradle", "libs", "obj")) {
+                    if (file.name.lowercase() !in IGNORED_DIRS) {
                         scan(file)
                     }
                 } else {
-                    if (file.extension.lowercase() in listOf("c", "cpp", "cc", "cxx", "h", "hpp")) {
+                    if (file.extension.lowercase() in COMPILABLE_EXTENSIONS) {
                         sources.add(file)
                     }
                 }
@@ -56,5 +62,34 @@ object ProjectDetector {
 
         scan(root)
         return sources
+    }
+
+    fun findIncludeDirectories(project: Project): List<File> {
+        val root = project.rootDir
+        val includeDirs = linkedSetOf<File>()
+        includeDirs.add(root)
+        if (project.hasJniDir) {
+            includeDirs.add(project.jniDir)
+        }
+
+        fun scan(dir: File) {
+            val files = dir.listFiles() ?: return
+            var hasHeaders = false
+            for (file in files) {
+                if (file.isDirectory) {
+                    if (file.name.lowercase() !in IGNORED_DIRS) {
+                        scan(file)
+                    }
+                } else if (file.extension.lowercase() in HEADER_EXTENSIONS) {
+                    hasHeaders = true
+                }
+            }
+            if (hasHeaders) {
+                includeDirs.add(dir)
+            }
+        }
+
+        scan(root)
+        return includeDirs.toList()
     }
 }

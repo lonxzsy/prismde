@@ -86,9 +86,11 @@ class BuildProcessRunner {
         val targetSo = File(libsDir, soName)
 
         val jniDir = if (project.hasJniDir) project.jniDir else project.rootDir
-        val sources = jniDir.listFiles { _, name ->
-            name.endsWith(".cpp") || name.endsWith(".c") || name.endsWith(".cc")
+        val directSources = jniDir.listFiles { _, name ->
+            val ext = name.substringAfterLast('.', "").lowercase()
+            ext in ProjectDetector.COMPILABLE_EXTENSIONS
         }?.toList() ?: emptyList()
+        val sources = if (directSources.isNotEmpty()) directSources else ProjectDetector.findSourceFiles(project)
 
         if (sources.isEmpty()) {
             _events.emit(BuildOutputEvent.LogLine("Не найдено исходных файлов C/C++ в ${jniDir.absolutePath}", isError = true))
@@ -100,10 +102,15 @@ class BuildProcessRunner {
         if (project.hasAndroidMk && ndkBuildScript != null && ndkBuildScript.exists()) {
             _events.emit(BuildOutputEvent.LogLine("Используется ndk-build с файлом Android.mk..."))
             ndkBuildScript.setExecutable(true, false)
+            val projectPath = if (project.rootDir.name.equals("jni", ignoreCase = true)) {
+                project.rootDir.parentFile?.absolutePath ?: project.rootDir.absolutePath
+            } else {
+                project.rootDir.absolutePath
+            }
             val command = listOf(
                 "/system/bin/sh",
                 ndkBuildScript.absolutePath,
-                "NDK_PROJECT_PATH=${project.rootDir.absolutePath}",
+                "NDK_PROJECT_PATH=$projectPath",
                 "APP_ABI=${config.selectedAbi.abiString}",
                 "APP_PLATFORM=android-${config.minApiLevel}"
             )
@@ -132,6 +139,12 @@ class BuildProcessRunner {
             config.cppStandard.flag,
             config.optimizationLevel.flag
         )
+
+        // Add include directories (-I) so headers like obfuscate.h are found without passing them as compilation units
+        val includeDirs = ProjectDetector.findIncludeDirectories(project)
+        for (inc in includeDirs) {
+            command.add("-I${inc.absolutePath}")
+        }
 
         // Split flags
         command.addAll(config.customCFlags.split(" ").filter { it.isNotBlank() })
@@ -212,6 +225,13 @@ class BuildProcessRunner {
             config.cppStandard.flag,
             config.optimizationLevel.flag
         )
+
+        // Add include directories (-I) so headers like obfuscate.h are found without passing them as compilation units
+        val includeDirs = ProjectDetector.findIncludeDirectories(project)
+        for (inc in includeDirs) {
+            command.add("-I${inc.absolutePath}")
+        }
+
         command.addAll(config.customCFlags.split(" ").filter { it.isNotBlank() })
         command.addAll(sources.map { it.absolutePath })
         command.add("-o")

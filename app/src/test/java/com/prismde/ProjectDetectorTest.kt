@@ -42,4 +42,31 @@ class ProjectDetectorTest {
         val detected = ProjectDetector.detect(root)
         assertEquals(ProjectType.SINGLE_FILE_EXECUTABLE, detected)
     }
+
+    @Test
+    fun testDetectPureJniWhenRootIsNamedJni() {
+        val root = tempFolder.newFolder("jni")
+        File(root, "GPlugin.cpp").writeText("#include <jni.h>")
+        File(root, "obfuscate.h").writeText("#pragma once")
+
+        val detected = ProjectDetector.detect(root)
+        assertEquals(ProjectType.PURE_JNI_SO, detected)
+    }
+
+    @Test
+    fun testFindSourceFilesExcludesHeaders() {
+        val root = tempFolder.newFolder("source_test")
+        val cppFile = File(root, "main.cpp").also { it.writeText("int main() {}") }
+        val headerFile = File(root, "header.h").also { it.writeText("#pragma once") }
+        val hppFile = File(root, "util.hpp").also { it.writeText("#pragma once") }
+
+        val proj = com.prismde.core.model.Project("test", root.absolutePath)
+        val sources = ProjectDetector.findSourceFiles(proj)
+
+        assertEquals(1, sources.size)
+        assertEquals(cppFile.absolutePath, sources[0].absolutePath)
+
+        val includeDirs = ProjectDetector.findIncludeDirectories(proj)
+        org.junit.Assert.assertTrue(includeDirs.contains(root))
+    }
 }

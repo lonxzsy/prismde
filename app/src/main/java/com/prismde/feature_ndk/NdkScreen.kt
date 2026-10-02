@@ -45,6 +45,10 @@ fun NdkScreen(
     val state by viewModel.uiState.collectAsState()
     var customUrlInput by remember(state.customUrl) { mutableStateOf(state.customUrl) }
 
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.refreshVersions()
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()

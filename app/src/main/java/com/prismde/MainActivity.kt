@@ -58,16 +58,36 @@ class MainActivity : ComponentActivity() {
     private val ndkViewModel: NdkViewModel by viewModels()
     private val updateViewModel: UpdateViewModel by viewModels()
 
+    private val runtimePermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ -> }
+
+    fun requestAppPermissions() {
+        val missing = com.prismde.core.util.PermissionHelper.getMissingRuntimePermissions(this)
+        if (missing.isNotEmpty()) {
+            runtimePermissionLauncher.launch(missing.toTypedArray())
+        }
+        if (!com.prismde.core.util.PermissionHelper.hasStoragePermission(this)) {
+            com.prismde.core.util.PermissionHelper.requestManageStoragePermission(this)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Request needed permissions on first launch / start
+        if (!com.prismde.core.util.PermissionHelper.hasAllRequiredPermissions(this)) {
+            requestAppPermissions()
+        }
 
         val settingsRepo = SettingsRepository(applicationContext)
 
         // If NDK is already installed, mark setup completed to prevent any flash
         if (!settingsRepo.isSetupCompletedSync) {
             val ndkDir = File(applicationContext.filesDir, "ndk/r26c")
-            if (ndkDir.exists() && ndkDir.isDirectory) {
+            val lightNdkDir = File(applicationContext.filesDir, "ndk/r26c_light")
+            if ((ndkDir.exists() && ndkDir.isDirectory) || (lightNdkDir.exists() && lightNdkDir.isDirectory)) {
                 settingsRepo.markSetupCompletedSync()
             }
         }
@@ -138,6 +158,9 @@ class MainActivity : ComponentActivity() {
                         ndkViewModel = ndkViewModel,
                         onCompleteSetup = {
                             currentTab = 0
+                        },
+                        onRequestPermissions = {
+                            requestAppPermissions()
                         }
                     )
                 } else {

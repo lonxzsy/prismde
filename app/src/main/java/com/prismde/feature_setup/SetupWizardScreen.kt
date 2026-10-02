@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.RocketLaunch
@@ -67,11 +68,20 @@ fun SetupWizardScreen(
     settingsRepository: SettingsRepository,
     ndkViewModel: NdkViewModel,
     onCompleteSetup: () -> Unit,
+    onRequestPermissions: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var currentStep by remember { mutableIntStateOf(0) }
     var showDonationSheet by remember { mutableStateOf(false) }
+
+    // Request permissions automatically on wizard opening if not yet granted
+    LaunchedEffect(Unit) {
+        if (!com.prismde.core.util.PermissionHelper.hasStoragePermission(context)) {
+            onRequestPermissions()
+        }
+    }
 
     val darkMode by settingsRepository.darkModeFlow.collectAsState(initial = "system")
     val dynamicColor by settingsRepository.dynamicColorFlow.collectAsState(initial = true)
@@ -131,7 +141,8 @@ fun SetupWizardScreen(
                         darkMode = darkMode,
                         dynamicColor = dynamicColor,
                         onThemeChange = { coroutineScope.launch { settingsRepository.setDarkMode(it) } },
-                        onDynamicColorChange = { coroutineScope.launch { settingsRepository.setDynamicColor(it) } }
+                        onDynamicColorChange = { coroutineScope.launch { settingsRepository.setDynamicColor(it) } },
+                        onRequestPermissions = onRequestPermissions
                     )
                     1 -> StepNdkDownload(
                         targetNdk = targetNdk,
@@ -221,8 +232,12 @@ private fun StepWelcome(
     darkMode: String,
     dynamicColor: Boolean,
     onThemeChange: (String) -> Unit,
-    onDynamicColorChange: (Boolean) -> Unit
+    onDynamicColorChange: (Boolean) -> Unit,
+    onRequestPermissions: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val hasStorage = com.prismde.core.util.PermissionHelper.hasStoragePermission(context)
+
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -249,7 +264,59 @@ private fun StepWelcome(
             textAlign = TextAlign.Center
         )
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(20.dp))
+
+        // Permissions Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (hasStorage) DiagnosticSuccess.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (hasStorage) Icons.Rounded.CheckCircle else Icons.Rounded.Folder,
+                        contentDescription = null,
+                        tint = if (hasStorage) DiagnosticSuccess else MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = if (hasStorage) "Доступ к файлам разрешён" else "Разрешение на доступ к файлам",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (hasStorage)
+                        "PrismDE имеет полный доступ для открытия, редактирования и сборки проектов во внутренней памяти."
+                    else
+                        "Для открытия и компиляции C/C++ проектов в папках устройства (Download, Documents) предоставьте разрешение на доступ к файлам.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!hasStorage) {
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = onRequestPermissions,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.Memory, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Предоставить доступ к файлам")
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth(),

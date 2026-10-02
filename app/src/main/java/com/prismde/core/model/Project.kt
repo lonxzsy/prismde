@@ -13,14 +13,14 @@ data class Project(
         get() = File(rootPath)
 
     val jniDir: File
-        get() = File(rootDir, "jni")
+        get() = if (rootDir.name.equals("jni", ignoreCase = true)) rootDir else File(rootDir, "jni")
 
     val hasJniDir: Boolean
-        get() = jniDir.exists() && jniDir.isDirectory
+        get() = rootDir.name.equals("jni", ignoreCase = true) || (File(rootDir, "jni").exists() && File(rootDir, "jni").isDirectory)
 
     val hasCMakeLists: Boolean
         get() = File(rootDir, "CMakeLists.txt").exists() || File(jniDir, "CMakeLists.txt").exists()
 
     val hasAndroidMk: Boolean
-        get() = File(jniDir, "Android.mk").exists()
+        get() = File(jniDir, "Android.mk").exists() || File(rootDir, "Android.mk").exists()
 }

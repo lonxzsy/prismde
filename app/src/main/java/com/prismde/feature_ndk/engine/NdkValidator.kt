@@ -81,30 +81,50 @@ object NdkValidator {
     fun resolveNdkRoot(dir: File): File {
         if (!dir.exists() || !dir.isDirectory) return dir
 
-        if (File(dir, "bin").exists() ||
-            File(dir, "toolchains").exists() ||
-            File(dir, "ndk-build").exists() ||
-            File(dir, "build/cmake/android.toolchain.cmake").exists()
-        ) {
+        fun isNdkRoot(f: File): Boolean {
+            return File(f, "bin/clang").exists() ||
+                    File(f, "bin/clang++").exists() ||
+                    File(f, "toolchains").exists() ||
+                    File(f, "ndk-build").exists() ||
+                    File(f, "build/cmake/android.toolchain.cmake").exists()
+        }
+
+        if (isNdkRoot(dir)) {
             return dir
         }
 
         val aideChild = File(dir, "android-ndk-aide")
         if (aideChild.exists() && aideChild.isDirectory) {
-            return resolveNdkRoot(aideChild)
+            val resolved = resolveNdkRoot(aideChild)
+            if (isNdkRoot(resolved)) return resolved
+        }
+
+        // Check common NDK root folder names
+        val commonNames = listOf("android-ndk-r26c", "android-ndk-r26", "android-ndk", "ndk")
+        for (name in commonNames) {
+            val child = File(dir, name)
+            if (child.exists() && child.isDirectory) {
+                if (isNdkRoot(child)) return child
+                val resolved = resolveNdkRoot(child)
+                if (isNdkRoot(resolved)) return resolved
+            }
         }
 
         val subdirs = dir.listFiles()?.filter { it.isDirectory } ?: emptyList()
-        if (subdirs.size == 1) {
-            val child = subdirs[0]
-            if (File(child, "bin").exists() ||
-                File(child, "toolchains").exists() ||
-                File(child, "ndk-build").exists() ||
-                File(child, "build/cmake/android.toolchain.cmake").exists()
-            ) {
+        for (child in subdirs) {
+            if (isNdkRoot(child)) {
                 return child
             }
         }
+
+        // Recursively inspect child folders up to 2 levels
+        for (child in subdirs) {
+            val nested = resolveNdkRoot(child)
+            if (isNdkRoot(nested)) {
+                return nested
+            }
+        }
+
         return dir
     }
 }

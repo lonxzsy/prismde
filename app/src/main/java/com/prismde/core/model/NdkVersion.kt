@@ -238,20 +238,32 @@ data class NdkVersion(
 }
 
 object DefaultNdkCatalog {
-    // Exact official release asset uploaded to https://github.com/lonxzsy/prismde-ndk/releases/tag/v1.0.0
+    // Official release assets from https://github.com/lonxzsy/prismde-ndk/releases/tag/v1.0.1 and v1.0.0
     const val DEFAULT_ACTIVE_TAG = "r26c"
-    const val R26_ASSET_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/ndk-arm64-26.tar.gz"
-    const val R26_SIZE_BYTES = 105_975_765L
-    const val R26_SHA256 = "bb839e34dcb0ab025e51457ef14a15ae4355feaca55079901ab0ddb020286d21"
+    const val R26_ASSET_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.1/ndk.tar.gz"
+    const val R26_SIZE_BYTES = 404_183_894L
+
+    const val R26_LIGHT_TAG = "r26c_light"
+    const val R26_LIGHT_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.0/ndk-arm64-26.tar.gz"
+    const val R26_LIGHT_SIZE_BYTES = 105_975_765L
+    const val R26_LIGHT_SHA256 = "bb839e34dcb0ab025e51457ef14a15ae4355feaca55079901ab0ddb020286d21"
 
     val AVAILABLE_VERSIONS = listOf(
         NdkVersion(
             versionTag = "r26c",
-            displayName = "Android NDK r26c (AArch64 - Релиз v1.0.0)",
-            llvmVersion = "LLVM / Clang 17",
+            displayName = "Android NDK r26c (Полный тулчейн - Релиз v1.0.1)",
+            llvmVersion = "LLVM / Clang 17 (~385 МБ)",
             downloadUrl = R26_ASSET_URL,
             archiveSizeBytes = R26_SIZE_BYTES,
-            sha256Checksum = R26_SHA256,
+            isAvailable = true
+        ),
+        NdkVersion(
+            versionTag = "r26c_light",
+            displayName = "Android NDK r26c Light (Компактный - Релиз v1.0.0)",
+            llvmVersion = "LLVM / Clang 17 (~100 МБ)",
+            downloadUrl = R26_LIGHT_URL,
+            archiveSizeBytes = R26_LIGHT_SIZE_BYTES,
+            sha256Checksum = R26_LIGHT_SHA256,
             isAvailable = true
         ),
         NdkVersion(

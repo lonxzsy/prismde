@@ -82,6 +82,17 @@ fun NdkVersionCard(
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
+                } else if (ndk.isInstalled) {
+                    Badge(
+                        containerColor = DiagnosticSuccess.copy(alpha = 0.15f),
+                        contentColor = DiagnosticSuccess
+                    ) {
+                        Text(
+                            text = "Установлено",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 } else {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.surface,

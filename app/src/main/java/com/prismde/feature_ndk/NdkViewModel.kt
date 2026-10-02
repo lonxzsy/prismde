@@ -67,8 +67,14 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(versions = list)
     }
 
-    fun downloadNdk(ndk: NdkVersion) {
+    fun downloadNdk(ndk: NdkVersion, forceReinstall: Boolean = false) {
         if (_uiState.value.downloadingTag != null) return
+        if (ndk.isInstalled && !forceReinstall) {
+            _uiState.value = _uiState.value.copy(
+                statusMessage = "Тулчейн «${ndk.displayName}» уже установлен и готов к использованию."
+            )
+            return
+        }
 
         _uiState.value = _uiState.value.copy(
             downloadingTag = ndk.versionTag,
