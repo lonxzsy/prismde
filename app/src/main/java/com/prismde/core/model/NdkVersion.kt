@@ -41,25 +41,40 @@ data class NdkVersion(
         }
 
     fun getEffectiveNdkDir(): File? {
-        val path = installPath
-        if (path != null) {
-            val f = File(path)
-            if (f.exists()) {
-                val aide = File(f, "android-ndk-aide")
-                return if (aide.exists()) aide else f
+        fun isUsableNdk(dir: File): Boolean {
+            if (!dir.exists() || !dir.isDirectory) return false
+            if (File(dir, "toolchains").exists() || File(dir, "bin").exists() || File(dir, "ndk-build").exists()) {
+                return true
+            }
+            return false
+        }
+
+        val candidates = mutableListOf<File>()
+        installPath?.let { candidates.add(File(it)) }
+        candidates.add(File("/data/user/0/com.prismde/files/ndk/$versionTag"))
+        candidates.add(File("/data/data/com.prismde/files/ndk/$versionTag"))
+
+        for (cand in candidates) {
+            if (!cand.exists() || !cand.isDirectory) continue
+
+            // 1. If cand itself has toolchains or tools, it is the effective directory
+            if (isUsableNdk(cand)) {
+                return cand
+            }
+
+            // 2. Check if nested inside android-ndk-aide
+            val aide = File(cand, "android-ndk-aide")
+            if (isUsableNdk(aide)) {
+                return aide
+            }
+
+            val resolved = com.prismde.feature_ndk.engine.NdkValidator.resolveNdkRoot(cand)
+            if (isUsableNdk(resolved)) {
+                return resolved
             }
         }
-        val fallbackPaths = listOf(
-            "/data/user/0/com.prismde/files/ndk/$versionTag/android-ndk-aide",
-            "/data/user/0/com.prismde/files/ndk/$versionTag",
-            "/data/data/com.prismde/files/ndk/$versionTag/android-ndk-aide",
-            "/data/data/com.prismde/files/ndk/$versionTag"
-        )
-        for (fb in fallbackPaths) {
-            val f = File(fb)
-            if (f.exists()) return f
-        }
-        return null
+
+        return installPath?.let { File(it) }
     }
 
     private fun resolveCompilerBinary(isPlusPlus: Boolean): File? {
@@ -69,7 +84,8 @@ data class NdkVersion(
             File(rootDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
             File(rootDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
             File(rootDir, "toolchains/llvm/prebuilt/linux-x86_64/bin"),
-            File(rootDir, "bin")
+            File(rootDir, "bin"),
+            File(rootDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin")
         )
 
         for (binDir in binDirs) {
@@ -85,47 +101,61 @@ data class NdkVersion(
             } catch (_: Throwable) {}
 
             val primaryTarget = if (isPlusPlus) File(binDir, "clang++") else File(binDir, "clang")
-            if (primaryTarget.exists() && primaryTarget.isFile) {
+            if (primaryTarget.exists() && primaryTarget.isFile && primaryTarget.length() > 1000L) {
                 primaryTarget.setExecutable(true, false)
                 return primaryTarget
             }
 
-            // Fallback candidates: clang-21, clang-17, clang
-            val fallbackCandidates = listOf(
-                File(binDir, "clang-21"),
-                File(binDir, "clang-17"),
-                File(binDir, "clang"),
-                File(binDir, "clang++")
-            )
-            val existingFallback = fallbackCandidates.firstOrNull { it.exists() && it.isFile && it.length() > 1000L }
-            if (existingFallback != null) {
-                existingFallback.setExecutable(true, false)
-                if (!primaryTarget.exists()) {
+            // Find any clang executable in binDir (e.g. clang-7, clang-17, clang-21)
+            val anyClang = binDir.listFiles()?.firstOrNull {
+                it.isFile && it.name.startsWith("clang") && !it.name.endsWith(".h") && it.length() > 10000L
+            }
+
+            if (anyClang != null) {
+                anyClang.setExecutable(true, false)
+                // Attempt to link or copy to primaryTarget (clang++ or clang)
+                if (!primaryTarget.exists() || primaryTarget.length() < 1000L) {
+                    try { primaryTarget.delete() } catch (_: Throwable) {}
                     try {
-                        android.system.Os.symlink(existingFallback.name, primaryTarget.absolutePath)
+                        android.system.Os.symlink(anyClang.name, primaryTarget.absolutePath)
                     } catch (_: Throwable) {
                         try {
-                            existingFallback.copyTo(primaryTarget, overwrite = true)
+                            anyClang.copyTo(primaryTarget, overwrite = true)
                         } catch (_: Throwable) {}
                     }
                 }
-                if (primaryTarget.exists()) {
+                if (primaryTarget.exists() && primaryTarget.length() > 1000L) {
                     primaryTarget.setExecutable(true, false)
                     return primaryTarget
                 }
-                return existingFallback
+                return anyClang
             }
         }
 
-        // Recursive search if bin directory structure was relocated
+        // Recursive fallback across rootDir
         val found = rootDir.walkTopDown().maxDepth(6).firstOrNull { f ->
-            f.isFile && (
-                (isPlusPlus && (f.name == "clang++" || f.name.endsWith("-clang++"))) ||
-                (!isPlusPlus && (f.name == "clang" || f.name.startsWith("clang-")))
-            )
+            f.isFile && f.name.startsWith("clang") && !f.name.endsWith(".h") && f.length() > 10000L
         }
-        found?.setExecutable(true, false)
-        return found
+        if (found != null) {
+            found.setExecutable(true, false)
+            val targetSibling = File(found.parentFile, if (isPlusPlus) "clang++" else "clang")
+            if (!targetSibling.exists() || targetSibling.length() < 1000L) {
+                try {
+                    android.system.Os.symlink(found.name, targetSibling.absolutePath)
+                } catch (_: Throwable) {
+                    try {
+                        found.copyTo(targetSibling, overwrite = true)
+                    } catch (_: Throwable) {}
+                }
+            }
+            if (targetSibling.exists() && targetSibling.length() > 1000L) {
+                targetSibling.setExecutable(true, false)
+                return targetSibling
+            }
+            return found
+        }
+
+        return null
     }
 
     fun ensurePermissions() {
@@ -203,6 +233,28 @@ data class NdkVersion(
             )
             for (binDir in llvmBinDirs) {
                 if (!binDir.exists() || !binDir.isDirectory) continue
+
+                val clangBinary = binDir.listFiles()?.firstOrNull {
+                    it.isFile && it.name.startsWith("clang") && !it.name.endsWith(".h") && it.length() > 10000L
+                }
+                if (clangBinary != null) {
+                    val clangExe = File(binDir, "clang")
+                    val clangPlusExe = File(binDir, "clang++")
+                    for (target in listOf(clangExe, clangPlusExe)) {
+                        if (!target.exists() || target.length() < 1000L) {
+                            try { target.delete() } catch (_: Throwable) {}
+                            try {
+                                android.system.Os.symlink(clangBinary.name, target.absolutePath)
+                            } catch (_: Throwable) {
+                                try {
+                                    clangBinary.copyTo(target, overwrite = true)
+                                } catch (_: Throwable) {}
+                            }
+                        }
+                        applyChmod755(target)
+                    }
+                }
+
                 binDir.listFiles()?.forEach { f ->
                     applyChmod755(f)
                 }

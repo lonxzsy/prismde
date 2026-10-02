@@ -52,4 +52,31 @@ class NdkValidatorTest {
         val result = NdkValidator.validate(root)
         assertFalse("Expected empty folder to be invalid", result.isValid)
     }
+
+    @Test
+    fun testEffectiveNdkDirDoesNotDoubleAide() {
+        val root = tempFolder.newFolder("ndk_test_double")
+        val aideFolder = File(root, "android-ndk-aide").also { it.mkdirs() }
+        val binFolder = File(aideFolder, "toolchains/llvm/prebuilt/linux-arm64/bin").also { it.mkdirs() }
+        val clang7File = File(binFolder, "clang-7").also {
+            it.writeText("binary content with size > 10000 bytes: " + "A".repeat(15000))
+        }
+        // Simulate a corrupted/empty nested folder
+        File(aideFolder, "android-ndk-aide").also { it.mkdirs() }
+
+        val ndk = com.prismde.core.model.NdkVersion(
+            versionTag = "r26c",
+            displayName = "NDK r26c",
+            llvmVersion = "Clang 17",
+            downloadUrl = "",
+            archiveSizeBytes = 100L,
+            installPath = aideFolder.absolutePath
+        )
+
+        val effective = ndk.getEffectiveNdkDir()
+        assertEquals("Effective dir must be the folder with toolchains, not the empty nested one", aideFolder.canonicalPath, effective?.canonicalPath)
+
+        val clangPlus = ndk.clangPlusExecutable
+        assertTrue("clangPlusExecutable must be resolved", clangPlus != null && clangPlus.exists())
+    }
 }
