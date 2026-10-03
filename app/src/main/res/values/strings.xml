@@ -89,6 +89,7 @@
     <!-- Build & Diagnostics -->
     <string name="build_in_progress">Building with NDK...</string>
     <string name="build_successful">Build successful!</string>
+    <string name="build_failed">Build failed</string>
     <string name="build_errors_count">Build Errors (%d)</string>
     <string name="tab_errors">Errors (%d)</string>
     <string name="tab_build_output">Build Output (%d)</string>

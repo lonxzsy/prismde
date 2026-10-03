@@ -664,14 +664,18 @@ class BuildProcessRunner {
             // Ensure NDK has source.properties and permissions!
             effectiveNdk?.let {
                 it.ensureSourceProperties()
-                it.ensurePermissions()
+                it.ensurePermissions(context)
             }
 
             // Ensure local.properties in project root has sdk.dir and ndk.dir
-            BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir())
+            BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)
 
-            // Ensure project build scripts do not reference unsupported ABIs (e.g. armeabi)
-            BuildToolInstaller.ensureProjectAbiFilters(project.rootDir, config.selectedAbi.abiString)
+            // Ensure project build scripts do not reference unsupported ABIs (e.g. armeabi) and specify ndkVersion
+            BuildToolInstaller.ensureProjectAbiFilters(
+                project.rootDir,
+                config.selectedAbi.abiString,
+                effectiveNdk?.getPkgRevision() ?: "26.2.11394342"
+            )
 
             // Auto-install Android SDK Platform 34 (android.jar) if missing!
             if (!BuildToolInstaller.isAndroidPlatformInstalled(context, 34)) {
@@ -796,10 +800,14 @@ class BuildProcessRunner {
             command.add("--console=plain")
         }
 
-        // Inject target ABI so AGP only configures and compiles for the device architecture (e.g. arm64-v8a)
+        // Inject target ABI and NDK version so AGP only configures and compiles for the device architecture (e.g. arm64-v8a)
         val targetAbi = config.selectedAbi.abiString
         if (targetAbi.isNotBlank() && !command.any { it.startsWith("-Pandroid.injected.build.abi") }) {
             command.add("-Pandroid.injected.build.abi=$targetAbi")
+        }
+        val ndkRev = effectiveNdk?.getPkgRevision() ?: "26.2.11394342"
+        if (!command.any { it.startsWith("-Pandroid.ndkVersion") }) {
+            command.add("-Pandroid.ndkVersion=$ndkRev")
         }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))

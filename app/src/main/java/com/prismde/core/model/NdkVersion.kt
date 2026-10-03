@@ -183,21 +183,12 @@ data class NdkVersion(
         }
     }
 
-    fun ensurePermissions() {
-        getEffectiveNdkDir()?.let { ensureNdkPermissions(it) }
+    fun ensurePermissions(context: android.content.Context? = null) {
+        getEffectiveNdkDir()?.let { ensureNdkPermissions(it, context) }
     }
 
     companion object {
         const val NDK_ABIS_JSON = """{
-  "armeabi-v7a": {
-    "bitness": 32,
-    "default": true,
-    "deprecated": false,
-    "proc": "armv7-a",
-    "arch": "arm",
-    "triple": "arm-linux-androideabi",
-    "llvm_triple": "armv7-none-linux-androideabi"
-  },
   "arm64-v8a": {
     "bitness": 64,
     "default": true,
@@ -206,24 +197,6 @@ data class NdkVersion(
     "arch": "arm64",
     "triple": "aarch64-linux-android",
     "llvm_triple": "aarch64-none-linux-android"
-  },
-  "x86": {
-    "bitness": 32,
-    "default": true,
-    "deprecated": false,
-    "proc": "i686",
-    "arch": "x86",
-    "triple": "i686-linux-android",
-    "llvm_triple": "i686-none-linux-android"
-  },
-  "x86_64": {
-    "bitness": 64,
-    "default": true,
-    "deprecated": false,
-    "proc": "x86_64",
-    "arch": "x86_64",
-    "triple": "x86_64-linux-android",
-    "llvm_triple": "x86_64-none-linux-android"
   }
 }"""
 
@@ -276,7 +249,11 @@ data class NdkVersion(
             }
         }
 
-        fun ensureNdkMetadata(ndkDir: File, revision: String = "26.2.11394342") {
+        fun ensureNdkMetadata(
+            ndkDir: File,
+            revision: String = "26.2.11394342",
+            context: android.content.Context? = null
+        ) {
             if (!ndkDir.exists() || !ndkDir.isDirectory) return
 
             ensureNdkSourceProperties(ndkDir, revision)
@@ -291,7 +268,10 @@ data class NdkVersion(
                 try {
                     val metaDir = File(dir, "meta").also { it.mkdirs() }
                     val abisJson = File(metaDir, "abis.json")
-                    if (!abisJson.exists() || abisJson.length() == 0L) {
+                    val needsRewrite = !abisJson.exists() || abisJson.length() == 0L ||
+                            abisJson.readText().contains("\"proc\": \"armv7-a\"") ||
+                            !abisJson.readText().contains("\"arm64-v8a\"")
+                    if (needsRewrite) {
                         abisJson.writeText(NDK_ABIS_JSON)
                         abisJson.setReadable(true, false)
                     }
@@ -305,6 +285,165 @@ data class NdkVersion(
 
             // Ensure host architecture aliases (e.g. linux-x86_64 -> linux-arm64) for AGP
             ensureHostArchitectureCompatibility(ndkDir)
+
+            // Ensure STL shared and static libraries exist for all target triples
+            ensureNdkStlLibraries(ndkDir, context)
+        }
+
+        fun findLibcxxShared(ndkDir: File, context: android.content.Context? = null): File? {
+            // 1. Check relative candidate paths inside ndkDir and parent
+            val candidatePaths = listOf(
+                "sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so",
+                "android-ndk-aide/sources/cxx-stl/llvm-libc++/libs/arm64-v8a/libc++_shared.so",
+                "toolchains/llvm/prebuilt/linux-arm64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so",
+                "toolchains/llvm/prebuilt/linux-aarch64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so",
+                "toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so",
+                "sysroot/usr/lib/aarch64-linux-android/libc++_shared.so",
+                "sysroot/usr/lib/libc++_shared.so"
+            )
+            for (rel in candidatePaths) {
+                val f = File(ndkDir, rel)
+                if (f.exists() && f.isFile && f.length() > 1000L) return f
+                val fParent = File(ndkDir.parentFile, rel)
+                if (fParent.exists() && fParent.isFile && fParent.length() > 1000L) return fParent
+            }
+
+            // 2. Search for any libc++_shared.so in ndkDir
+            try {
+                val foundInNdk = ndkDir.walkTopDown().maxDepth(7).firstOrNull {
+                    it.isFile && it.name == "libc++_shared.so" && it.length() > 1000L
+                }
+                if (foundInNdk != null) return foundInNdk
+            } catch (_: Throwable) {}
+
+            // 3. Extract from context assets or filesDir
+            if (context != null) {
+                try {
+                    val jdkLib = File(context.filesDir, "tools/jdk/lib/libc++_shared.so")
+                    if (jdkLib.exists() && jdkLib.isFile && jdkLib.length() > 1000L) return jdkLib
+
+                    // Extract from APK assets
+                    val cacheCopy = File(context.cacheDir, "libc++_shared.so")
+                    if (!cacheCopy.exists() || cacheCopy.length() < 1000L) {
+                        context.assets.open("jdk_libs/arm64-v8a/libc++_shared.so").use { input ->
+                            java.io.FileOutputStream(cacheCopy).use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                    if (cacheCopy.exists() && cacheCopy.length() > 1000L) return cacheCopy
+                } catch (_: Throwable) {}
+            }
+
+            // 4. System libc++.so
+            val systemCandidates = listOf(
+                File("/system/lib64/libc++.so"),
+                File("/apex/com.android.runtime/lib64/bionic/libc++.so"),
+                File("/system/lib/libc++.so")
+            )
+            for (sys in systemCandidates) {
+                if (sys.exists() && sys.isFile && sys.length() > 1000L) return sys
+            }
+
+            return null
+        }
+
+        fun ensureNdkStlLibraries(ndkDir: File, context: android.content.Context? = null) {
+            if (!ndkDir.exists()) return
+
+            val targetDirs = listOf(
+                ndkDir,
+                File(ndkDir, "android-ndk-aide"),
+                ndkDir.parentFile
+            ).filterNotNull().filter { it.exists() && it.isDirectory }
+
+            // 1. Locate libc++_shared.so
+            val stlCandidate = findLibcxxShared(ndkDir, context)
+
+            // 2. Locate all sysroot directories
+            val sysrootDirs = mutableListOf<File>()
+            for (dir in targetDirs) {
+                val candidates = listOf(
+                    File(dir, "toolchains/llvm/prebuilt/linux-x86_64/sysroot"),
+                    File(dir, "toolchains/llvm/prebuilt/linux-arm64/sysroot"),
+                    File(dir, "toolchains/llvm/prebuilt/linux-aarch64/sysroot"),
+                    File(dir, "sysroot")
+                )
+                for (cand in candidates) {
+                    if (cand.exists() && cand.isDirectory) {
+                        sysrootDirs.add(cand)
+                    }
+                }
+            }
+
+            // Triples that AGP or build tools might inspect
+            val triples = listOf(
+                "aarch64-linux-android",
+                "arm-linux-androideabi",
+                "i686-linux-android",
+                "x86_64-linux-android"
+            )
+
+            val emptyArBytes = "!<arch>\n".toByteArray(Charsets.US_ASCII)
+
+            for (sysroot in sysrootDirs.distinct()) {
+                val usrLib = File(sysroot, "usr/lib").also { it.mkdirs() }
+
+                // Check if any triple already has a valid libc++_shared.so to reuse
+                val existingStl = triples.map { File(usrLib, "$it/libc++_shared.so") }
+                    .firstOrNull { it.exists() && it.isFile && it.length() > 1000L } ?: stlCandidate
+
+                for (triple in triples) {
+                    val tripleDir = File(usrLib, triple).also { it.mkdirs() }
+                    val sharedSo = File(tripleDir, "libc++_shared.so")
+                    if (!sharedSo.exists() || sharedSo.length() < 1000L) {
+                        if (existingStl != null && existingStl.exists()) {
+                            try {
+                                existingStl.copyTo(sharedSo, overwrite = true)
+                                sharedSo.setReadable(true, false)
+                            } catch (_: Throwable) {}
+                        }
+                    }
+
+                    // Ensure static stubs
+                    val staticA = File(tripleDir, "libc++_static.a")
+                    if (!staticA.exists() || staticA.length() == 0L) {
+                        try {
+                            staticA.writeBytes(emptyArBytes)
+                            staticA.setReadable(true, false)
+                        } catch (_: Throwable) {}
+                    }
+                    val abiA = File(tripleDir, "libc++abi.a")
+                    if (!abiA.exists() || abiA.length() == 0L) {
+                        try {
+                            abiA.writeBytes(emptyArBytes)
+                            abiA.setReadable(true, false)
+                        } catch (_: Throwable) {}
+                    }
+                }
+
+                // C++ STL headers: usr/include/c++/v1
+                val usrInc = File(sysroot, "usr/include")
+                if (usrInc.exists()) {
+                    val cppV1 = File(usrInc, "c++/v1")
+                    if (!cppV1.exists()) {
+                        val candidateIncludes = listOf(
+                            File(ndkDir, "sources/cxx-stl/llvm-libc++/include"),
+                            File(ndkDir, "android-ndk-aide/sources/cxx-stl/llvm-libc++/include"),
+                            File(ndkDir.parentFile, "sources/cxx-stl/llvm-libc++/include")
+                        )
+                        val srcInc = candidateIncludes.firstOrNull { it.exists() && it.isDirectory }
+                        if (srcInc != null) {
+                            try {
+                                cppV1.parentFile?.mkdirs()
+                                android.system.Os.symlink(srcInc.absolutePath, cppV1.absolutePath)
+                            } catch (_: Throwable) {
+                                try { srcInc.copyRecursively(cppV1, overwrite = true) } catch (_: Throwable) {}
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         fun ensureHostArchitectureCompatibility(ndkDir: File) {
@@ -387,10 +526,10 @@ data class NdkVersion(
             }
         }
 
-        fun ensureNdkPermissions(ndkDir: File) {
+        fun ensureNdkPermissions(ndkDir: File, context: android.content.Context? = null) {
             if (!ndkDir.exists()) return
 
-            ensureNdkMetadata(ndkDir)
+            ensureNdkMetadata(ndkDir, context = context)
 
             fun applyChmod755(target: File) {
                 try {

@@ -235,6 +235,7 @@ object ProjectManager {
                     android {
                         namespace 'com.example.$finalName'
                         compileSdk 34
+                        ndkVersion '26.2.11394342'
 
                         defaultConfig {
                             applicationId "com.example.$finalName"
@@ -354,7 +355,7 @@ object ProjectManager {
 
                 // Provision Android SDK & local.properties
                 val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
-                BuildToolInstaller.ensureLocalProperties(projectDir, sdkDir)
+                BuildToolInstaller.ensureLocalProperties(projectDir, sdkDir, context = context)
             }
 
             ProjectType.SINGLE_FILE_EXECUTABLE, ProjectType.AUTO_DETECT -> {

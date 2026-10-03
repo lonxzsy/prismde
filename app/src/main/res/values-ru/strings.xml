@@ -89,6 +89,7 @@
     <!-- Build & Diagnostics -->
     <string name="build_in_progress">Выполняется сборка NDK...</string>
     <string name="build_successful">Сборка успешна!</string>
+    <string name="build_failed">Сборка не удалась</string>
     <string name="build_errors_count">Ошибки сборки (%d)</string>
     <string name="tab_errors">Ошибки (%d)</string>
     <string name="tab_build_output">Вывод сборки (%d)</string>

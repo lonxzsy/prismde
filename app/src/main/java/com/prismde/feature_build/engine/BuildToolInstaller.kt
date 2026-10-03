@@ -523,7 +523,12 @@ object BuildToolInstaller {
         return sdkDir
     }
 
-    fun ensureLocalProperties(projectRootDir: File, sdkDir: File, ndkDir: File? = null) {
+    fun ensureLocalProperties(
+        projectRootDir: File,
+        sdkDir: File,
+        ndkDir: File? = null,
+        context: Context? = null
+    ) {
         val localProps = File(projectRootDir, "local.properties")
         val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
         val formattedSdkPath = if (isWindows) {
@@ -556,34 +561,49 @@ object BuildToolInstaller {
 
         val effectiveRevision = projectRequestedNdkVersion ?: "26.2.11394342"
 
+        var hasSdkNdk = false
         // Ensure source.properties and meta/abis.json exist in ndkDir and parent folders
         if (ndkDir != null && ndkDir.exists()) {
-            NdkVersion.ensureNdkMetadata(ndkDir, effectiveRevision)
-            NdkVersion.ensureNdkPermissions(ndkDir)
+            NdkVersion.ensureNdkMetadata(ndkDir, effectiveRevision, context)
+            NdkVersion.ensureNdkPermissions(ndkDir, context)
 
-            // Also provision $sdkDir/ndk/$effectiveRevision symlink for AGP NDK resolution
-            try {
-                val sdkNdkDir = File(sdkDir, "ndk/$effectiveRevision")
-                if (!sdkNdkDir.exists()) {
-                    sdkNdkDir.parentFile?.mkdirs()
-                    try {
-                        android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath)
-                    } catch (_: Throwable) {}
-                }
-            } catch (_: Throwable) {}
+            // Also provision $sdkDir/ndk/$effectiveRevision and fallback symlinks for AGP NDK resolution
+            val sdkNdkRevisions = listOf(effectiveRevision, "25.1.8937393")
+            for (rev in sdkNdkRevisions) {
+                try {
+                    val sdkNdkDir = File(sdkDir, "ndk/$rev")
+                    if (!sdkNdkDir.exists()) {
+                        sdkNdkDir.parentFile?.mkdirs()
+                        try {
+                            android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath)
+                        } catch (_: Throwable) {}
+                    }
+                    if (rev == effectiveRevision && sdkNdkDir.exists()) {
+                        hasSdkNdk = true
+                    }
+                } catch (_: Throwable) {}
+            }
         }
+
+        val formattedNdkPath = if (ndkDir != null && ndkDir.exists()) {
+            if (isWindows) {
+                ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+            } else {
+                ndkDir.absolutePath
+            }
+        } else null
 
         if (!localProps.exists()) {
             val sb = java.lang.StringBuilder()
             sb.appendLine("# Location of the SDK. This is only used by Gradle.")
             sb.appendLine("sdk.dir=$formattedSdkPath")
-            if (ndkDir != null && ndkDir.exists()) {
-                val formattedNdkPath = if (isWindows) {
-                    ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+            if (formattedNdkPath != null) {
+                if (hasSdkNdk) {
+                    // Comment out ndk.dir so AGP uses sdk.dir/ndk/$effectiveRevision and suppresses CXX5106
+                    sb.appendLine("# ndk.dir=$formattedNdkPath")
                 } else {
-                    ndkDir.absolutePath
+                    sb.appendLine("ndk.dir=$formattedNdkPath")
                 }
-                sb.appendLine("ndk.dir=$formattedNdkPath")
             }
             try { localProps.writeText(sb.toString()) } catch (_: Throwable) {}
         } else {
@@ -597,26 +617,22 @@ object BuildToolInstaller {
                         lines[i] = "sdk.dir=$formattedSdkPath"
                         hasSdk = true
                     }
-                    if (trimmed.startsWith("ndk.dir=") && ndkDir != null && ndkDir.exists()) {
-                        val formattedNdkPath = if (isWindows) {
-                            ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
-                        } else {
-                            ndkDir.absolutePath
+                    if (trimmed.startsWith("ndk.dir=") || trimmed.startsWith("# ndk.dir=")) {
+                        if (formattedNdkPath != null) {
+                            lines[i] = if (hasSdkNdk) "# ndk.dir=$formattedNdkPath" else "ndk.dir=$formattedNdkPath"
+                            hasNdk = true
                         }
-                        lines[i] = "ndk.dir=$formattedNdkPath"
-                        hasNdk = true
                     }
                 }
                 if (!hasSdk) {
                     lines.add("sdk.dir=$formattedSdkPath")
                 }
-                if (!hasNdk && ndkDir != null && ndkDir.exists()) {
-                    val formattedNdkPath = if (isWindows) {
-                        ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+                if (!hasNdk && formattedNdkPath != null) {
+                    if (hasSdkNdk) {
+                        lines.add("# ndk.dir=$formattedNdkPath")
                     } else {
-                        ndkDir.absolutePath
+                        lines.add("ndk.dir=$formattedNdkPath")
                     }
-                    lines.add("ndk.dir=$formattedNdkPath")
                 }
                 localProps.writeText(lines.joinToString("\n"))
             } catch (_: Throwable) {}
@@ -625,9 +641,13 @@ object BuildToolInstaller {
 
     /**
      * Ensures project build scripts and Application.mk files do not attempt to build
-     * deprecated/removed ABIs like 'armeabi', and enforces the target ABI filter.
+     * deprecated/removed ABIs like 'armeabi', enforces ndkVersion and the target ABI filter.
      */
-    fun ensureProjectAbiFilters(projectRootDir: File, selectedAbi: String = "arm64-v8a") {
+    fun ensureProjectAbiFilters(
+        projectRootDir: File,
+        selectedAbi: String = "arm64-v8a",
+        ndkRevision: String = "26.2.11394342"
+    ) {
         // 1. Sanitize app/build.gradle and build.gradle
         val buildGradleFiles = listOf(
             File(projectRootDir, "app/build.gradle"),
@@ -640,6 +660,12 @@ object BuildToolInstaller {
                 try {
                     var txt = bg.readText()
                     var modified = false
+
+                    // Ensure ndkVersion is explicitly defined in android { } to eliminate CXX5106 warning
+                    if (txt.contains("android {") && !txt.contains("ndkVersion")) {
+                        txt = txt.replaceFirst("android {", "android {\n    ndkVersion '$ndkRevision'")
+                        modified = true
+                    }
 
                     // Remove unsupported legacy 'armeabi' ABI if present
                     if (txt.contains("'armeabi'") && !txt.contains("'armeabi-v7a'")) {

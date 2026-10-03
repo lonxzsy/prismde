@@ -167,4 +167,59 @@ class NdkSourcePropertiesAndGradleTest {
         val x86Llvm = File(aideFolder, "toolchains/llvm/prebuilt/linux-x86_64")
         assertTrue("toolchains/llvm/prebuilt/linux-x86_64 must exist for AGP LLVM toolchain detection", x86Llvm.exists())
     }
+
+    @Test
+    fun testEnsureNdkStlLibrariesProvisionsLibcxxSharedAndStaticStubs() {
+        val root = tempFolder.newFolder("ndk_stl_test")
+        val llvmArm64Sysroot = File(root, "toolchains/llvm/prebuilt/linux-arm64/sysroot").also { it.mkdirs() }
+
+        // Mock an available libc++_shared.so in sources/cxx-stl
+        val srcStlDir = File(root, "sources/cxx-stl/llvm-libc++/libs/arm64-v8a").also { it.mkdirs() }
+        val dummyStl = File(srcStlDir, "libc++_shared.so").also {
+            it.writeBytes(ByteArray(2048) { 0x7F.toByte() })
+        }
+
+        NdkVersion.ensureHostArchitectureCompatibility(root)
+        NdkVersion.ensureNdkStlLibraries(root)
+
+        // Check aarch64-linux-android
+        val aarch64Stl = File(llvmArm64Sysroot, "usr/lib/aarch64-linux-android/libc++_shared.so")
+        assertTrue("libc++_shared.so must be provisioned for aarch64-linux-android", aarch64Stl.exists())
+        assertEquals("File size should match mock STL", dummyStl.length(), aarch64Stl.length())
+
+        val aarch64Static = File(llvmArm64Sysroot, "usr/lib/aarch64-linux-android/libc++_static.a")
+        assertTrue("libc++_static.a must exist for aarch64-linux-android", aarch64Static.exists())
+        assertEquals("Static stub must start with ar magic", "!<arch>\n", aarch64Static.readText())
+
+        // Check arm-linux-androideabi (preventing the crash reported by AGP)
+        val armStl = File(llvmArm64Sysroot, "usr/lib/arm-linux-androideabi/libc++_shared.so")
+        assertTrue("libc++_shared.so must be provisioned for arm-linux-androideabi", armStl.exists())
+
+        // Check linux-x86_64 alias sysroot
+        val x86SysrootStl = File(root, "toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so")
+        assertTrue("libc++_shared.so must be reachable from linux-x86_64 sysroot", x86SysrootStl.exists())
+    }
+
+    @Test
+    fun testEnsureProjectAbiFiltersInjectsNdkVersion() {
+        val projectDir = tempFolder.newFolder("ndk_version_inject_test")
+        val appDir = File(projectDir, "app").also { it.mkdirs() }
+        val buildGradle = File(appDir, "build.gradle").also {
+            it.writeText(
+                """
+                android {
+                    compileSdk 34
+                    defaultConfig {
+                        applicationId "com.example.test"
+                    }
+                }
+                """.trimIndent()
+            )
+        }
+
+        BuildToolInstaller.ensureProjectAbiFilters(projectDir, "arm64-v8a", "26.2.11394342")
+
+        val content = buildGradle.readText()
+        assertTrue("ndkVersion '26.2.11394342' must be injected into android { }", content.contains("ndkVersion '26.2.11394342'"))
+    }
 }

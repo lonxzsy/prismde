@@ -30,6 +30,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,12 @@ fun BuildBottomSheet(
         skipPartiallyExpanded = false
     )
     var selectedTab by remember { mutableStateOf(0) }
+
+    LaunchedEffect(buildSuccess, diagnostics.size) {
+        if (buildSuccess == false && diagnostics.isEmpty()) {
+            selectedTab = 1
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -118,7 +125,11 @@ fun BuildBottomSheet(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = stringResource(R.string.build_errors_count, diagnostics.size),
+                        text = if (diagnostics.isNotEmpty()) {
+                            stringResource(R.string.build_errors_count, diagnostics.size)
+                        } else {
+                            stringResource(R.string.build_failed)
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = DiagnosticError
