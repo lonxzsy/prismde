@@ -1,6 +1,7 @@
 package com.prismde.feature_editor.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,28 +29,26 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.ElectricBolt
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Badge
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
-import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -67,16 +66,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prismde.R
+import com.prismde.core.model.BuildConfiguration
+import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
 import com.prismde.feature_build.engine.AgentChatMessage
 import com.prismde.feature_build.engine.AiAgentAction
 import com.prismde.feature_build.engine.AiConfig
+import com.prismde.feature_build.engine.TokenEstimator
 import com.prismde.feature_editor.AiChatViewModel
 import java.io.File
 
@@ -87,6 +88,8 @@ fun AiChatBottomSheet(
     project: Project?,
     config: AiConfig,
     activeFile: File?,
+    ndk: NdkVersion? = null,
+    buildConfig: BuildConfiguration? = null,
     onDismiss: () -> Unit,
     onFileModified: (File, String) -> Unit = { _, _ -> }
 ) {
@@ -94,7 +97,14 @@ fun AiChatBottomSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var inputText by remember { mutableStateOf("") }
     var showAttachDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
+    var showContextDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    // Initialize/load sessions for active project
+    LaunchedEffect(project?.name) {
+        viewModel.loadSessionsForProject(project, config)
+    }
 
     // Auto-scroll when new messages arrive or text is streaming
     val lastMessageTextLength = uiState.messages.lastOrNull()?.text?.length ?: 0
@@ -153,31 +163,108 @@ fun AiChatBottomSheet(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Text(
-                            text = config.model.ifBlank { config.provider },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = config.model.ifBlank { config.provider },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Context Token Limit Badge
+                    val usedTokens = uiState.estimatedTokensUsed
+                    val maxTokens = uiState.modelMaxTokens
+                    val usageRatio = usedTokens.toFloat() / maxTokens.toFloat().coerceAtLeast(1f)
+                    val tokenColor = when {
+                        usageRatio >= 0.85f -> MaterialTheme.colorScheme.error
+                        usageRatio >= 0.65f -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showContextDialog = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Rounded.Memory,
+                                contentDescription = null,
+                                tint = tokenColor,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "${TokenEstimator.formatTokenCount(usedTokens)}/${TokenEstimator.formatTokenCount(maxTokens)}",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                fontWeight = FontWeight.SemiBold,
+                                color = tokenColor
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(4.dp))
+
+                    // Chat History Button
+                    IconButton(
+                        onClick = { showHistoryDialog = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.History,
+                            contentDescription = stringResource(R.string.ai_chat_history_title),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // New Chat Quick Action
+                    if (project != null) {
+                        IconButton(
+                            onClick = { viewModel.createNewSession(project) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.AddComment,
+                                contentDescription = stringResource(R.string.ai_chat_new_chat),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+
+                    // Clear Chat Button
                     if (uiState.messages.isNotEmpty()) {
                         IconButton(
-                            onClick = { viewModel.clearChat() }
+                            onClick = { viewModel.clearChat(project) },
+                            modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
                                 Icons.Rounded.DeleteOutline,
                                 contentDescription = stringResource(R.string.clear_chat_tooltip),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
-                    IconButton(onClick = onDismiss) {
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(36.dp)
+                    ) {
                         Icon(
                             Icons.Rounded.Close,
                             contentDescription = stringResource(R.string.close),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -377,6 +464,8 @@ fun AiChatBottomSheet(
                                         prompt = text,
                                         project = project,
                                         config = config,
+                                        ndk = ndk,
+                                        buildConfig = buildConfig,
                                         onFileModified = onFileModified
                                     )
                                 }
@@ -419,6 +508,37 @@ fun AiChatBottomSheet(
                 }
                 showAttachDialog = false
             }
+        )
+    }
+
+    if (showHistoryDialog && project != null) {
+        ChatHistoryDialog(
+            sessions = uiState.sessions,
+            activeSessionId = uiState.currentSessionId,
+            onSelectSession = { sessionId ->
+                viewModel.switchSession(sessionId, project)
+            },
+            onNewChat = {
+                viewModel.createNewSession(project)
+            },
+            onDeleteSession = { sessionId ->
+                viewModel.deleteSession(sessionId, project)
+            },
+            onDismiss = { showHistoryDialog = false }
+        )
+    }
+
+    if (showContextDialog) {
+        ContextLimitDialog(
+            usedTokens = uiState.estimatedTokensUsed,
+            maxTokens = uiState.modelMaxTokens,
+            modelName = config.model.ifBlank { config.provider },
+            onCompact = {
+                if (project != null) {
+                    viewModel.compactCurrentSession(project)
+                }
+            },
+            onDismiss = { showContextDialog = false }
         )
     }
 }
@@ -615,6 +735,68 @@ fun ActionCard(action: AiAgentAction) {
                     Text(
                         text = stringResource(R.string.ai_action_scan, action.fileCount),
                         style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
+
+        is AiAgentAction.BuildProject -> {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (action.isSuccess)
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                else
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Build,
+                        contentDescription = null,
+                        tint = if (action.isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (action.isSuccess)
+                            stringResource(R.string.ai_action_build_success, action.status)
+                        else
+                            stringResource(R.string.ai_action_build_failed, action.errorCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (action.isSuccess) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
+
+        is AiAgentAction.ContextCompacted -> {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.ElectricBolt,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.ai_action_compacted, action.savedTokens),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
                     )
                 }
             }

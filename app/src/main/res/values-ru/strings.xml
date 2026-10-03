@@ -266,4 +266,20 @@
     <string name="ai_action_edit">Изменен: %1$s (+%2$d, -%3$d строк)</string>
     <string name="ai_action_create">Создан: %1$s (+%2$d строк)</string>
     <string name="ai_action_scan">Анализ файлов проекта (%d файлов)</string>
+    <string name="ai_action_building">Сборка проекта через NDK...</string>
+    <string name="ai_action_build_success">Сборка успешна: %s</string>
+    <string name="ai_action_build_failed">Ошибка сборки (%d ошибок)</string>
+    <string name="ai_action_compacted">Контекст сжат (освобождено ~%d токенов)</string>
+
+    <string name="ai_chat_history_title">История чатов</string>
+    <string name="ai_chat_new_chat">Новый чат</string>
+    <string name="ai_chat_no_history">Нет сохраненных чатов</string>
+    <string name="ai_chat_delete_chat">Удалить чат</string>
+    <string name="ai_chat_messages_count">%d сообщений</string>
+
+    <string name="ai_context_limit_title">Лимит контекста модели</string>
+    <string name="ai_context_tokens_used">%1$s / %2$s токенов (%3$d%%)</string>
+    <string name="ai_context_remaining">Осталось %s токенов</string>
+    <string name="ai_context_compact_btn">Сжать контекст</string>
+    <string name="ai_context_compact_desc">Сжимает более раннюю историю сообщений в краткую сводку, освобождая токены для продолжения диалога.</string>
 </resources>

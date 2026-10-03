@@ -266,4 +266,20 @@
     <string name="ai_action_edit">Modified: %1$s (+%2$d, -%3$d lines)</string>
     <string name="ai_action_create">Created: %1$s (+%2$d lines)</string>
     <string name="ai_action_scan">Scanned project structure (%d files)</string>
+    <string name="ai_action_building">Building project with NDK...</string>
+    <string name="ai_action_build_success">Build succeeded: %s</string>
+    <string name="ai_action_build_failed">Build failed (%d errors)</string>
+    <string name="ai_action_compacted">Context compacted (freed ~%d tokens)</string>
+
+    <string name="ai_chat_history_title">Chat History</string>
+    <string name="ai_chat_new_chat">New Chat</string>
+    <string name="ai_chat_no_history">No previous chat sessions</string>
+    <string name="ai_chat_delete_chat">Delete Chat</string>
+    <string name="ai_chat_messages_count">%d messages</string>
+
+    <string name="ai_context_limit_title">Model Context Window</string>
+    <string name="ai_context_tokens_used">%1$s / %2$s tokens (%3$d%%)</string>
+    <string name="ai_context_remaining">%s tokens remaining</string>
+    <string name="ai_context_compact_btn">Compact Context</string>
+    <string name="ai_context_compact_desc">Compresses older conversation history into a concise summary to free up tokens.</string>
 </resources>

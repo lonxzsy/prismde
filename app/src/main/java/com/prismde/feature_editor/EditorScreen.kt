@@ -588,6 +588,8 @@ fun EditorScreen(
             project = editorState.currentProject,
             config = aiConfig,
             activeFile = editorState.activeFile,
+            ndk = activeNdk,
+            buildConfig = buildConfig,
             onDismiss = { showAiChat = false },
             onFileModified = { modifiedFile, newContent ->
                 // Live reload in editor if this file is open!

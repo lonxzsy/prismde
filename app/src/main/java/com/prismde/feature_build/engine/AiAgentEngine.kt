@@ -1,7 +1,11 @@
 package com.prismde.feature_build.engine
 
+import com.prismde.core.model.BuildConfiguration
+import com.prismde.core.model.Diagnostic
+import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,6 +28,8 @@ sealed class AiAgentAction {
         val content: String
     ) : AiAgentAction()
     data class ListFiles(val fileCount: Int) : AiAgentAction()
+    data class BuildProject(val status: String, val isSuccess: Boolean, val errorCount: Int = 0) : AiAgentAction()
+    data class ContextCompacted(val savedTokens: Int) : AiAgentAction()
     data class FinalAnswer(val text: String) : AiAgentAction()
     data class Error(val message: String) : AiAgentAction()
 }
@@ -63,6 +69,8 @@ class AiAgentEngine(
         attachedFiles: List<AttachedFile>,
         config: AiConfig,
         conversationHistory: List<AgentChatMessage>,
+        ndk: NdkVersion? = null,
+        buildConfig: BuildConfiguration? = null,
         onAction: (AiAgentAction) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         val isRu = java.util.Locale.getDefault().language == "ru"
@@ -75,9 +83,11 @@ class AiAgentEngine(
         val llmMessages = mutableListOf<CustomChatMessage>()
         llmMessages.add(CustomChatMessage(role = "system", content = systemPrompt))
 
-        // Replay previous conversation context (last 4 turns)
-        val recentHistory = conversationHistory.takeLast(4)
-        for (hist in recentHistory) {
+        // Replay previous conversation context with auto-compaction if tokens are high
+        val maxModelTokens = TokenEstimator.getModelContextLimit(config.model, config.provider)
+        val historyToUse = prepareHistoryWithCompaction(conversationHistory, maxModelTokens, onAction)
+
+        for (hist in historyToUse) {
             if (hist.isUser) {
                 llmMessages.add(CustomChatMessage(role = "user", content = hist.text))
             } else if (hist.text.isNotBlank()) {
@@ -157,6 +167,68 @@ class AiAgentEngine(
                         onAction(AiAgentAction.ListFiles(files.size))
                         toolResults.append("<tool_result name=\"list_files\">\n${files.joinToString("\n")}\n</tool_result>\n")
                     }
+
+                    "build_project" -> {
+                        onAction(AiAgentAction.Thinking(if (isRu) "Запуск компиляции проекта через NDK..." else "Running project compilation with NDK..."))
+                        if (ndk == null || !ndk.isInstalled) {
+                            val errMsg = if (isRu) "Ошибка: NDK не установлен или не настроен. Установите NDK в Настройках для сборки."
+                                         else "Error: Android NDK is not installed or configured. Please install NDK from Settings."
+                            onAction(AiAgentAction.BuildProject(status = if (isRu) "NDK не установлен" else "NDK not installed", isSuccess = false, errorCount = 1))
+                            toolResults.append("<tool_result name=\"build_project\" status=\"ERROR\">\n$errMsg\n</tool_result>\n")
+                        } else {
+                            val bConfig = buildConfig ?: BuildConfiguration()
+                            val runner = BuildProcessRunner()
+                            val logs = mutableListOf<String>()
+                            val diagnostics = mutableListOf<Diagnostic>()
+                            var completedEvent: BuildOutputEvent.Completed? = null
+
+                            val collectJob = launch {
+                                runner.events.collect { ev ->
+                                    when (ev) {
+                                        is BuildOutputEvent.LogLine -> logs.add(ev.text)
+                                        is BuildOutputEvent.DiagnosticFound -> diagnostics.add(ev.diagnostic)
+                                        is BuildOutputEvent.Completed -> completedEvent = ev
+                                    }
+                                }
+                            }
+
+                            val buildSuccess = runner.runBuild(project, ndk, bConfig)
+                            collectJob.cancel()
+
+                            val errors = diagnostics.filter { it.severity == com.prismde.core.model.DiagnosticSeverity.ERROR || it.severity == com.prismde.core.model.DiagnosticSeverity.FATAL }
+                            val errorCount = if (errors.isNotEmpty()) errors.size else if (!buildSuccess) 1 else 0
+
+                            if (buildSuccess) {
+                                val artifact = completedEvent?.artifactFile?.absolutePath ?: "libs/${bConfig.selectedAbi.abiString}/lib${project.name}.so"
+                                onAction(AiAgentAction.BuildProject(status = if (isRu) "Сборка успешна" else "Build Succeeded", isSuccess = true, errorCount = 0))
+                                toolResults.append(
+                                    "<tool_result name=\"build_project\" status=\"SUCCESS\">\n" +
+                                    "Build completed successfully!\n" +
+                                    "Artifact: $artifact\n" +
+                                    "All native source files compiled cleanly without errors.\n" +
+                                    "</tool_result>\n"
+                                )
+                            } else {
+                                onAction(AiAgentAction.BuildProject(status = if (isRu) "Ошибка сборки ($errorCount)" else "Build Failed ($errorCount)", isSuccess = false, errorCount = errorCount))
+                                val errorDetails = StringBuilder()
+                                errorDetails.append("Build FAILED with $errorCount error(s):\n")
+                                for (diag in errors.take(12)) {
+                                    errorDetails.append("- ${diag.filePath}:${diag.line}:${diag.column}: [${diag.severity}] ${diag.rawMessage}\n")
+                                }
+                                val errorLogs = logs.filter { it.contains("error:", ignoreCase = true) || it.contains("failed", ignoreCase = true) }.takeLast(8)
+                                if (errorLogs.isNotEmpty()) {
+                                    errorDetails.append("\nCompiler error output:\n").append(errorLogs.joinToString("\n"))
+                                }
+                                toolResults.append(
+                                    "<tool_result name=\"build_project\" status=\"FAILURE\">\n" +
+                                    errorDetails.toString().trim() + "\n" +
+                                    (if (isRu) "ВНИМАНИЕ: Проанализируй ошибки компилятора выше, исправь исходные файлы с помощью write_file и повтори сборку."
+                                     else "ATTENTION: Analyze compiler errors above, fix source files with write_file, and re-verify.") +
+                                    "\n</tool_result>\n"
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -177,6 +249,55 @@ class AiAgentEngine(
         }
 
         Result.success(finalExplanation)
+    }
+
+    /**
+     * Compresses older conversation history if tokens approach context threshold.
+     */
+    fun prepareHistoryWithCompaction(
+        conversationHistory: List<AgentChatMessage>,
+        maxModelTokens: Int,
+        onAction: ((AiAgentAction) -> Unit)? = null
+    ): List<AgentChatMessage> {
+        if (conversationHistory.size <= 4) return conversationHistory
+
+        var totalTokens = 0
+        for (m in conversationHistory) {
+            totalTokens += TokenEstimator.estimateTokens(m.text)
+        }
+
+        val threshold = (maxModelTokens * 0.65).toInt().coerceAtMost(30_000)
+        if (totalTokens < threshold) {
+            return conversationHistory
+        }
+
+        val keepLastCount = 3
+        val olderMessages = conversationHistory.dropLast(keepLastCount)
+        val recentMessages = conversationHistory.takeLast(keepLastCount)
+
+        val summaryBuilder = StringBuilder()
+        summaryBuilder.append("[Context Compacted: Previous Task Summary]\n")
+        for (m in olderMessages) {
+            if (m.isUser) {
+                summaryBuilder.append("User requested: ${m.text.take(160)}\n")
+            } else if (m.text.isNotBlank()) {
+                val firstLine = m.text.lines().firstOrNull { it.isNotBlank() } ?: ""
+                summaryBuilder.append("Assistant response: ${firstLine.take(160)}\n")
+            }
+        }
+
+        val compactedText = summaryBuilder.toString().trim()
+        val savedTokens = (totalTokens - TokenEstimator.estimateTokens(compactedText)).coerceAtLeast(0)
+        onAction?.invoke(AiAgentAction.ContextCompacted(savedTokens))
+
+        val summaryMessage = AgentChatMessage(
+            id = "compacted_summary_${System.currentTimeMillis()}",
+            isUser = false,
+            text = compactedText,
+            actions = listOf(AiAgentAction.ContextCompacted(savedTokens))
+        )
+
+        return listOf(summaryMessage) + recentMessages
     }
 
     private suspend fun sendChatCompletion(
@@ -346,9 +467,10 @@ class AiAgentEngine(
                     }
                 }
                 "list_files" -> {}
+                "build_project" -> {}
             }
 
-            if (name == "list_files" || args.isNotEmpty()) {
+            if (name == "list_files" || name == "build_project" || args.isNotEmpty()) {
                 calls.add(ParsedToolCall(name, args))
             }
         }
@@ -442,9 +564,14 @@ class AiAgentEngine(
             3. Просмотр структуры файлов проекта:
                <tool_call name="list_files"></tool_call>
 
+            4. Сборка и компиляция проекта (Clang/NDK/CMake):
+               <tool_call name="build_project"></tool_call>
+
             ПРАВИЛА РАБОТЫ:
             - Если тебе нужно узнать содержимое файла, вызови <tool_call name="read_file">.
             - Если нужно создать или модифицировать код, вызови <tool_call name="write_file">. Всегда предоставляй ПОЛНОЕ валидное содержимое файла в теге <content>.
+            - Если пользователь просит собрать или проверить проект, или после внесения правок в код C/C++, вызови <tool_call name="build_project"></tool_call>.
+            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang, открой указанные файлы, исправь ошибки и при необходимости снова вызови build_project.
             - ВНИМАНИЕ: Используй ТОЛЬКО стандартный тег <tool_call name="...">...</tool_call>. НЕ используй спецсимволы DSML (<|DSML|>, invoke, calls, parameter). Обязательно закрывай каждый вызов тегом </tool_call>.
             - После выполнения всех операций напиши краткое, профессиональное и понятное резюме на русском языке без лишней воды.
         """.trimIndent()
@@ -470,9 +597,14 @@ class AiAgentEngine(
             3. List project files:
                <tool_call name="list_files"></tool_call>
 
+            4. Build and compile project (Clang/NDK/CMake):
+               <tool_call name="build_project"></tool_call>
+
             RULES:
             - When you need file contents, call <tool_call name="read_file">.
             - When writing or modifying code, call <tool_call name="write_file">. Always provide the COMPLETE, valid file content inside <content>.
+            - If user asks to build or compile the project, or after making changes to native code, invoke <tool_call name="build_project"></tool_call>.
+            - If the build fails with errors (FAILURE), carefully read the compiler diagnostics (file and line numbers), inspect the code, fix errors with write_file, and re-test.
             - ATTENTION: Strictly use standard XML format: <tool_call name="...">...</tool_call>. Do NOT use DSML tokens (<|DSML|>, invoke, calls, parameter). Always close each tool call with </tool_call>.
             - When finished, provide a clear, concise summary of the changes made.
         """.trimIndent()
