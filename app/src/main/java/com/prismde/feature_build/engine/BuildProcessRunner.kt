@@ -539,12 +539,10 @@ class BuildProcessRunner {
         command.addAll(goals)
         command.addAll(flags)
 
-        // Essential Android JVM system properties:
-        // 1. Point user.home and maven.repo.local to writable internal app storage
-        // 2. Disable Jansi JNI native library extraction (avoids missing libc.so.6 on Android)
-        // 3. Move java.io.tmpdir to internal app cache
-        // 4. Disable CompressedOops to prevent Tagged Pointers truncation crash on Android 11+ (ARM64)
-        val jvmFlags = listOf(
+        // Essential Maven CLI system properties (-D...):
+        // Note: HotSpot JVM options like -XX:-UseCompressedOops belong strictly in JAVA_TOOL_OPTIONS / MAVEN_OPTS,
+        // because Maven's CLI parser interprets flags starting with -X as debug + plugin goals (e.g. prefix 'X').
+        val mavenSystemProps = listOf(
             "-Duser.home=${homeDir.absolutePath}",
             "-Dmaven.repo.local=${m2RepoDir.absolutePath}",
             "-Dlibrary.jansi.path=",
@@ -554,13 +552,11 @@ class BuildProcessRunner {
             "-Dstyle.color=never",
             "-Dmaven.color=false",
             "-Djava.io.tmpdir=${tempDir.absolutePath}",
-            "-Djansi.tmpdir=${tempDir.absolutePath}",
-            "-XX:-UseCompressedOops",
-            "-XX:-UseCompressedClassPointers"
+            "-Djansi.tmpdir=${tempDir.absolutePath}"
         )
-        for (flag in jvmFlags) {
-            if (!command.contains(flag)) {
-                command.add(flag)
+        for (prop in mavenSystemProps) {
+            if (!command.contains(prop)) {
+                command.add(prop)
             }
         }
 
