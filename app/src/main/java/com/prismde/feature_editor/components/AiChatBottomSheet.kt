@@ -109,16 +109,14 @@ fun AiChatBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        modifier = Modifier
-            .fillMaxHeight(0.92f)
-            .imePadding()
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
+                .fillMaxWidth()
+                .fillMaxHeight(0.98f)
+                .imePadding()
         ) {
             // Header
             Row(
@@ -305,7 +303,9 @@ fun AiChatBottomSheet(
 
             // Bottom Input Bar
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 3.dp
             ) {

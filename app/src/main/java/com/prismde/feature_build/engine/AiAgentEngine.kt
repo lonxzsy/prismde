@@ -287,13 +287,24 @@ class AiAgentEngine(
         explainer.explainDiagnostic(dummyDiag, promptBuilder.toString(), config)
     }
 
-    private data class ParsedToolCall(val name: String, val args: Map<String, String>)
+    data class ParsedToolCall(val name: String, val args: Map<String, String>)
 
-    private fun extractToolCalls(text: String): List<ParsedToolCall> {
+    fun extractToolCalls(text: String): List<ParsedToolCall> {
         val calls = mutableListOf<ParsedToolCall>()
-        val toolRegex = Pattern.compile("<tool_call\\s+name=[\"'](.*?)[\"']>([\\s\\S]*?)</tool_call>", Pattern.CASE_INSENSITIVE)
-        val matcher = toolRegex.matcher(text)
+        if (text.isBlank()) return calls
 
+        // 1. Normalize DeepSeek DSML tokens (< | | DSML | | ... or <｜DSML｜>...) into clean XML tags
+        val normalized = text
+            .replace(Regex("""<[\s|｜]*DSML[\s|｜]*""", RegexOption.IGNORE_CASE), "<")
+            .replace(Regex("""</[\s|｜]*DSML[\s|｜]*""", RegexOption.IGNORE_CASE), "</")
+
+        // 2. Matches standard XML <tool_call name="..."> and <invoke name="...">
+        val invocationRegex = Pattern.compile(
+            """<(?:tool_call|invoke)\s+name=["'](.*?)["']>([\s\S]*?)(?:</(?:tool_call|invoke)>|</calls>|(?=<(?:tool_call|invoke)\s+name=)|$)""",
+            Pattern.CASE_INSENSITIVE
+        )
+
+        val matcher = invocationRegex.matcher(normalized)
         while (matcher.find()) {
             val name = matcher.group(1)?.trim()?.lowercase() ?: continue
             val inner = matcher.group(2)?.trim() ?: ""
@@ -301,34 +312,72 @@ class AiAgentEngine(
 
             when (name) {
                 "read_file" -> {
-                    val pathMatcher = Pattern.compile("<path>([\\s\\S]*?)</path>", Pattern.CASE_INSENSITIVE).matcher(inner)
+                    // Extract path from <path>, <parameter name="path">, <arg name="path">
+                    val pathMatcher = Pattern.compile(
+                        """<(?:path|(?:parameter|arg)\s+name=["']path["'])>([\s\S]*?)</(?:path|parameter|arg)>""",
+                        Pattern.CASE_INSENSITIVE
+                    ).matcher(inner)
+
                     if (pathMatcher.find()) {
                         args["path"] = pathMatcher.group(1)?.trim() ?: ""
                     } else {
-                        args["path"] = inner.trim()
+                        // Check if inner contains only a plain path without tags
+                        val cleanPath = inner.replace(Regex("<[^>]+>"), "").trim()
+                        if (cleanPath.isNotBlank() && !cleanPath.contains("\n") && !cleanPath.contains(" ")) {
+                            args["path"] = cleanPath
+                        }
                     }
                 }
                 "write_file" -> {
-                    val pathMatcher = Pattern.compile("<path>([\\s\\S]*?)</path>", Pattern.CASE_INSENSITIVE).matcher(inner)
+                    val pathMatcher = Pattern.compile(
+                        """<(?:path|(?:parameter|arg)\s+name=["']path["'])>([\s\S]*?)</(?:path|parameter|arg)>""",
+                        Pattern.CASE_INSENSITIVE
+                    ).matcher(inner)
                     if (pathMatcher.find()) {
                         args["path"] = pathMatcher.group(1)?.trim() ?: ""
                     }
 
-                    val contentMatcher = Pattern.compile("<content>([\\s\\S]*?)</content>", Pattern.CASE_INSENSITIVE).matcher(inner)
+                    val contentMatcher = Pattern.compile(
+                        """<(?:content|(?:parameter|arg)\s+name=["']content["'])>([\s\S]*?)</(?:content|parameter|arg)>""",
+                        Pattern.CASE_INSENSITIVE
+                    ).matcher(inner)
                     if (contentMatcher.find()) {
                         args["content"] = contentMatcher.group(1) ?: ""
                     }
                 }
                 "list_files" -> {}
             }
-            calls.add(ParsedToolCall(name, args))
+
+            if (name == "list_files" || args.isNotEmpty()) {
+                calls.add(ParsedToolCall(name, args))
+            }
         }
+
+        // Also check self-closing tags like <tool_call name="list_files"/>
+        if (calls.isEmpty()) {
+            val selfClosingRegex = Pattern.compile("""<(?:tool_call|invoke)\s+name=["'](.*?)["']\s*/>""", Pattern.CASE_INSENSITIVE)
+            val scMatcher = selfClosingRegex.matcher(normalized)
+            while (scMatcher.find()) {
+                val name = scMatcher.group(1)?.trim()?.lowercase() ?: continue
+                calls.add(ParsedToolCall(name, emptyMap()))
+            }
+        }
+
         return calls
     }
 
-    private fun cleanResponseText(raw: String): String {
-        return raw.replace(Regex("<tool_call[\\s\\S]*?</tool_call>", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("<tool_result[\\s\\S]*?</tool_result>", RegexOption.IGNORE_CASE), "")
+    fun cleanResponseText(raw: String): String {
+        val normalized = raw
+            .replace(Regex("""<[\s|｜]*DSML[\s|｜]*""", RegexOption.IGNORE_CASE), "<")
+            .replace(Regex("""</[\s|｜]*DSML[\s|｜]*""", RegexOption.IGNORE_CASE), "</")
+
+        return normalized
+            .replace(Regex("""<(?:tool_call|invoke)\s+name=["'][^"']*["']>[\s\S]*?(?:</(?:tool_call|invoke)>|</calls>|(?=<(?:tool_call|invoke)\s+name=)|$)""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""<tool_call[\s\S]*?</tool_call>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""<tool_result[\s\S]*?</tool_result>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?calls>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?invoke[^>]*>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?parameter[^>]*>""", RegexOption.IGNORE_CASE), "")
             .trim()
     }
 
@@ -396,6 +445,7 @@ class AiAgentEngine(
             ПРАВИЛА РАБОТЫ:
             - Если тебе нужно узнать содержимое файла, вызови <tool_call name="read_file">.
             - Если нужно создать или модифицировать код, вызови <tool_call name="write_file">. Всегда предоставляй ПОЛНОЕ валидное содержимое файла в теге <content>.
+            - ВНИМАНИЕ: Используй ТОЛЬКО стандартный тег <tool_call name="...">...</tool_call>. НЕ используй спецсимволы DSML (<|DSML|>, invoke, calls, parameter). Обязательно закрывай каждый вызов тегом </tool_call>.
             - После выполнения всех операций напиши краткое, профессиональное и понятное резюме на русском языке без лишней воды.
         """.trimIndent()
         else """
@@ -423,6 +473,7 @@ class AiAgentEngine(
             RULES:
             - When you need file contents, call <tool_call name="read_file">.
             - When writing or modifying code, call <tool_call name="write_file">. Always provide the COMPLETE, valid file content inside <content>.
+            - ATTENTION: Strictly use standard XML format: <tool_call name="...">...</tool_call>. Do NOT use DSML tokens (<|DSML|>, invoke, calls, parameter). Always close each tool call with </tool_call>.
             - When finished, provide a clear, concise summary of the changes made.
         """.trimIndent()
     }

@@ -259,8 +259,38 @@ class CustomEndpointClient(
                     val firstChoice = choices.getJSONObject(0)
                     val messageObj = firstChoice.optJSONObject("message")
                     val content = messageObj?.optString("content") ?: ""
+                    val toolCallsArray = messageObj?.optJSONArray("tool_calls")
+
+                    if (toolCallsArray != null && toolCallsArray.length() > 0) {
+                        val sb = StringBuilder()
+                        if (content.isNotBlank()) sb.append(content).append("\n\n")
+                        for (i in 0 until toolCallsArray.length()) {
+                            val tc = toolCallsArray.optJSONObject(i)
+                            val fn = tc?.optJSONObject("function")
+                            val name = fn?.optString("name") ?: ""
+                            val argsStr = fn?.optString("arguments") ?: "{}"
+                            sb.append("<tool_call name=\"$name\">\n")
+                            try {
+                                val argsJson = JSONObject(argsStr)
+                                for (key in argsJson.keys()) {
+                                    val value = argsJson.opt(key)
+                                    sb.append("  <$key>$value</$key>\n")
+                                }
+                            } catch (_: Exception) {
+                                sb.append("  $argsStr\n")
+                            }
+                            sb.append("</tool_call>\n")
+                        }
+                        return@use Result.success(sb.toString().trim())
+                    }
+
                     if (content.isNotBlank()) {
                         return@use Result.success(content)
+                    }
+
+                    val reasoning = messageObj?.optString("reasoning_content") ?: ""
+                    if (reasoning.isNotBlank()) {
+                        return@use Result.success(reasoning)
                     }
                 }
 
