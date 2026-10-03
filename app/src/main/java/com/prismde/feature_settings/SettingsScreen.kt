@@ -145,8 +145,15 @@ fun SettingsScreen(
     var mavenInstallStatus by remember { mutableStateOf("") }
     var mavenRefreshTrigger by remember { mutableStateOf(0) }
 
+    var isInstallingJdk by remember { mutableStateOf(false) }
+    var jdkInstallProgress by remember { mutableStateOf(0f) }
+    var jdkInstallStatus by remember { mutableStateOf("") }
+
     val isMavenInstalled = remember(mavenRefreshTrigger) {
         BuildToolInstaller.isMavenInstalled(context)
+    }
+    val isInternalJdkInstalled = remember(mavenRefreshTrigger) {
+        BuildToolInstaller.isJdkInstalled(context)
     }
     val javaInfo = remember(customJavaHomeInput, mavenRefreshTrigger) {
         BuildToolInstaller.detectJavaEnvironment(context)
@@ -468,7 +475,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "Java Development Kit (JDK)",
+                                text = "Java Development Kit (JDK 17)",
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Bold
                             )
@@ -489,13 +496,74 @@ fun SettingsScreen(
                             text = if (javaInfo.isAvailable) {
                                 javaInfo.sourceDescription
                             } else {
-                                if (isRu) "Требуется для сборки Maven и Gradle" else "Required for Maven and Gradle builds"
+                                if (isRu) "Встроенный автономный OpenJDK (~45 МБ)" else "Standalone internal OpenJDK (~45 MB)"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
+                    if (isInstallingJdk) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            if (jdkInstallProgress > 0f) {
+                                Text("${jdkInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isInstallingJdk = true
+                                    jdkInstallProgress = 0f
+                                    val ok = BuildToolInstaller.installJdk(context) { status, pct ->
+                                        jdkInstallStatus = status
+                                        jdkInstallProgress = pct
+                                    }
+                                    isInstallingJdk = false
+                                    mavenRefreshTrigger++
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (ok) (if (isRu) "OpenJDK 17 успешно установлен!" else "OpenJDK 17 installed successfully!")
+                                        else (if (isRu) "Ошибка установки OpenJDK: $jdkInstallStatus" else "JDK install failed: $jdkInstallStatus"),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                if (isInternalJdkInstalled) {
+                                    if (isRu) "Переустановить" else "Reinstall"
+                                } else {
+                                    if (isRu) "Установить" else "Install"
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (isInstallingJdk && jdkInstallStatus.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = jdkInstallStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (isRu) "Или использовать внешний Termux JDK:" else "Or use external Termux JDK:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     OutlinedButton(
                         onClick = {
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(BuildToolInstaller.TERMUX_INSTALL_CMD))
@@ -506,11 +574,11 @@ fun SettingsScreen(
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
                         },
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Termux")
+                        Text("Termux", style = MaterialTheme.typography.labelMedium)
                     }
                 }
 

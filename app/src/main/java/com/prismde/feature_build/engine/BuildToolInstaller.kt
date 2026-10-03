@@ -35,11 +35,15 @@ object BuildToolInstaller {
     private const val MAVEN_ZIP_URL = "https://archive.apache.org/dist/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.zip"
     private const val MAVEN_MIRROR_URL = "https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz"
 
+    const val JDK_VERSION = "17.0.8"
+    const val JDK_DOWNLOAD_URL_AARCH64 = "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/jdk-17/jdk17-aarch64.tar.xz"
+    const val JDK_BACKUP_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.1/openjdk-17-aarch64.tar.xz"
+
     const val TERMUX_INSTALL_CMD = "pkg update -y && pkg install -y openjdk-17 maven"
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
@@ -49,6 +53,8 @@ object BuildToolInstaller {
     fun getToolsDir(context: Context): File {
         return File(context.filesDir, "tools").also { it.mkdirs() }
     }
+
+    // ==================== Maven Management ====================
 
     fun getMavenDir(context: Context): File {
         return File(getToolsDir(context), "maven")
@@ -62,14 +68,37 @@ object BuildToolInstaller {
         val mavenDir = getMavenDir(context)
         if (!mavenDir.exists()) return null
 
-        val mvnExecutable = mavenDir.walkTopDown().firstOrNull { file ->
-            file.isFile && (file.name == "mvn" || file.name == "mvn.cmd") && file.parentFile?.name == "bin"
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+
+        // On Android / Linux, NEVER execute mvn.cmd (it is a Windows batch file and causes syntax error in /system/bin/sh)
+        val mvnExecutable = if (isWindows) {
+            mavenDir.walkTopDown().firstOrNull { file ->
+                file.isFile && file.name == "mvn.cmd" && file.parentFile?.name == "bin"
+            } ?: mavenDir.walkTopDown().firstOrNull { file ->
+                file.isFile && file.name == "mvn" && file.parentFile?.name == "bin"
+            }
+        } else {
+            mavenDir.walkTopDown().firstOrNull { file ->
+                file.isFile && file.name == "mvn" && file.parentFile?.name == "bin"
+            }
         }
 
         mvnExecutable?.let {
             try { it.setExecutable(true, false) } catch (_: Throwable) {}
         }
         return mvnExecutable
+    }
+
+    fun getMavenHomeDir(context: Context): File? {
+        val mvn = getMavenExecutable(context) ?: return null
+        return mvn.parentFile?.parentFile ?: getMavenDir(context)
+    }
+
+    fun getMavenLauncherJar(context: Context): File? {
+        val home = getMavenHomeDir(context) ?: return null
+        val bootDir = File(home, "boot")
+        if (!bootDir.exists()) return null
+        return bootDir.listFiles { _, name -> name.startsWith("plexus-classworlds") && name.endsWith(".jar") }?.firstOrNull()
     }
 
     suspend fun installMaven(
@@ -156,10 +185,152 @@ object BuildToolInstaller {
         }
     }
 
+    // ==================== Standalone OpenJDK Management ====================
+
+    fun getJdkDir(context: Context): File {
+        return File(getToolsDir(context), "jdk")
+    }
+
+    fun isJdkInstalled(context: Context): Boolean {
+        return getJdkExecutable(context) != null
+    }
+
+    fun getJdkExecutable(context: Context): File? {
+        val jdkDir = getJdkDir(context)
+        if (!jdkDir.exists()) return null
+
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+        val targetName = if (isWindows) "java.exe" else "java"
+
+        val javaExe = jdkDir.walkTopDown().firstOrNull { file ->
+            file.isFile && file.name == targetName && file.parentFile?.name == "bin"
+        } ?: jdkDir.walkTopDown().firstOrNull { file ->
+            file.isFile && file.name == "java" && file.parentFile?.name == "bin"
+        }
+
+        javaExe?.let {
+            try { it.setExecutable(true, false) } catch (_: Throwable) {}
+        }
+        return javaExe
+    }
+
+    fun getJdkHomeDir(context: Context): File? {
+        val exe = getJdkExecutable(context) ?: return null
+        return exe.parentFile?.parentFile ?: getJdkDir(context)
+    }
+
+    suspend fun installJdk(
+        context: Context,
+        customUrl: String? = null,
+        onProgress: (statusMessage: String, percent: Float) -> Unit = { _, _ -> }
+    ): Boolean = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val jdkTargetDir = getJdkDir(context)
+        jdkTargetDir.mkdirs()
+
+        val tempArchive = File(context.cacheDir, "openjdk-17-aarch64.tar.xz")
+
+        try {
+            onProgress(
+                if (isRu) "Загрузка переносимого OpenJDK 17 для Android (~45 МБ)..."
+                else "Downloading portable OpenJDK 17 for Android (~45 MB)...",
+                10f
+            )
+
+            val urls = mutableListOf<String>()
+            if (!customUrl.isNullOrBlank()) {
+                urls.add(customUrl)
+            }
+            urls.add(JDK_DOWNLOAD_URL_AARCH64)
+            urls.add(JDK_BACKUP_URL)
+
+            var downloadSuccess = false
+            for (url in urls) {
+                try {
+                    downloader.download(url, tempArchive) { current, total, percent, _ ->
+                        val scaled = 10f + (percent * 0.65f) // 10% to 75%
+                        val curMb = current / (1024 * 1024)
+                        val totalMb = if (total > 0) total / (1024 * 1024) else 45
+                        onProgress(
+                            if (isRu) "Загрузка OpenJDK 17: $curMb МБ / $totalMb МБ (${percent.toInt()}%)"
+                            else "Downloading OpenJDK 17: $curMb MB / $totalMb MB (${percent.toInt()}%)",
+                            scaled
+                        )
+                    }
+                    downloadSuccess = true
+                    break
+                } catch (e: Exception) {
+                    tempArchive.delete()
+                }
+            }
+
+            if (!downloadSuccess) {
+                onProgress(
+                    if (isRu) "✖ Ошибка: Не удалось загрузить OpenJDK 17. Проверьте сеть или укажите свой URL."
+                    else "✖ Error: Failed to download OpenJDK 17. Check internet or provide custom URL.",
+                    0f
+                )
+                return@withContext false
+            }
+
+            onProgress(
+                if (isRu) "Распаковка OpenJDK 17 во внутреннее хранилище PrismDE..."
+                else "Extracting OpenJDK 17 into PrismDE internal storage...",
+                80f
+            )
+
+            val extractSuccess = extractor.extract(tempArchive, jdkTargetDir) { msg ->
+                onProgress(msg, 85f)
+            }
+
+            tempArchive.delete()
+
+            if (!extractSuccess) {
+                return@withContext false
+            }
+
+            // Ensure executable permissions on all tools in bin/
+            jdkTargetDir.walkTopDown().filter { it.parentFile?.name == "bin" }.forEach {
+                try { it.setExecutable(true, false) } catch (_: Throwable) {}
+            }
+
+            val installedJava = getJdkExecutable(context)
+            val success = installedJava != null && installedJava.exists()
+            if (success) {
+                onProgress(
+                    if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище!"
+                    else "✔ OpenJDK 17 installed successfully into internal storage!",
+                    100f
+                )
+            }
+            success
+        } catch (e: Exception) {
+            e.printStackTrace()
+            tempArchive.delete()
+            false
+        }
+    }
+
+    // ==================== Java Environment Detection ====================
+
     fun detectJavaEnvironment(context: Context? = null, workingDir: File? = null): JavaEnvironmentInfo {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
-        // 1. Check local.properties in project
+        // 1. Check internal tools/jdk inside PrismDE first (completely autonomous, zero external dependencies!)
+        if (context != null) {
+            val internalJava = getJdkExecutable(context)
+            val internalHome = getJdkHomeDir(context)
+            if (internalJava != null && internalJava.exists()) {
+                return JavaEnvironmentInfo(
+                    isAvailable = true,
+                    javaHome = internalHome,
+                    javaBin = internalJava,
+                    sourceDescription = if (isRu) "Встроенный PrismDE OpenJDK 17" else "Internal PrismDE OpenJDK 17"
+                )
+            }
+        }
+
+        // 2. Check local.properties in project
         if (workingDir != null) {
             val lp = File(workingDir, "local.properties")
             if (lp.exists()) {
@@ -181,20 +352,6 @@ object BuildToolInstaller {
                         }
                     }
                 } catch (_: Throwable) {}
-            }
-        }
-
-        // 2. Check internal tools/jdk if present
-        if (context != null) {
-            val internalJdk = File(getToolsDir(context), "jdk")
-            if (internalJdk.exists()) {
-                val bin = File(internalJdk, "bin/java")
-                return JavaEnvironmentInfo(
-                    isAvailable = true,
-                    javaHome = internalJdk,
-                    javaBin = if (bin.exists()) bin else null,
-                    sourceDescription = if (isRu) "Внутренний JDK (${internalJdk.absolutePath})" else "Internal JDK (${internalJdk.absolutePath})"
-                )
             }
         }
 
@@ -290,6 +447,7 @@ object BuildToolInstaller {
         val isRu = java.util.Locale.getDefault().language == "ru"
         val mavenExe = getMavenExecutable(context)
         val javaInfo = detectJavaEnvironment(context)
+        val isInternalJdk = isJdkInstalled(context)
 
         return listOf(
             BuildToolInfo(
@@ -307,13 +465,15 @@ object BuildToolInstaller {
             BuildToolInfo(
                 id = "jdk",
                 name = "Java Development Kit (JDK)",
-                version = "17+",
+                version = "17",
                 isInstalled = javaInfo.isAvailable,
                 installedPath = javaInfo.javaHome?.absolutePath ?: javaInfo.javaBin?.absolutePath,
                 description = if (isRu)
-                    "Среда выполнения и компилятор Java, необходимый для Maven и Gradle"
+                    if (isInternalJdk) "Встроенный автономный OpenJDK 17 внутри PrismDE"
+                    else "Среда выполнения и компилятор Java, необходимый для Maven и Gradle"
                 else
-                    "Java Runtime and Compiler required for Maven and Gradle builds",
+                    if (isInternalJdk) "Internal standalone OpenJDK 17 inside PrismDE"
+                    else "Java Runtime and Compiler required for Maven and Gradle builds",
                 sizeLabel = javaInfo.sourceDescription
             )
         )

@@ -411,20 +411,38 @@ class BuildProcessRunner {
             }
         }
 
-        // Check JDK availability before execution
-        val javaAvail = ProjectDetector.isJavaAvailable(project.rootDir) || config.javaHome.isNotBlank() ||
-            BuildToolInstaller.detectJavaEnvironment(context, project.rootDir).isAvailable
-        if (!javaAvail) {
-            _events.emit(BuildOutputEvent.LogLine(
-                if (isRu) "⚠ Внимание: JDK (Java) не найден. Для сборки Maven требуется Java JDK."
-                else "⚠ Warning: JDK (Java) not found. Maven build requires a Java JDK.",
-                isError = true
-            ))
-            _events.emit(BuildOutputEvent.LogLine(
-                if (isRu) "💡 Установите OpenJDK в Termux (${BuildToolInstaller.TERMUX_INSTALL_CMD}) или укажите JAVA_HOME в параметрах сборки."
-                else "💡 Install OpenJDK in Termux (${BuildToolInstaller.TERMUX_INSTALL_CMD}) or specify JAVA_HOME in build settings.",
-                isError = true
-            ))
+        // Check JDK availability before execution and auto-install if missing!
+        var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir)
+        if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(project.rootDir)) {
+            if (context != null) {
+                _events.emit(BuildOutputEvent.LogLine(
+                    if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка переносимого OpenJDK 17 (~45 МБ)..."
+                    else "ℹ Java JDK not found. Automatically downloading standalone OpenJDK 17 (~45 MB)..."
+                ))
+                val jdkInstalled = BuildToolInstaller.installJdk(context) { status, pct ->
+                    if (pct == 10f || pct == 80f || pct == 100f) {
+                        _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                    }
+                }
+                if (jdkInstalled) {
+                    javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir)
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище!"
+                        else "✔ OpenJDK 17 installed successfully into internal storage!"
+                    ))
+                }
+            } else {
+                _events.emit(BuildOutputEvent.LogLine(
+                    if (isRu) "⚠ Внимание: JDK (Java) не найден. Для сборки Maven требуется Java JDK."
+                    else "⚠ Warning: JDK (Java) not found. Maven build requires a Java JDK.",
+                    isError = true
+                ))
+                _events.emit(BuildOutputEvent.LogLine(
+                    if (isRu) "💡 Установите OpenJDK в Настройках приложения (раздел «Инструменты сборки»)."
+                    else "💡 Install OpenJDK in App Settings (Build Tools section).",
+                    isError = true
+                ))
+            }
         }
 
         val goals = config.mavenGoals.split(" ").filter { it.isNotBlank() }.ifEmpty { listOf("package") }
