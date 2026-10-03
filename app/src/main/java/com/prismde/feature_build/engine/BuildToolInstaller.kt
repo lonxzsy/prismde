@@ -364,7 +364,7 @@ object BuildToolInstaller {
      * Ensures the project has gradle wrapper files (gradlew, gradlew.bat, gradle/wrapper/...)
      * and a properly configured gradle.properties for optimal execution on Android.
      */
-    fun ensureGradleWrapper(context: Context, projectRootDir: File): Boolean {
+    fun ensureGradleWrapper(context: Context, projectRootDir: File, force: Boolean = false): Boolean {
         return try {
             val gradlew = File(projectRootDir, "gradlew")
             val gradlewBat = File(projectRootDir, "gradlew.bat")
@@ -382,7 +382,13 @@ object BuildToolInstaller {
                 }
             }
 
-            if (!gradlew.exists() || gradlew.length() == 0L) {
+            val needsUpdateGradlew = force || !gradlew.exists() || gradlew.length() == 0L ||
+                    try {
+                        val txt = gradlew.readText()
+                        txt.contains("\"-Xmx64m\"") || txt.contains("xargs -n1")
+                    } catch (_: Throwable) { false }
+
+            if (needsUpdateGradlew) {
                 copyAssetFile("gradle_wrapper/gradlew", gradlew)
             }
             if (!gradlewBat.exists() || gradlewBat.length() == 0L) {
