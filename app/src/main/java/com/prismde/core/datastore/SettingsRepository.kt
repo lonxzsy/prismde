@@ -41,6 +41,15 @@ class SettingsRepository(private val context: Context) {
         val KEY_ANTIGRAVITY_QUOTA_REMAINING = stringPreferencesKey("antigravity_quota_remaining")
         val KEY_ANTIGRAVITY_QUOTA_RESET_TIME = stringPreferencesKey("antigravity_quota_reset_time")
         val KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON = stringPreferencesKey("antigravity_quota_summary_json")
+
+        // Custom AI Endpoint Preferences
+        val KEY_CUSTOM_AI_BASE_URL = stringPreferencesKey("custom_ai_base_url")
+        val KEY_CUSTOM_AI_API_KEY = stringPreferencesKey("custom_ai_api_key")
+        val KEY_CUSTOM_AI_MODEL = stringPreferencesKey("custom_ai_model")
+        val KEY_CUSTOM_AI_MODELS_URL = stringPreferencesKey("custom_ai_models_url")
+        val KEY_CUSTOM_AI_AUTH_TYPE = stringPreferencesKey("custom_ai_auth_type") // "bearer", "header", "none"
+        val KEY_CUSTOM_AI_HEADER_NAME = stringPreferencesKey("custom_ai_header_name")
+        val KEY_CUSTOM_AI_CACHED_MODELS = stringPreferencesKey("custom_ai_cached_models")
     }
 
     private val syncPrefs = context.getSharedPreferences("prism_sync_state", Context.MODE_PRIVATE)
@@ -94,6 +103,18 @@ class SettingsRepository(private val context: Context) {
     val antigravityQuotaResetTimeFlow: Flow<String> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_QUOTA_RESET_TIME] ?: "" }
     val antigravityQuotaSummaryJsonFlow: Flow<String?> = context.dataStore.data.map { it[KEY_ANTIGRAVITY_QUOTA_SUMMARY_JSON] }
 
+    val customAiBaseUrlFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_AI_BASE_URL] ?: "" }
+    val customAiApiKeyFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_AI_API_KEY] ?: "" }
+    val customAiModelFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_AI_MODEL] ?: "" }
+    val customAiModelsUrlFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_AI_MODELS_URL] ?: "" }
+    val customAiAuthTypeFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_AI_AUTH_TYPE] ?: "bearer" }
+    val customAiHeaderNameFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_AI_HEADER_NAME] ?: "Authorization" }
+    val customAiCachedModelsFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[KEY_CUSTOM_AI_CACHED_MODELS] ?: ""
+        if (raw.isBlank()) emptyList()
+        else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
     val aiConfigFlow: Flow<AiConfig> = context.dataStore.data.map { prefs ->
         val provider = prefs[KEY_AI_PROVIDER] ?: "gemini_api"
         val apiKey = prefs[KEY_GEMINI_API_KEY] ?: ""
@@ -107,13 +128,31 @@ class SettingsRepository(private val context: Context) {
         val token = prefs[KEY_ANTIGRAVITY_ACCESS_TOKEN] ?: ""
         val rToken = prefs[KEY_ANTIGRAVITY_REFRESH_TOKEN] ?: ""
 
-        val chosenModel = if (provider == "antigravity") aModel else gModel
+        val cBaseUrl = prefs[KEY_CUSTOM_AI_BASE_URL] ?: ""
+        val cApiKey = prefs[KEY_CUSTOM_AI_API_KEY] ?: ""
+        val cModel = prefs[KEY_CUSTOM_AI_MODEL] ?: ""
+        val cModelsUrl = prefs[KEY_CUSTOM_AI_MODELS_URL] ?: ""
+        val cAuthType = prefs[KEY_CUSTOM_AI_AUTH_TYPE] ?: "bearer"
+        val cHeaderName = prefs[KEY_CUSTOM_AI_HEADER_NAME] ?: "Authorization"
+
+        val chosenModel = when (provider) {
+            "antigravity" -> aModel
+            "custom" -> cModel.ifBlank { "gpt-4o" }
+            else -> gModel
+        }
+
         AiConfig(
             provider = provider,
             apiKey = apiKey,
             model = chosenModel,
             antigravityAccessToken = token,
-            antigravityRefreshToken = rToken
+            antigravityRefreshToken = rToken,
+            customBaseUrl = cBaseUrl,
+            customApiKey = cApiKey,
+            customModel = cModel,
+            customModelsUrl = cModelsUrl,
+            customAuthType = cAuthType,
+            customHeaderName = cHeaderName
         )
     }
 
@@ -123,6 +162,34 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setGeminiModel(model: String) {
         context.dataStore.edit { it[KEY_GEMINI_MODEL] = model }
+    }
+
+    suspend fun setCustomAiBaseUrl(url: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_BASE_URL] = url }
+    }
+
+    suspend fun setCustomAiApiKey(key: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_API_KEY] = key }
+    }
+
+    suspend fun setCustomAiModel(model: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_MODEL] = model }
+    }
+
+    suspend fun setCustomAiModelsUrl(url: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_MODELS_URL] = url }
+    }
+
+    suspend fun setCustomAiAuthType(authType: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_AUTH_TYPE] = authType }
+    }
+
+    suspend fun setCustomAiHeaderName(header: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_HEADER_NAME] = header }
+    }
+
+    suspend fun setCustomAiCachedModels(models: List<String>) {
+        context.dataStore.edit { it[KEY_CUSTOM_AI_CACHED_MODELS] = models.joinToString(",") }
     }
 
     suspend fun setAntigravityModel(model: String) {

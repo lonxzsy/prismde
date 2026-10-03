@@ -65,6 +65,9 @@ import com.prismde.feature_build.components.ExportSoDialog
 import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import com.prismde.feature_settings.BuildPresetDialog
 import com.prismde.feature_editor.language.PrismCodeLanguage
+import com.prismde.feature_editor.components.AiChatBottomSheet
+import com.prismde.feature_editor.AiChatViewModel
+import androidx.compose.material.icons.rounded.AutoAwesome
 import io.github.rosemoe.sora.widget.CodeEditor
 
 data class PendingAiDiff(
@@ -89,6 +92,8 @@ fun EditorScreen(
     var buildConfig by remember { mutableStateOf(BuildConfiguration()) }
     var showPresetDialog by remember { mutableStateOf(false) }
     var showProjectPicker by remember { mutableStateOf(false) }
+    var showAiChat by remember { mutableStateOf(false) }
+    val aiChatViewModel: AiChatViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     var aiApplyingMessage by remember { mutableStateOf<String?>(null) }
@@ -245,6 +250,18 @@ fun EditorScreen(
                             contentDescription = stringResource(R.string.build_params),
                             modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // AI Assistant Chat Button
+                    IconButton(
+                        onClick = { showAiChat = true }
+                    ) {
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = stringResource(R.string.ai_chat_title),
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -561,6 +578,31 @@ fun EditorScreen(
                 onSelectProject(project)
             },
             onDismiss = { showProjectPicker = false }
+        )
+    }
+
+    // AI Assistant Chat Bottom Sheet
+    if (showAiChat) {
+        AiChatBottomSheet(
+            viewModel = aiChatViewModel,
+            project = editorState.currentProject,
+            config = aiConfig,
+            activeFile = editorState.activeFile,
+            onDismiss = { showAiChat = false },
+            onFileModified = { modifiedFile, newContent ->
+                // Live reload in editor if this file is open!
+                if (editorState.activeFile?.absolutePath == modifiedFile.absolutePath) {
+                    codeEditorInstance?.let { editor ->
+                        editor.setText(newContent)
+                        val lang = editor.editorLanguage
+                        if (lang is PrismCodeLanguage) {
+                            editor.rerunAnalysis()
+                            editor.postInvalidate()
+                        }
+                    }
+                    editorViewModel.updateContent(newContent)
+                }
+            }
         )
     }
 }

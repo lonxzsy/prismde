@@ -11,11 +11,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class AiConfig(
-    val provider: String = "gemini_api", // "gemini_api" or "antigravity"
+    val provider: String = "gemini_api", // "gemini_api", "antigravity", or "custom"
     val apiKey: String = "",
     val model: String = "gemini-2.5-flash",
     val antigravityAccessToken: String = "",
-    val antigravityRefreshToken: String = ""
+    val antigravityRefreshToken: String = "",
+    val customBaseUrl: String = "",
+    val customApiKey: String = "",
+    val customModel: String = "",
+    val customModelsUrl: String = "",
+    val customAuthType: String = "bearer", // "bearer", "header", "none"
+    val customHeaderName: String = "Authorization"
 )
 
 class GeminiExplainer(
@@ -76,17 +82,17 @@ class GeminiExplainer(
 
         val rawResult = executeAiPrompt(prompt, config)
         return rawResult.map { text ->
-            val modelName = if (config.provider == "antigravity") {
-                config.model.trim().ifBlank { "gemini-3.8-flash" }
-            } else {
-                config.model.trim().ifBlank { "gemini-2.5-flash" }
+            val modelName = config.model.trim().ifBlank {
+                when (config.provider) {
+                    "antigravity" -> "gemini-3.8-flash"
+                    "custom" -> "Custom Model"
+                    else -> "gemini-2.5-flash"
+                }
             }
-            val header = if (config.provider == "antigravity") {
-                if (isRu) "> **Сервис:** Google Antigravity • **Модель:** `$modelName`\n\n"
-                else "> **Service:** Google Antigravity • **Model:** `$modelName`\n\n"
-            } else {
-                if (isRu) "> **Сервис:** Google AI Studio • **Модель:** `$modelName`\n\n"
-                else "> **Service:** Google AI Studio • **Model:** `$modelName`\n\n"
+            val header = when (config.provider) {
+                "antigravity" -> if (isRu) "> **Сервис:** Google Antigravity • **Модель:** `$modelName`\n\n" else "> **Service:** Google Antigravity • **Model:** `$modelName`\n\n"
+                "custom" -> if (isRu) "> **Сервис:** Custom Endpoint • **Модель:** `$modelName`\n\n" else "> **Service:** Custom Endpoint • **Model:** `$modelName`\n\n"
+                else -> if (isRu) "> **Сервис:** Google AI Studio • **Модель:** `$modelName`\n\n" else "> **Service:** Google AI Studio • **Model:** `$modelName`\n\n"
             }
             header + text
         }
@@ -179,6 +185,19 @@ class GeminiExplainer(
 
         val mediaType = "application/json".toMediaType()
         val isRu = java.util.Locale.getDefault().language == "ru"
+
+        if (config.provider == "custom") {
+            val customClient = CustomEndpointClient(client)
+            val messages = listOf(
+                CustomChatMessage(
+                    role = "system",
+                    content = if (isRu) "Ты профессиональный C/C++ и Android NDK ассистент."
+                    else "You are a professional C/C++ and Android NDK assistant."
+                ),
+                CustomChatMessage(role = "user", content = prompt)
+            )
+            return@withContext customClient.sendChatCompletion(messages, config)
+        }
 
         if (config.provider == "antigravity") {
             if (config.antigravityAccessToken.isBlank()) {

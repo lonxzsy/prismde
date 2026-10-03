@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Memory
@@ -41,6 +42,11 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import com.prismde.feature_build.engine.CustomEndpointClient
 import com.prismde.feature_setup.DonationModalSheet
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -100,6 +106,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val authManager = remember { AntigravityAuthManager() }
+    val customAiClient = remember { CustomEndpointClient() }
     val isRu = remember { java.util.Locale.getDefault().language == "ru" }
 
     val darkMode by settingsRepository.darkModeFlow.collectAsState(initial = "system")
@@ -120,6 +127,14 @@ fun SettingsScreen(
     val antigravityQuotaResetTime by settingsRepository.antigravityQuotaResetTimeFlow.collectAsState(initial = "")
     val antigravityQuotaSummaryJson by settingsRepository.antigravityQuotaSummaryJsonFlow.collectAsState(initial = null)
 
+    val customBaseUrl by settingsRepository.customAiBaseUrlFlow.collectAsState(initial = "")
+    val customApiKey by settingsRepository.customAiApiKeyFlow.collectAsState(initial = "")
+    val customModel by settingsRepository.customAiModelFlow.collectAsState(initial = "")
+    val customModelsUrl by settingsRepository.customAiModelsUrlFlow.collectAsState(initial = "")
+    val customAuthType by settingsRepository.customAiAuthTypeFlow.collectAsState(initial = "bearer")
+    val customHeaderName by settingsRepository.customAiHeaderNameFlow.collectAsState(initial = "Authorization")
+    val customCachedModels by settingsRepository.customAiCachedModelsFlow.collectAsState(initial = emptyList())
+
     val quotaGroups = remember(antigravityQuotaSummaryJson) {
         AntigravityAuthManager.parseQuotaSummaryJson(antigravityQuotaSummaryJson)
     }
@@ -131,6 +146,17 @@ fun SettingsScreen(
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var dynamicAntigravityModels by remember { mutableStateOf(AntigravityAuthManager.DEFAULT_ANTIGRAVITY_MODELS) }
     var showDonationSheet by remember { mutableStateOf(false) }
+
+    var customBaseUrlInput by remember(customBaseUrl) { mutableStateOf(customBaseUrl) }
+    var customApiKeyInput by remember(customApiKey) { mutableStateOf(customApiKey) }
+    var customModelInput by remember(customModel) { mutableStateOf(customModel) }
+    var customModelsUrlInput by remember(customModelsUrl) { mutableStateOf(customModelsUrl) }
+    var customHeaderNameInput by remember(customHeaderName) { mutableStateOf(customHeaderName) }
+    var isApiKeyVisible by remember { mutableStateOf(false) }
+    var isFetchingCustomModels by remember { mutableStateOf(false) }
+    var customFetchStatusMessage by remember { mutableStateOf<String?>(null) }
+    var customFetchError by remember { mutableStateOf<String?>(null) }
+    var showCustomModelMenu by remember { mutableStateOf(false) }
 
     // Auto-migrate stale / non-existent model ids to the curated 7 models
     LaunchedEffect(antigravityModel) {
@@ -325,7 +351,7 @@ fun SettingsScreen(
                         onClick = {
                             coroutineScope.launch { settingsRepository.setAiProvider("antigravity") }
                         },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
                         icon = {
                             SegmentedButtonDefaults.Icon(active = (aiProvider == "antigravity")) {
                                 Icon(Icons.Rounded.SmartToy, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize))
@@ -340,20 +366,41 @@ fun SettingsScreen(
                         onClick = {
                             coroutineScope.launch { settingsRepository.setAiProvider("gemini_api") }
                         },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
                         icon = {
                             SegmentedButtonDefaults.Icon(active = (aiProvider == "gemini_api")) {
                                 Icon(Icons.Rounded.Key, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize))
                             }
                         },
                         label = {
-                            Text("AI Studio (API)", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text("AI Studio", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        }
+                    )
+                    SegmentedButton(
+                        selected = (aiProvider == "custom"),
+                        onClick = {
+                            coroutineScope.launch { settingsRepository.setAiProvider("custom") }
+                        },
+                        shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
+                        icon = {
+                            SegmentedButtonDefaults.Icon(active = (aiProvider == "custom")) {
+                                Icon(Icons.Rounded.Dns, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize))
+                            }
+                        },
+                        label = {
+                            Text(stringResource(R.string.provider_custom), fontWeight = FontWeight.SemiBold, maxLines = 1)
                         }
                     )
                 }
 
+                Spacer(Modifier.height(14.dp))
+
                 // Service status summary card (Material Design 3)
-                val isConnected = if (aiProvider == "antigravity") antigravityAccessToken.isNotBlank() else geminiKey.isNotBlank()
+                val isConnected = when (aiProvider) {
+                    "antigravity" -> antigravityAccessToken.isNotBlank()
+                    "custom" -> customBaseUrl.isNotBlank()
+                    else -> geminiKey.isNotBlank()
+                }
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -383,7 +430,11 @@ fun SettingsScreen(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = if (aiProvider == "antigravity") "Google Antigravity" else "Google AI Studio",
+                                    text = when (aiProvider) {
+                                        "antigravity" -> "Google Antigravity"
+                                        "custom" -> stringResource(R.string.custom_endpoint_title)
+                                        else -> "Google AI Studio"
+                                    },
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
@@ -412,17 +463,28 @@ fun SettingsScreen(
                         Spacer(Modifier.height(4.dp))
 
                         Text(
-                            text = if (aiProvider == "antigravity") {
-                                if (antigravityAccessToken.isNotBlank()) {
-                                    stringResource(R.string.ai_status_antigravity_connected, antigravityUserEmail.ifBlank { "Google" }, antigravityModel)
-                                } else {
-                                    stringResource(R.string.ai_status_antigravity_not)
+                            text = when (aiProvider) {
+                                "antigravity" -> {
+                                    if (antigravityAccessToken.isNotBlank()) {
+                                        stringResource(R.string.ai_status_antigravity_connected, antigravityUserEmail.ifBlank { "Google" }, antigravityModel)
+                                    } else {
+                                        stringResource(R.string.ai_status_antigravity_not)
+                                    }
                                 }
-                            } else {
-                                if (geminiKey.isNotBlank()) {
-                                    stringResource(R.string.ai_status_gemini_key_set, geminiModel)
-                                } else {
-                                    stringResource(R.string.ai_status_gemini_key_not)
+                                "custom" -> {
+                                    if (customBaseUrl.isNotBlank()) {
+                                        val modelDisplay = customModel.ifBlank { "default" }
+                                        if (isRu) "Подключено: $customBaseUrl ($modelDisplay)" else "Connected: $customBaseUrl ($modelDisplay)"
+                                    } else {
+                                        if (isRu) "Укажите Base URL и модель" else "Specify Base URL and model"
+                                    }
+                                }
+                                else -> {
+                                    if (geminiKey.isNotBlank()) {
+                                        stringResource(R.string.ai_status_gemini_key_set, geminiModel)
+                                    } else {
+                                        stringResource(R.string.ai_status_gemini_key_not)
+                                    }
                                 }
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -437,8 +499,9 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 Spacer(Modifier.height(16.dp))
 
-                if (aiProvider == "antigravity") {
-                    // Google Antigravity Configuration Panel
+                when (aiProvider) {
+                    "antigravity" -> {
+                        // Google Antigravity Configuration Panel
                     val isAuthenticated = antigravityAccessToken.isNotBlank()
 
                     if (!isAuthenticated) {
@@ -912,88 +975,375 @@ fun SettingsScreen(
                             }
                         }
                     }
-                } else {
-                    // Google AI Studio Configuration Panel
-                    Text(
-                        text = "Google AI Studio (Gemini API)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = stringResource(R.string.gemini_studio_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = geminiKeyInput,
-                        onValueChange = {
-                            geminiKeyInput = it
-                            coroutineScope.launch { settingsRepository.setGeminiApiKey(it.trim()) }
-                        },
-                        placeholder = { Text("AIzaSy...") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
+                    }
+                    "gemini_api" -> {
+                        // Google AI Studio Configuration Panel
+                        Text(
+                            text = "Google AI Studio (Gemini API)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = stringResource(R.string.gemini_studio_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = geminiKeyInput,
+                            onValueChange = {
+                                geminiKeyInput = it
+                                coroutineScope.launch { settingsRepository.setGeminiApiKey(it.trim()) }
+                            },
+                            placeholder = { Text("AIzaSy...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                    Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(14.dp))
 
-                    Text(stringResource(R.string.gemini_model_choice), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
+                        Text(stringResource(R.string.gemini_model_choice), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
 
-                    var showGeminiMenu by remember { mutableStateOf(false) }
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showGeminiMenu = true },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                        ) {
-                            Row(
+                        var showGeminiMenu by remember { mutableStateOf(false) }
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { showGeminiMenu = true },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    val currentTitle = AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.find { it.first == geminiModel }?.second ?: geminiModel
-                                    Text(text = currentTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                    Text(text = stringResource(R.string.current_model_label, geminiModel), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        val currentTitle = AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.find { it.first == geminiModel }?.second ?: geminiModel
+                                        Text(text = currentTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                        Text(text = stringResource(R.string.current_model_label, geminiModel), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
                                 }
-                                Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                            }
+
+                            DropdownMenu(
+                                expanded = showGeminiMenu,
+                                onDismissRequest = { showGeminiMenu = false }
+                            ) {
+                                AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.forEach { (id, title) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(title, fontWeight = FontWeight.SemiBold)
+                                                Text(id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        },
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                settingsRepository.setGeminiModel(id)
+                                            }
+                                            showGeminiMenu = false
+                                        },
+                                        trailingIcon = {
+                                            if (id == geminiModel) {
+                                                Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
+                    }
+                    "custom" -> {
+                        // Custom AI Endpoint Configuration Panel
+                        Text(
+                            text = stringResource(R.string.custom_endpoint_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = stringResource(R.string.custom_endpoint_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
-                        DropdownMenu(
-                            expanded = showGeminiMenu,
-                            onDismissRequest = { showGeminiMenu = false }
-                        ) {
-                            AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.forEach { (id, title) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(title, fontWeight = FontWeight.SemiBold)
-                                            Text(id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            settingsRepository.setGeminiModel(id)
-                                        }
-                                        showGeminiMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (id == geminiModel) {
-                                            Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                        }
+                        Spacer(Modifier.height(14.dp))
+
+                        // Base URL
+                        OutlinedTextField(
+                            value = customBaseUrlInput,
+                            onValueChange = {
+                                customBaseUrlInput = it
+                                coroutineScope.launch { settingsRepository.setCustomAiBaseUrl(it.trim()) }
+                            },
+                            label = { Text(stringResource(R.string.custom_base_url_label)) },
+                            placeholder = { Text(stringResource(R.string.custom_base_url_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    val clip = clipboardManager.getText()?.text
+                                    if (!clip.isNullOrBlank()) {
+                                        customBaseUrlInput = clip.trim()
+                                        coroutineScope.launch { settingsRepository.setCustomAiBaseUrl(clip.trim()) }
                                     }
+                                }) {
+                                    Icon(Icons.Rounded.ContentPaste, contentDescription = stringResource(R.string.paste_button))
+                                }
+                            }
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // API Key with visibility toggle
+                        OutlinedTextField(
+                            value = customApiKeyInput,
+                            onValueChange = {
+                                customApiKeyInput = it
+                                coroutineScope.launch { settingsRepository.setCustomAiApiKey(it.trim()) }
+                            },
+                            label = { Text(stringResource(R.string.custom_api_key_label)) },
+                            placeholder = { Text(stringResource(R.string.custom_api_key_hint)) },
+                            singleLine = true,
+                            visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            trailingIcon = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
+                                        Icon(
+                                            imageVector = if (isApiKeyVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                    IconButton(onClick = {
+                                        val clip = clipboardManager.getText()?.text
+                                        if (!clip.isNullOrBlank()) {
+                                            customApiKeyInput = clip.trim()
+                                            coroutineScope.launch { settingsRepository.setCustomAiApiKey(clip.trim()) }
+                                        }
+                                    }) {
+                                        Icon(Icons.Rounded.ContentPaste, contentDescription = stringResource(R.string.paste_button))
+                                    }
+                                }
+                            }
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Auth Type selection
+                        Text(
+                            text = stringResource(R.string.custom_auth_type_label),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(6.dp))
+
+                        val authTypes = listOf("bearer" to "Bearer", "header" to "Header", "none" to "None")
+                        SingleChoiceSegmentedButtonRow(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            authTypes.forEachIndexed { idx, (typeKey, typeLabel) ->
+                                SegmentedButton(
+                                    selected = (customAuthType == typeKey),
+                                    onClick = {
+                                        coroutineScope.launch { settingsRepository.setCustomAiAuthType(typeKey) }
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = idx, count = authTypes.size),
+                                    label = { Text(typeLabel, style = MaterialTheme.typography.labelMedium) }
                                 )
                             }
                         }
+
+                        if (customAuthType == "header") {
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = customHeaderNameInput,
+                                onValueChange = {
+                                    customHeaderNameInput = it
+                                    coroutineScope.launch { settingsRepository.setCustomAiHeaderName(it.trim()) }
+                                },
+                                label = { Text(stringResource(R.string.custom_header_name_label)) },
+                                placeholder = { Text("api-key") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Custom Models URL (Optional)
+                        OutlinedTextField(
+                            value = customModelsUrlInput,
+                            onValueChange = {
+                                customModelsUrlInput = it
+                                coroutineScope.launch { settingsRepository.setCustomAiModelsUrl(it.trim()) }
+                            },
+                            label = { Text(stringResource(R.string.custom_models_url_label)) },
+                            placeholder = { Text(stringResource(R.string.custom_models_url_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Fetch Models Button
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isFetchingCustomModels = true
+                                    customFetchStatusMessage = null
+                                    customFetchError = null
+                                    settingsRepository.setCustomAiBaseUrl(customBaseUrlInput.trim())
+                                    settingsRepository.setCustomAiApiKey(customApiKeyInput.trim())
+                                    settingsRepository.setCustomAiModelsUrl(customModelsUrlInput.trim())
+                                    settingsRepository.setCustomAiHeaderName(customHeaderNameInput.trim())
+
+                                    val res = customAiClient.fetchModels(
+                                        baseUrl = customBaseUrlInput.trim(),
+                                        apiKey = customApiKeyInput.trim(),
+                                        authType = customAuthType,
+                                        headerName = customHeaderNameInput.trim(),
+                                        customModelsUrl = customModelsUrlInput.trim()
+                                    )
+                                    if (res.isSuccess) {
+                                        val list = res.getOrThrow()
+                                        settingsRepository.setCustomAiCachedModels(list)
+                                        customFetchStatusMessage = context.getString(R.string.models_fetched_success, list.size)
+                                        if (list.isNotEmpty() && customModelInput.isBlank()) {
+                                            customModelInput = list.first()
+                                            settingsRepository.setCustomAiModel(list.first())
+                                        }
+                                    } else {
+                                        customFetchError = res.exceptionOrNull()?.localizedMessage ?: "Failed to fetch models"
+                                    }
+                                    isFetchingCustomModels = false
+                                }
+                            },
+                            enabled = customBaseUrlInput.isNotBlank() && !isFetchingCustomModels,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (isFetchingCustomModels) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.fetching_models))
+                            } else {
+                                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.fetch_models_btn))
+                            }
+                        }
+
+                        if (!customFetchStatusMessage.isNullOrBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = customFetchStatusMessage!!,
+                                color = Color(0xFF2E7D32),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        if (!customFetchError.isNullOrBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = customFetchError!!,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // Model Picker / Manual Entry
+                        Text(
+                            text = stringResource(R.string.select_custom_model),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(6.dp))
+
+                        if (customCachedModels.isNotEmpty()) {
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { showCustomModelMenu = true },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = customModelInput.ifBlank { customCachedModels.first() },
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Text(
+                                                text = stringResource(R.string.current_model_label, customModelInput.ifBlank { customCachedModels.first() }),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                                    }
+                                }
+
+                                DropdownMenu(
+                                    expanded = showCustomModelMenu,
+                                    onDismissRequest = { showCustomModelMenu = false }
+                                ) {
+                                    customCachedModels.forEach { m ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(m, fontWeight = FontWeight.SemiBold)
+                                            },
+                                            onClick = {
+                                                customModelInput = m
+                                                coroutineScope.launch { settingsRepository.setCustomAiModel(m) }
+                                                showCustomModelMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (m == customModelInput) {
+                                                    Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                        }
+
+                        // Manual Model Input Fallback
+                        OutlinedTextField(
+                            value = customModelInput,
+                            onValueChange = {
+                                customModelInput = it
+                                coroutineScope.launch { settingsRepository.setCustomAiModel(it.trim()) }
+                            },
+                            label = { Text(if (customCachedModels.isNotEmpty()) stringResource(R.string.custom_model_manual_hint) else stringResource(R.string.select_custom_model)) },
+                            placeholder = { Text("gpt-4o, deepseek-chat, llama3:8b...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
                     }
                 }
             }

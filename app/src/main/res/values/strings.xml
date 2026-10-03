@@ -228,4 +228,42 @@
     <string name="update_latest_version">You are using the latest version!</string>
     <string name="update_check_error">Check error: %s</string>
     <string name="update_download_error">APK download error.</string>
+
+    <!-- Custom AI Endpoint -->
+    <string name="custom_endpoint_title">Custom AI Provider</string>
+    <string name="custom_endpoint_desc">Connect any OpenAI-compatible provider (OpenAI, OpenRouter, DeepSeek, Groq, Ollama, LM Studio).</string>
+    <string name="custom_base_url_label">Base URL</string>
+    <string name="custom_base_url_hint">https://api.openai.com/v1</string>
+    <string name="custom_api_key_label">API Key</string>
+    <string name="custom_api_key_hint">sk-...</string>
+    <string name="custom_auth_type_label">Authentication</string>
+    <string name="custom_auth_bearer">Bearer Token (Authorization: Bearer)</string>
+    <string name="custom_auth_header">Custom Header</string>
+    <string name="custom_auth_none">No Auth (Local Ollama / LM Studio)</string>
+    <string name="custom_header_name_label">Header Name (e.g. api-key)</string>
+    <string name="custom_models_url_label">Custom Models URL (Optional)</string>
+    <string name="custom_models_url_hint">Defaults to Base URL + /models</string>
+    <string name="fetch_models_btn">Fetch Models</string>
+    <string name="fetching_models">Loading models...</string>
+    <string name="models_fetched_success">%d models fetched</string>
+    <string name="select_custom_model">Select Model</string>
+    <string name="custom_model_manual_hint">Or enter model name manually (e.g. gpt-4o, deepseek-chat)</string>
+    <string name="provider_custom">Custom Endpoint</string>
+
+    <!-- AI Chat -->
+    <string name="ai_chat_title">AI Assistant Chat</string>
+    <string name="ai_chat_desc">Multi-file coding agent with autonomous reading and editing</string>
+    <string name="ai_chat_empty_title">How can I assist with your project?</string>
+    <string name="ai_chat_empty_desc">Ask a question, attach files, or request writing and editing C/C++ code, build scripts, or headers across the project.</string>
+    <string name="ai_chat_prompt_hint">Describe task (e.g.: Add string encryption to native-lib.cpp)...</string>
+    <string name="attach_files_btn">Attach</string>
+    <string name="attached_files_title">Attached Files:</string>
+    <string name="clear_chat_tooltip">Clear Chat</string>
+    <string name="select_files_to_attach">Attach Project Files</string>
+    <string name="no_files_in_project">No files in project yet</string>
+    <string name="done">Done</string>
+    <string name="ai_action_read">Read file: %1$s (%2$d lines)</string>
+    <string name="ai_action_edit">Modified: %1$s (+%2$d, -%3$d lines)</string>
+    <string name="ai_action_create">Created: %1$s (+%2$d lines)</string>
+    <string name="ai_action_scan">Scanned project structure (%d files)</string>
 </resources>

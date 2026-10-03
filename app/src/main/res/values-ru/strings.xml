@@ -228,4 +228,42 @@
     <string name="update_latest_version">У вас установлена последняя версия!</string>
     <string name="update_check_error">Ошибка проверки: %s</string>
     <string name="update_download_error">Ошибка загрузки APK.</string>
+
+    <!-- Custom AI Endpoint -->
+    <string name="custom_endpoint_title">Кастомный AI-провайдер</string>
+    <string name="custom_endpoint_desc">Подключение любого OpenAI-совместимого провайдера (OpenAI, OpenRouter, DeepSeek, Groq, Ollama, LM Studio).</string>
+    <string name="custom_base_url_label">Base URL (Базовый адрес)</string>
+    <string name="custom_base_url_hint">https://api.openai.com/v1</string>
+    <string name="custom_api_key_label">API Ключ</string>
+    <string name="custom_api_key_hint">sk-...</string>
+    <string name="custom_auth_type_label">Тип аутентификации</string>
+    <string name="custom_auth_bearer">Bearer Токен (Authorization: Bearer)</string>
+    <string name="custom_auth_header">Кастомный заголовок (Custom Header)</string>
+    <string name="custom_auth_none">Без авторизации (Локальный Ollama / LM Studio)</string>
+    <string name="custom_header_name_label">Имя заголовка (например, api-key)</string>
+    <string name="custom_models_url_label">Кастомный URL моделей (необязательно)</string>
+    <string name="custom_models_url_hint">По умолчанию: Base URL + /models</string>
+    <string name="fetch_models_btn">Загрузить модели</string>
+    <string name="fetching_models">Получение моделей...</string>
+    <string name="models_fetched_success">Получено моделей: %d</string>
+    <string name="select_custom_model">Выберите модель</string>
+    <string name="custom_model_manual_hint">Или введите название модели вручную (например: gpt-4o, deepseek-chat)</string>
+    <string name="provider_custom">Custom Endpoint</string>
+
+    <!-- AI Chat -->
+    <string name="ai_chat_title">Чат с ИИ-ассистентом</string>
+    <string name="ai_chat_desc">Мультифайловый агент для чтения и изменения кода проекта</string>
+    <string name="ai_chat_empty_title">Чем помочь в разработке проекта?</string>
+    <string name="ai_chat_empty_desc">Задайте вопрос, прикрепите файлы или поручите ИИ написать код, исправить ошибки или изменить структуру файлов проекта.</string>
+    <string name="ai_chat_prompt_hint">Опишите задачу (напр.: Сделай шифрование строк в native-lib.cpp)...</string>
+    <string name="attach_files_btn">Прикрепить</string>
+    <string name="attached_files_title">Прикрепленные файлы:</string>
+    <string name="clear_chat_tooltip">Очистить чат</string>
+    <string name="select_files_to_attach">Прикрепить файлы проекта</string>
+    <string name="no_files_in_project">В проекте пока нет файлов</string>
+    <string name="done">Готово</string>
+    <string name="ai_action_read">Прочитан файл: %1$s (%2$d строк)</string>
+    <string name="ai_action_edit">Изменен: %1$s (+%2$d, -%3$d строк)</string>
+    <string name="ai_action_create">Создан: %1$s (+%2$d строк)</string>
+    <string name="ai_action_scan">Анализ файлов проекта (%d файлов)</string>
 </resources>
