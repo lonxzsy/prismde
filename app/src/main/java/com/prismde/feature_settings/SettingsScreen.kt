@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -202,6 +203,8 @@ fun SettingsScreen(
     var customFetchStatusMessage by remember { mutableStateOf<String?>(null) }
     var customFetchError by remember { mutableStateOf<String?>(null) }
     var showCustomModelMenu by remember { mutableStateOf(false) }
+    var showAgyMenu by remember { mutableStateOf(false) }
+    var showGeminiMenu by remember { mutableStateOf(false) }
 
     // Auto-migrate stale / non-existent model ids to the curated 7 models
     LaunchedEffect(antigravityModel) {
@@ -410,27 +413,33 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
                                 text = "Apache Maven 3.9.6",
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f, fill = false),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.width(8.dp))
-                            if (isMavenInstalled) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (isRu) "Установлен" else "Installed",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                            Surface(
+                                color = if (isMavenInstalled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isMavenInstalled) (if (isRu) "Установлен" else "Installed") else (if (isRu) "Не установлен" else "Not installed"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isMavenInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    softWrap = false,
+                                    maxLines = 1
+                                )
                             }
                         }
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (isMavenInstalled) {
                                 val exe = BuildToolInstaller.getMavenExecutable(context)
@@ -443,8 +452,10 @@ fun SettingsScreen(
                         )
                     }
 
+                    Spacer(Modifier.width(10.dp))
+
                     if (isInstallingMaven) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(horizontalAlignment = Alignment.End) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                             if (mavenInstallProgress > 0f) {
                                 Text("${mavenInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -478,7 +489,15 @@ fun SettingsScreen(
                 }
 
                 if (isInstallingMaven && mavenInstallStatus.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { (mavenInstallProgress / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = mavenInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
@@ -494,27 +513,33 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
                                 text = "Gradle ${BuildToolInstaller.GRADLE_VERSION}",
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f, fill = false),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.width(8.dp))
-                            if (isGradleInstalled) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (isRu) "Установлен" else "Installed",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                            Surface(
+                                color = if (isGradleInstalled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isGradleInstalled) (if (isRu) "Установлен" else "Installed") else (if (isRu) "Не установлен" else "Not installed"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isGradleInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    softWrap = false,
+                                    maxLines = 1
+                                )
                             }
                         }
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (isGradleInstalled) {
                                 val exe = BuildToolInstaller.getGradleExecutable(context)
@@ -527,8 +552,10 @@ fun SettingsScreen(
                         )
                     }
 
+                    Spacer(Modifier.width(10.dp))
+
                     if (isInstallingGradle) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(horizontalAlignment = Alignment.End) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                             if (gradleInstallProgress > 0f) {
                                 Text("${gradleInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -568,7 +595,15 @@ fun SettingsScreen(
                 }
 
                 if (isInstallingGradle && gradleInstallStatus.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { (gradleInstallProgress / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = gradleInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
@@ -584,13 +619,18 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
                                 text = "Java Development Kit (JDK 17)",
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f, fill = false),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.width(8.dp))
                             Surface(
                                 color = if (javaInfo.isAvailable) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
                                 shape = RoundedCornerShape(8.dp)
@@ -599,10 +639,13 @@ fun SettingsScreen(
                                     text = if (javaInfo.isAvailable) (if (isRu) "Доступен" else "Available") else (if (isRu) "Не найден" else "Missing"),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (javaInfo.isAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    softWrap = false,
+                                    maxLines = 1
                                 )
                             }
                         }
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (isInternalJdkInstalled) {
                                 val javaBin = BuildToolInstaller.getJdkExecutable(context)
@@ -622,8 +665,10 @@ fun SettingsScreen(
                         )
                     }
 
+                    Spacer(Modifier.width(10.dp))
+
                     if (isInstallingJdk) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(horizontalAlignment = Alignment.End) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                             if (jdkInstallProgress > 0f) {
                                 Text("${jdkInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -666,6 +711,14 @@ fun SettingsScreen(
 
                 if (isInstallingJdk && jdkInstallStatus.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { (jdkInstallProgress / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = jdkInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
@@ -699,27 +752,33 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
                                 text = "Android SDK Platform 34",
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f, fill = false),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.width(8.dp))
-                            if (isPlatformInstalled) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (isRu) "Установлен" else "Installed",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                            Surface(
+                                color = if (isPlatformInstalled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isPlatformInstalled) (if (isRu) "Установлен" else "Installed") else (if (isRu) "Не установлен" else "Not installed"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isPlatformInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    softWrap = false,
+                                    maxLines = 1
+                                )
                             }
                         }
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (isPlatformInstalled) {
                                 val sdk = BuildToolInstaller.findExistingSdk(context)
@@ -732,8 +791,10 @@ fun SettingsScreen(
                         )
                     }
 
+                    Spacer(Modifier.width(10.dp))
+
                     if (isInstallingPlatform) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(horizontalAlignment = Alignment.End) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                             if (platformInstallProgress > 0f) {
                                 Text("${platformInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -773,7 +834,15 @@ fun SettingsScreen(
                 }
 
                 if (isInstallingPlatform && platformInstallStatus.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { (platformInstallProgress / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = platformInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
@@ -789,27 +858,33 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
                                 text = "Android Build-Tools 34.0.0",
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f, fill = false),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.width(8.dp))
-                            if (isBuildToolsInstalled) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (isRu) "Установлен" else "Installed",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                            Surface(
+                                color = if (isBuildToolsInstalled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isBuildToolsInstalled) (if (isRu) "Установлен" else "Installed") else (if (isRu) "Не установлен" else "Not installed"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isBuildToolsInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    softWrap = false,
+                                    maxLines = 1
+                                )
                             }
                         }
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (isBuildToolsInstalled) {
                                 val sdk = BuildToolInstaller.findExistingSdk(context)
@@ -822,8 +897,10 @@ fun SettingsScreen(
                         )
                     }
 
+                    Spacer(Modifier.width(10.dp))
+
                     if (isInstallingBuildTools) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(horizontalAlignment = Alignment.End) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                             if (buildToolsInstallProgress > 0f) {
                                 Text("${buildToolsInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -863,7 +940,15 @@ fun SettingsScreen(
                 }
 
                 if (isInstallingBuildTools && buildToolsInstallStatus.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { (buildToolsInstallProgress / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = buildToolsInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
@@ -1484,65 +1569,86 @@ fun SettingsScreen(
                         Text(stringResource(R.string.antigravity_model_choice), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(6.dp))
 
-                        var showAgyMenu by remember { mutableStateOf(false) }
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            Card(
+                        val selectedAgyObj = dynamicAntigravityModels.find { it.id == antigravityModel }
+                        val agyDisplay = selectedAgyObj?.displayName ?: antigravityModel
+                        val agyProvName = detectModelProvider(antigravityModel)
+                        val agyProvColor = getProviderColor(agyProvName)
+                        val agyProvIcon = getProviderIcon(agyProvName)
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { showAgyMenu = true }
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { showAgyMenu = true },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(agyProvColor.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        val selectedModelObj = dynamicAntigravityModels.find { it.id == antigravityModel }
-                                        val display = selectedModelObj?.displayName ?: antigravityModel
-                                        Text(text = display, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                        if (!selectedModelObj?.description.isNullOrBlank()) {
-                                            Text(text = selectedModelObj!!.description!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    Icon(agyProvIcon, contentDescription = null, tint = agyProvColor, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(text = agyDisplay, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                        Surface(
+                                            color = agyProvColor.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(text = agyProvName, style = MaterialTheme.typography.labelSmall, color = agyProvColor, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                                         }
-                                        Text(text = stringResource(R.string.current_model_label, antigravityModel), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                                    if (!selectedAgyObj?.description.isNullOrBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(text = selectedAgyObj!!.description!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Text(text = stringResource(R.string.current_model_label, antigravityModel), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(text = if (isRu) "Выбрать" else "Select", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.width(2.dp))
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
+                        }
 
-                            DropdownMenu(
-                                expanded = showAgyMenu,
-                                onDismissRequest = { showAgyMenu = false }
-                            ) {
-                                dynamicAntigravityModels.forEach { m ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Column(modifier = Modifier.padding(vertical = 2.dp)) {
-                                                Text(m.displayName, fontWeight = FontWeight.SemiBold)
-                                                if (!m.description.isNullOrBlank()) {
-                                                    Text(m.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                                }
-                                                Text(m.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                        },
-                                        onClick = {
-                                            coroutineScope.launch {
-                                                settingsRepository.setAntigravityModel(m.id)
-                                            }
-                                            showAgyMenu = false
-                                        },
-                                        trailingIcon = {
-                                            if (m.id == antigravityModel) {
-                                                Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                            }
-                                        }
-                                    )
-                                }
+                        if (showAgyMenu) {
+                            val options = dynamicAntigravityModels.map {
+                                ModelOption(id = it.id, displayName = it.displayName, description = it.description, provider = detectModelProvider(it.id))
                             }
+                            ModelPickerDialog(
+                                title = if (isRu) "Модели Antigravity" else "Antigravity Models",
+                                subtitle = if (isRu) "Официальные и партнерские модели" else "Official & partner models",
+                                models = options,
+                                selectedModelId = antigravityModel,
+                                allowManualInput = false,
+                                isRu = isRu,
+                                onModelSelected = { chosen ->
+                                    coroutineScope.launch { settingsRepository.setAntigravityModel(chosen) }
+                                },
+                                onDismissRequest = { showAgyMenu = false }
+                            )
                         }
                     }
                     }
@@ -1576,58 +1682,77 @@ fun SettingsScreen(
                         Text(stringResource(R.string.gemini_model_choice), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(6.dp))
 
-                        var showGeminiMenu by remember { mutableStateOf(false) }
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            Card(
+                        val currentTitle = AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.find { it.first == geminiModel }?.second ?: geminiModel
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { showGeminiMenu = true }
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { showGeminiMenu = true },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF0D9488).copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        val currentTitle = AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.find { it.first == geminiModel }?.second ?: geminiModel
-                                        Text(text = currentTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                        Text(text = stringResource(R.string.current_model_label, geminiModel), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color(0xFF0D9488), modifier = Modifier.size(18.dp))
                                 }
-                            }
-
-                            DropdownMenu(
-                                expanded = showGeminiMenu,
-                                onDismissRequest = { showGeminiMenu = false }
-                            ) {
-                                AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.forEach { (id, title) ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Column {
-                                                Text(title, fontWeight = FontWeight.SemiBold)
-                                                Text(id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                        },
-                                        onClick = {
-                                            coroutineScope.launch {
-                                                settingsRepository.setGeminiModel(id)
-                                            }
-                                            showGeminiMenu = false
-                                        },
-                                        trailingIcon = {
-                                            if (id == geminiModel) {
-                                                Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                            }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(text = currentTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                        Surface(
+                                            color = Color(0xFF0D9488).copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(text = "Google", style = MaterialTheme.typography.labelSmall, color = Color(0xFF0D9488), fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                                         }
-                                    )
+                                    }
+                                    Text(text = stringResource(R.string.current_model_label, geminiModel), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(text = if (isRu) "Выбрать" else "Select", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.width(2.dp))
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
+                        }
+
+                        if (showGeminiMenu) {
+                            val options = AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.map { (id, title) ->
+                                ModelOption(id = id, displayName = title, description = "Google AI Studio", provider = "Google")
+                            }
+                            ModelPickerDialog(
+                                title = if (isRu) "Модели Gemini API" else "Gemini API Models",
+                                subtitle = "Google AI Studio",
+                                models = options,
+                                selectedModelId = geminiModel,
+                                allowManualInput = false,
+                                isRu = isRu,
+                                onModelSelected = { chosen ->
+                                    coroutineScope.launch { settingsRepository.setGeminiModel(chosen) }
+                                },
+                                onDismissRequest = { showGeminiMenu = false }
+                            )
                         }
                     }
                     "custom" -> {
@@ -1793,6 +1918,9 @@ fun SettingsScreen(
                                             customModelInput = list.first()
                                             settingsRepository.setCustomAiModel(list.first())
                                         }
+                                        if (list.isNotEmpty()) {
+                                            showCustomModelMenu = true
+                                        }
                                     } else {
                                         customFetchError = res.exceptionOrNull()?.localizedMessage ?: "Failed to fetch models"
                                     }
@@ -1841,65 +1969,118 @@ fun SettingsScreen(
                         )
                         Spacer(Modifier.height(6.dp))
 
-                        if (customCachedModels.isNotEmpty()) {
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { showCustomModelMenu = true },
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = customModelInput.ifBlank { customCachedModels.first() },
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.bodyMedium
-                                            )
-                                            Text(
-                                                text = stringResource(R.string.current_model_label, customModelInput.ifBlank { customCachedModels.first() }),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                        val activeCustomModel = customModelInput.ifBlank { customCachedModels.firstOrNull() ?: "" }
+                        val customProvName = if (activeCustomModel.isNotBlank()) detectModelProvider(activeCustomModel) else "Custom"
+                        val customProvColor = getProviderColor(customProvName)
+                        val customProvIcon = getProviderIcon(customProvName)
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable {
+                                    if (customCachedModels.isNotEmpty()) {
+                                        showCustomModelMenu = true
                                     }
                                 }
-
-                                DropdownMenu(
-                                    expanded = showCustomModelMenu,
-                                    onDismissRequest = { showCustomModelMenu = false }
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(customProvColor.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    customCachedModels.forEach { m ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(m, fontWeight = FontWeight.SemiBold)
-                                            },
-                                            onClick = {
-                                                customModelInput = m
-                                                coroutineScope.launch { settingsRepository.setCustomAiModel(m) }
-                                                showCustomModelMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (m == customModelInput) {
-                                                    Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                                }
-                                            }
+                                    Icon(customProvIcon, contentDescription = null, tint = customProvColor, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(
+                                            text = activeCustomModel.ifBlank { if (isRu) "Модель не выбрана" else "No model selected" },
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
                                         )
+                                        if (activeCustomModel.isNotBlank()) {
+                                            Surface(
+                                                color = customProvColor.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = customProvName,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = customProvColor,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = if (customCachedModels.isNotEmpty()) {
+                                            if (isRu) "Нажмите для выбора из списка (${customCachedModels.size} моделей)"
+                                            else "Tap to select from list (${customCachedModels.size} models)"
+                                        } else {
+                                            if (isRu) "Загрузите модели кнопкой выше или укажите вручную ниже"
+                                            else "Fetch models above or enter identifier below"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (isRu) "Выбрать" else "Select",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(Modifier.width(2.dp))
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
-
-                            Spacer(Modifier.height(8.dp))
                         }
+
+                        if (showCustomModelMenu && customCachedModels.isNotEmpty()) {
+                            val options = customCachedModels.map { ModelOption(id = it, displayName = it) }
+                            ModelPickerDialog(
+                                title = if (isRu) "Выберите модель ИИ" else "Select AI Model",
+                                subtitle = customBaseUrlInput.ifBlank { "Custom Endpoint" },
+                                models = options,
+                                selectedModelId = activeCustomModel,
+                                allowManualInput = true,
+                                isRu = isRu,
+                                onModelSelected = { chosen ->
+                                    customModelInput = chosen
+                                    coroutineScope.launch { settingsRepository.setCustomAiModel(chosen) }
+                                },
+                                onDismissRequest = { showCustomModelMenu = false }
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
 
                         // Manual Model Input Fallback
                         OutlinedTextField(

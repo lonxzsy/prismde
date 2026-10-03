@@ -148,4 +148,23 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("Application.mk must have arm64-v8a", mkText.contains("arm64-v8a"))
         assertTrue("Application.mk must not contain standalone armeabi", !mkText.contains("armeabi "))
     }
+
+    @Test
+    fun testEnsureHostArchitectureCompatibilityCreatesLinuxX86Dir() {
+        val root = tempFolder.newFolder("ndk_host_arch_test")
+        val aideFolder = File(root, "android-ndk-aide").also { it.mkdirs() }
+        val arm64Prebuilt = File(aideFolder, "prebuilt/linux-arm64").also { it.mkdirs() }
+        File(arm64Prebuilt, "bin").also { it.mkdirs() }
+
+        val arm64Llvm = File(aideFolder, "toolchains/llvm/prebuilt/linux-arm64").also { it.mkdirs() }
+        File(arm64Llvm, "bin").also { it.mkdirs() }
+
+        NdkVersion.ensureHostArchitectureCompatibility(aideFolder)
+
+        val x86Prebuilt = File(aideFolder, "prebuilt/linux-x86_64")
+        assertTrue("prebuilt/linux-x86_64 must exist for AGP host architecture detection", x86Prebuilt.exists())
+
+        val x86Llvm = File(aideFolder, "toolchains/llvm/prebuilt/linux-x86_64")
+        assertTrue("toolchains/llvm/prebuilt/linux-x86_64 must exist for AGP LLVM toolchain detection", x86Llvm.exists())
+    }
 }

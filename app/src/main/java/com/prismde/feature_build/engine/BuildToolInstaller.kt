@@ -730,13 +730,20 @@ object BuildToolInstaller {
             )
 
             var downloadSuccess = false
-            val urls = listOf(
-                "https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r03.zip",
-                "https://mirrors.aliyun.com/android/repository/platform-${apiLevel}_r03.zip",
-                "https://dl.google.com/android/repository/platform-${apiLevel}_r03.zip",
-                "https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r01.zip",
-                "https://dl.google.com/android/repository/platform-${apiLevel}_r01.zip"
-            )
+            val urls = mutableListOf<String>()
+            if (apiLevel == 34) {
+                urls.add("https://dl.google.com/android/repository/platform-34-ext7_r03.zip")
+                urls.add("https://dl.google.com/android/repository/platform-34-ext7_r02.zip")
+                urls.add("https://dl.google.com/android/repository/platform-34-ext7_r01.zip")
+            } else if (apiLevel == 35) {
+                urls.add("https://dl.google.com/android/repository/platform-35-ext13_r02.zip")
+                urls.add("https://dl.google.com/android/repository/platform-35-ext13_r01.zip")
+            }
+            for (rev in listOf("03", "02", "01")) {
+                urls.add("https://dl.google.com/android/repository/platform-${apiLevel}_r$rev.zip")
+                urls.add("https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r$rev.zip")
+                urls.add("https://mirrors.aliyun.com/android/repository/platform-${apiLevel}_r$rev.zip")
+            }
 
             for (url in urls) {
                 try {
@@ -779,10 +786,16 @@ object BuildToolInstaller {
 
             if (!extractSuccess) return@withContext false
 
-            // Normalize folder name if extracted as android-UpsideDownCake or similar
-            if (!targetPlatformDir.exists()) {
-                val candidate = platformsDir.listFiles { f -> f.isDirectory && f.name.contains("android", ignoreCase = true) }?.firstOrNull()
-                if (candidate != null && candidate != targetPlatformDir) {
+            // Normalize folder name if extracted as android-34, android-UpsideDownCake or similar
+            if (!targetPlatformDir.exists() || !File(targetPlatformDir, "android.jar").exists()) {
+                val candidate = platformsDir.listFiles { f ->
+                    f.isDirectory && f != targetPlatformDir && File(f, "android.jar").exists()
+                }?.maxByOrNull { it.lastModified() }
+                    ?: platformsDir.listFiles { f ->
+                        f.isDirectory && f != targetPlatformDir && (f.name.contains("android", ignoreCase = true) || f.name.contains("$apiLevel"))
+                    }?.maxByOrNull { it.lastModified() }
+                if (candidate != null) {
+                    if (targetPlatformDir.exists()) targetPlatformDir.deleteRecursively()
                     candidate.renameTo(targetPlatformDir)
                 }
             }
@@ -790,6 +803,13 @@ object BuildToolInstaller {
             val installedJar = File(targetPlatformDir, "android.jar")
             val success = installedJar.exists() && installedJar.length() > 0L
             if (success) {
+                val propFile = File(targetPlatformDir, "source.properties")
+                if (!propFile.exists() || propFile.length() == 0L) {
+                    try {
+                        propFile.writeText("Pkg.Desc = Android SDK Platform $apiLevel\nPkg.Revision = 3\nAndroidVersion.ApiLevel = $apiLevel\nLayoutlib.Api = 15\n")
+                        propFile.setReadable(true, false)
+                    } catch (_: Throwable) {}
+                }
                 onProgress(
                     if (isRu) "✔ Android SDK Platform $apiLevel успешно установлена!"
                     else "✔ Android SDK Platform $apiLevel installed successfully!",
@@ -825,9 +845,9 @@ object BuildToolInstaller {
 
             var downloadSuccess = false
             val urls = listOf(
+                "https://dl.google.com/android/repository/build-tools_r34-linux.zip",
                 "https://mirrors.cloud.tencent.com/android/repository/build-tools_r34-linux.zip",
-                "https://mirrors.aliyun.com/android/repository/build-tools_r34-linux.zip",
-                "https://dl.google.com/android/repository/build-tools_r34-linux.zip"
+                "https://mirrors.aliyun.com/android/repository/build-tools_r34-linux.zip"
             )
 
             for (url in urls) {

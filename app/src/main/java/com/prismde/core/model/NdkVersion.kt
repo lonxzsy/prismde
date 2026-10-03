@@ -302,6 +302,89 @@ data class NdkVersion(
                     }
                 } catch (_: Throwable) {}
             }
+
+            // Ensure host architecture aliases (e.g. linux-x86_64 -> linux-arm64) for AGP
+            ensureHostArchitectureCompatibility(ndkDir)
+        }
+
+        fun ensureHostArchitectureCompatibility(ndkDir: File) {
+            val targetDirs = listOf(
+                ndkDir,
+                File(ndkDir, "android-ndk-aide"),
+                ndkDir.parentFile
+            ).filterNotNull().filter { it.exists() && it.isDirectory }
+
+            for (dir in targetDirs) {
+                // 1. prebuilt/linux-x86_64
+                val prebuiltDir = File(dir, "prebuilt")
+                if (prebuiltDir.exists()) {
+                    val x86 = File(prebuiltDir, "linux-x86_64")
+                    val arm64 = File(prebuiltDir, "linux-arm64")
+                    val aarch64 = File(prebuiltDir, "linux-aarch64")
+                    val src = if (arm64.exists()) arm64 else if (aarch64.exists()) aarch64 else null
+                    if (!x86.exists()) {
+                        var linked = false
+                        if (src != null) {
+                            try {
+                                android.system.Os.symlink(src.name, x86.absolutePath)
+                                linked = true
+                            } catch (_: Throwable) {}
+                        }
+                        if (!linked) {
+                            try {
+                                x86.mkdirs()
+                                if (src != null && src.isDirectory) {
+                                    src.listFiles()?.forEach { file ->
+                                        val linkFile = File(x86, file.name)
+                                        if (!linkFile.exists()) {
+                                            try {
+                                                android.system.Os.symlink(file.absolutePath, linkFile.absolutePath)
+                                            } catch (_: Throwable) {
+                                                try { file.copyRecursively(linkFile, overwrite = true) } catch (_: Throwable) {}
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                }
+
+                // 2. toolchains/llvm/prebuilt/linux-x86_64
+                val llvmPrebuiltDir = File(dir, "toolchains/llvm/prebuilt")
+                if (llvmPrebuiltDir.exists()) {
+                    val x86 = File(llvmPrebuiltDir, "linux-x86_64")
+                    val arm64 = File(llvmPrebuiltDir, "linux-arm64")
+                    val aarch64 = File(llvmPrebuiltDir, "linux-aarch64")
+                    val src = if (arm64.exists()) arm64 else if (aarch64.exists()) aarch64 else null
+                    if (!x86.exists()) {
+                        var linked = false
+                        if (src != null) {
+                            try {
+                                android.system.Os.symlink(src.name, x86.absolutePath)
+                                linked = true
+                            } catch (_: Throwable) {}
+                        }
+                        if (!linked) {
+                            try {
+                                x86.mkdirs()
+                                if (src != null && src.isDirectory) {
+                                    src.listFiles()?.forEach { file ->
+                                        val linkFile = File(x86, file.name)
+                                        if (!linkFile.exists()) {
+                                            try {
+                                                android.system.Os.symlink(file.absolutePath, linkFile.absolutePath)
+                                            } catch (_: Throwable) {
+                                                try { file.copyRecursively(linkFile, overwrite = true) } catch (_: Throwable) {}
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                }
+            }
         }
 
         fun ensureNdkPermissions(ndkDir: File) {
@@ -329,8 +412,10 @@ data class NdkVersion(
             val prebuiltBinDirs = listOf(
                 File(ndkDir, "prebuilt/linux-arm64/bin"),
                 File(ndkDir, "prebuilt/linux-aarch64/bin"),
+                File(ndkDir, "prebuilt/linux-x86_64/bin"),
                 File(ndkDir, "android-ndk-aide/prebuilt/linux-arm64/bin"),
-                File(ndkDir, "android-ndk-aide/prebuilt/linux-aarch64/bin")
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-aarch64/bin"),
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-x86_64/bin")
             )
 
             for (prebuiltBin in prebuiltBinDirs) {
@@ -371,8 +456,10 @@ data class NdkVersion(
             val llvmBinDirs = listOf(
                 File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
                 File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
+                File(ndkDir, "toolchains/llvm/prebuilt/linux-x86_64/bin"),
                 File(ndkDir, "bin"),
-                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin")
+                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin"),
+                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-x86_64/bin")
             )
             for (binDir in llvmBinDirs) {
                 if (!binDir.exists() || !binDir.isDirectory) continue
