@@ -870,13 +870,16 @@ object BuildToolInstaller {
             }
 
             val buildProp = File(targetPlatformDir, "build.prop")
-            if (!buildProp.exists() || buildProp.length() == 0L) {
-                try {
-                    buildProp.writeText(
-                        "ro.build.version.sdk=$apiLevel\nro.build.version.release=14\n"
-                    )
-                } catch (_: Throwable) {}
-            }
+            try {
+                buildProp.writeText(
+                    "ro.build.version.sdk=$apiLevel\nro.build.version.release=14\nro.build.version.codename=REL\n"
+                )
+            } catch (_: Throwable) {}
+
+            val sdkProps = File(targetPlatformDir, "sdk.properties")
+            try {
+                sdkProps.writeText("AndroidVersion.ApiLevel=$apiLevel\n")
+            } catch (_: Throwable) {}
 
             val androidJar = File(targetPlatformDir, "android.jar")
             if (androidJar.exists()) {
@@ -920,6 +923,32 @@ object BuildToolInstaller {
         if (text.contains("Codename", ignoreCase = true) && !text.contains("CodeName=")) return false
         if (!text.contains("AndroidVersion.ApiLevel=$apiLevel")) return false
         return true
+    }
+
+    fun describePlatform(sdkDir: File, apiLevel: Int): String {
+        val platforms = File(sdkDir, "platforms")
+        val target = File(platforms, "android-$apiLevel")
+        val sb = StringBuilder()
+        sb.appendLine("SDK dir: ${sdkDir.absolutePath} exists=${sdkDir.exists()}")
+        val names = platforms.list()?.sorted()?.joinToString(", ").orEmpty().ifBlank { "(empty)" }
+        sb.appendLine("platforms/: $names")
+        if (!target.exists()) {
+            sb.appendLine("android-$apiLevel: MISSING")
+            return sb.toString().trimEnd()
+        }
+        target.listFiles()?.sortedBy { it.name }?.forEach { f ->
+            val kind = if (f.isDirectory) "dir" else "${f.length()}b"
+            sb.appendLine("  ${f.name} [$kind]")
+        }
+        val props = File(target, "source.properties")
+        if (props.exists()) {
+            sb.appendLine("--- source.properties ---")
+            sb.appendLine(try { props.readText().trim() } catch (t: Throwable) { t.message ?: "unreadable" })
+        } else {
+            sb.appendLine("source.properties: MISSING")
+        }
+        sb.appendLine("package.xml exists=${File(target, "package.xml").exists()}")
+        return sb.toString().trimEnd()
     }
 
     fun isAndroidPlatformInstalled(context: Context, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT): Boolean {

@@ -718,6 +718,9 @@ class BuildProcessRunner {
                 else
                     "SDK platform android-$requiredApi is NOT usable (jar=${readyJar.length()} bytes)"
             ))
+            BuildToolInstaller.describePlatform(sdkDir, requiredApi).lineSequence().forEach { line ->
+                _events.emit(BuildOutputEvent.LogLine(line))
+            }
 
             // Auto-install Android Build-Tools 34.0.0 if missing!
             if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, "34.0.0")) {
