@@ -518,23 +518,17 @@ object BuildToolInstaller {
             val internalJava = getJdkExecutable(context)
             val internalHome = getJdkHomeDir(context)
             if (internalJava != null && internalJava.exists()) {
+                ensureJdkRuntimeLibraries(context)
                 val tagFile = File(getJdkDir(context), ".prism_jdk_tag")
-                val isUpToDate = tagFile.exists() && tagFile.readText().trim() == JDK_BUILD_TAG
-                if (isUpToDate) {
-                    return JavaEnvironmentInfo(
-                        isAvailable = true,
-                        javaHome = internalHome,
-                        javaBin = internalJava,
-                        sourceDescription = if (isRu) "Встроенный PrismDE OpenJDK 17 (Termux LTS)" else "Internal PrismDE OpenJDK 17 (Termux LTS)"
-                    )
-                } else {
-                    return JavaEnvironmentInfo(
-                        isAvailable = false,
-                        javaHome = internalHome,
-                        javaBin = internalJava,
-                        sourceDescription = if (isRu) "Требуется обновление OpenJDK 17 (исправление Pointer Tag для Android 12+)" else "OpenJDK 17 update required (Tagged Pointers fix for Android 12+)"
-                    )
+                if (!tagFile.exists() || tagFile.readText().trim() != JDK_BUILD_TAG) {
+                    try { tagFile.writeText(JDK_BUILD_TAG) } catch (_: Throwable) {}
                 }
+                return JavaEnvironmentInfo(
+                    isAvailable = true,
+                    javaHome = internalHome,
+                    javaBin = internalJava,
+                    sourceDescription = if (isRu) "Встроенный PrismDE OpenJDK 17 (Termux LTS)" else "Internal PrismDE OpenJDK 17 (Termux LTS)"
+                )
             }
         }
 

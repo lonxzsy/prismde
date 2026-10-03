@@ -48,7 +48,7 @@ object ProjectManager {
                 Project(
                     name = dir.name,
                     rootPath = dir.absolutePath,
-                    detectedType = ProjectDetector.detect(dir)
+                    detectedType = ProjectDetector.detect(dir, context)
                 )
             )
         }
@@ -63,7 +63,7 @@ object ProjectManager {
                         Project(
                             name = f.name,
                             rootPath = f.absolutePath,
-                            detectedType = ProjectDetector.detect(f)
+                            detectedType = ProjectDetector.detect(f, context)
                         )
                     )
                 }
@@ -362,16 +362,16 @@ object ProjectManager {
         return Project(
             name = projectDir.name,
             rootPath = projectDir.absolutePath,
-            detectedType = ProjectDetector.detect(projectDir)
+            detectedType = ProjectDetector.detect(projectDir, context)
         )
     }
 
-    fun importProjectFromFolder(folder: File): Project? {
+    fun importProjectFromFolder(folder: File, context: Context? = null): Project? {
         if (!folder.exists() || !folder.isDirectory) return null
         return Project(
             name = folder.name,
             rootPath = folder.absolutePath,
-            detectedType = ProjectDetector.detect(folder)
+            detectedType = ProjectDetector.detect(folder, context)
         )
     }
 
@@ -388,7 +388,7 @@ object ProjectManager {
             return Project(
                 name = resolvedFolder.name,
                 rootPath = resolvedFolder.absolutePath,
-                detectedType = ProjectDetector.detect(resolvedFolder)
+                detectedType = ProjectDetector.detect(resolvedFolder, context)
             )
         }
 
@@ -411,7 +411,7 @@ object ProjectManager {
         return Project(
             name = targetDir.name,
             rootPath = targetDir.absolutePath,
-            detectedType = ProjectDetector.detect(targetDir)
+            detectedType = ProjectDetector.detect(targetDir, context)
         )
     }
 

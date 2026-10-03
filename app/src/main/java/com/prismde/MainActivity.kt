@@ -101,7 +101,7 @@ class MainActivity : ComponentActivity() {
             val lastPath = settingsRepo.lastProjectPathFlow.first()
             val project = if (lastPath != null && File(lastPath).exists()) {
                 val dir = File(lastPath)
-                Project(name = dir.name, rootPath = dir.absolutePath, detectedType = ProjectDetector.detect(dir))
+                Project(name = dir.name, rootPath = dir.absolutePath, detectedType = ProjectDetector.detect(dir, applicationContext))
             } else {
                 val existing = ProjectManager.listProjects(applicationContext)
                 if (existing.isNotEmpty()) {

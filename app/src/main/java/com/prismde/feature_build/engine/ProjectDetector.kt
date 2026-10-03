@@ -1,5 +1,6 @@
 package com.prismde.feature_build.engine
 
+import android.content.Context
 import com.prismde.core.model.Project
 import com.prismde.core.model.ProjectType
 import java.io.File
@@ -10,7 +11,7 @@ object ProjectDetector {
     val HEADER_EXTENSIONS = setOf("h", "hpp", "hxx", "hh", "inc", "inl")
     val IGNORED_DIRS = setOf("build", ".git", ".gradle", "libs", "obj", "bin", ".idea", "target", ".mvn")
 
-    fun findJavaHome(workingDir: File? = null): File? {
+    fun findJavaHome(context: Context? = null, workingDir: File? = null): File? {
         if (workingDir != null) {
             val lp = File(workingDir, "local.properties")
             if (lp.exists()) {
@@ -27,12 +28,36 @@ object ProjectDetector {
             }
         }
 
+        // 1. Internal PrismDE tools/jdk via Context
+        if (context != null) {
+            val internalHome = BuildToolInstaller.getJdkHomeDir(context)
+            val internalJava = BuildToolInstaller.getJdkExecutable(context)
+            if (internalJava != null && internalJava.exists()) {
+                return internalHome
+            }
+        }
+
+        // 2. Direct paths to internal PrismDE tools/jdk (works even if context is null)
+        val prismCandidates = listOf(
+            File("/data/user/0/com.prismde/files/tools/jdk"),
+            File("/data/data/com.prismde/files/tools/jdk")
+        )
+        for (dir in prismCandidates) {
+            if (dir.exists()) {
+                if (File(dir, "bin/java").exists()) return dir
+                val nested = dir.walkTopDown().maxDepth(4).firstOrNull { it.isDirectory && File(it, "bin/java").exists() }
+                if (nested != null) return nested
+            }
+        }
+
+        // 3. System environment JAVA_HOME
         val envJava = System.getenv("JAVA_HOME")
         if (!envJava.isNullOrBlank()) {
             val f = File(envJava)
             if (f.exists() && f.isDirectory) return f
         }
 
+        // 4. Termux / AndroidIDE candidate paths
         val candidates = listOf(
             File("/data/data/com.termux/files/usr/lib/jvm/openjdk-17"),
             File("/data/data/com.termux/files/usr/lib/jvm/openjdk-21"),
@@ -47,10 +72,13 @@ object ProjectDetector {
         return candidates.firstOrNull { it.exists() && it.isDirectory }
     }
 
-    fun isJavaAvailable(workingDir: File? = null): Boolean {
-        if (findJavaHome(workingDir) != null) return true
+    fun isJavaAvailable(context: Context? = null, workingDir: File? = null): Boolean {
+        if (context != null && BuildToolInstaller.hasAnyJdkInstalled(context)) return true
+        if (findJavaHome(context, workingDir) != null) return true
 
         val binCandidates = listOf(
+            File("/data/user/0/com.prismde/files/tools/jdk/bin/java"),
+            File("/data/data/com.prismde/files/tools/jdk/bin/java"),
             File("/data/data/com.termux/files/usr/bin/java"),
             File("/data/user/0/com.termux/files/usr/bin/java"),
             File("/data/data/com.itsaky.androidide/files/usr/bin/java"),
@@ -68,7 +96,11 @@ object ProjectDetector {
         return false
     }
 
-    fun detect(rootDir: File): ProjectType {
+    // Overloads for convenience
+    fun findJavaHome(workingDir: File?): File? = findJavaHome(null, workingDir)
+    fun isJavaAvailable(workingDir: File?): Boolean = isJavaAvailable(null, workingDir)
+
+    fun detect(rootDir: File, context: Context? = null): ProjectType {
         if (!rootDir.exists() || !rootDir.isDirectory) {
             return ProjectType.SINGLE_FILE_EXECUTABLE
         }
@@ -102,15 +134,14 @@ object ProjectDetector {
         val hasRootCMake = File(rootDir, "CMakeLists.txt").exists() || (hasJni && File(effectiveJniDir, "CMakeLists.txt").exists())
         val hasAndroidMk = File(rootDir, "Android.mk").exists() || (hasJni && File(effectiveJniDir, "Android.mk").exists()) || File(rootDir, "Application.mk").exists()
 
-        // If Gradle is detected AND Java is available on host device -> GRADLE.
-        // If Java is not available on host device, but project has native C++/NDK code -> default to PURE_JNI_SO so user can build .so immediately without JAVA_HOME error!
-        val javaAvailable = isJavaAvailable(rootDir)
+        val javaAvailable = isJavaAvailable(context, rootDir)
         if (hasGradle && javaAvailable) {
             return ProjectType.GRADLE
         }
 
         // Pure JNI project case: has Android.mk, or is/contains jni/ folder
-        if (hasAndroidMk || hasJni) {
+        // (Only fall back to pure JNI if it is NOT a Gradle project, or if Java is truly unavailable)
+        if (!hasGradle && (hasAndroidMk || hasJni)) {
             val jniFiles = effectiveJniDir?.listFiles() ?: emptyArray()
             val hasSources = jniFiles.any {
                 it.extension.lowercase() in COMPILABLE_EXTENSIONS ||

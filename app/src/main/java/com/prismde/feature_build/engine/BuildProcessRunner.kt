@@ -35,7 +35,7 @@ class BuildProcessRunner {
         context: Context? = null
     ): Boolean = withContext(Dispatchers.IO) {
         val detectedType = if (config.projectType == ProjectType.AUTO_DETECT) {
-            ProjectDetector.detect(project.rootDir)
+            ProjectDetector.detect(project.rootDir, context)
         } else {
             config.projectType
         }
@@ -43,7 +43,9 @@ class BuildProcessRunner {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
         if (detectedType == ProjectType.GRADLE) {
-            val javaAvailable = ProjectDetector.isJavaAvailable(project.rootDir) || config.javaHome.isNotBlank()
+            val javaAvailable = ProjectDetector.isJavaAvailable(context, project.rootDir) ||
+                    config.javaHome.isNotBlank() ||
+                    (context != null && BuildToolInstaller.hasAnyJdkInstalled(context))
             if (!javaAvailable && (project.hasJniDir || project.hasAndroidMk) && ndk != null && ndk.isInstalled) {
                 _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System (NDK Native Module) ==="))
                 _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
@@ -428,7 +430,7 @@ class BuildProcessRunner {
 
         // Check JDK availability before execution and auto-install if missing!
         var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
-        if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(project.rootDir)) {
+        if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(context, project.rootDir)) {
             if (context != null) {
                 _events.emit(BuildOutputEvent.LogLine(
                     if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка автономного OpenJDK 17 LTS..."
@@ -621,13 +623,43 @@ class BuildProcessRunner {
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
+        // Ensure JDK runtime dependencies (libz.so.1, libc++_shared.so, etc.) and auto-install if missing
+        var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
+        if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(context, project.rootDir)) {
+            if (context != null) {
+                _events.emit(BuildOutputEvent.LogLine(
+                    if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка автономного OpenJDK 17 LTS..."
+                    else "ℹ Java JDK not found. Automatically downloading standalone OpenJDK 17 LTS..."
+                ))
+                val jdkInstalled = BuildToolInstaller.installJdk(context) { status, pct ->
+                    _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                }
+                if (jdkInstalled) {
+                    javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище PrismDE!"
+                        else "✔ OpenJDK 17 installed successfully into PrismDE internal storage!"
+                    ))
+                }
+            }
+        }
+        if (context != null) {
+            BuildToolInstaller.ensureJdkRuntimeLibraries(context)
+        }
+
         // 1. Detect Gradle Wrapper (gradlew / gradlew.bat) or installed Gradle binary
         val gradlewFile = File(project.rootDir, "gradlew")
         val gradlewBat = File(project.rootDir, "gradlew.bat")
 
         val (executableCmd, workingDir, extraBinDir) = when {
             gradlewFile.exists() -> {
-                try { gradlewFile.setExecutable(true, false) } catch (_: Throwable) {}
+                try {
+                    gradlewFile.setExecutable(true, false)
+                    val txt = gradlewFile.readText()
+                    if (txt.contains("\r\n")) {
+                        gradlewFile.writeText(txt.replace("\r\n", "\n"))
+                    }
+                } catch (_: Throwable) {}
                 _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется Gradle Wrapper (./gradlew)..." else "Using Gradle Wrapper (./gradlew)..."))
                 Triple(listOf("/system/bin/sh", gradlewFile.absolutePath), project.rootDir, null)
             }
@@ -757,7 +789,7 @@ class BuildProcessRunner {
             val effectiveJavaHome = if (configuredJava != null && configuredJava.exists()) {
                 configuredJava
             } else {
-                ProjectDetector.findJavaHome(workingDir)
+                ProjectDetector.findJavaHome(context, workingDir)
                     ?: BuildToolInstaller.detectJavaEnvironment(context, workingDir).javaHome
             }
             if (effectiveJavaHome != null && effectiveJavaHome.exists()) {

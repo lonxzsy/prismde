@@ -185,4 +185,21 @@ class DebExtractorAndJvmTest {
         assertTrue(settingsXml.readText().contains(m2RepoDir.absolutePath))
         assertTrue(m2RepoDir.exists() && m2RepoDir.isDirectory)
     }
+
+    @Test
+    fun testProjectDetectorGradleWithJniDoesNotFallbackWhenJavaExists() {
+        val projectDir = tempFolder.newFolder("gradle_jni_project")
+        File(projectDir, "build.gradle").writeText("apply plugin: 'com.android.application'")
+        File(projectDir, "jni").mkdirs()
+        File(projectDir, "jni/native.cpp").writeText("void foo() {}")
+
+        // When local.properties defines java.home
+        val javaDir = tempFolder.newFolder("fake_jdk")
+        File(javaDir, "bin").mkdirs()
+        File(javaDir, "bin/java").createNewFile()
+        File(projectDir, "local.properties").writeText("org.gradle.java.home=${javaDir.absolutePath}")
+
+        val detected = com.prismde.feature_build.engine.ProjectDetector.detect(projectDir)
+        assertEquals(com.prismde.core.model.ProjectType.GRADLE, detected)
+    }
 }
