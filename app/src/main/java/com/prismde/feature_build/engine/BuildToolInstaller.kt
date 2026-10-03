@@ -3,6 +3,7 @@ package com.prismde.feature_build.engine
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import com.prismde.core.model.NdkVersion
 import com.prismde.feature_ndk.engine.NdkDownloader
 import com.prismde.feature_ndk.engine.NdkExtractor
 import kotlinx.coroutines.Dispatchers
@@ -173,7 +174,9 @@ object BuildToolInstaller {
             )
 
             val extractSuccess = extractor.extract(tempArchive, mavenTargetDir) { msg ->
-                onProgress(msg, 85f)
+                if (!msg.startsWith("Распаковка:") && !msg.startsWith("Unpacking:")) {
+                    onProgress(msg, 85f)
+                }
             }
 
             tempArchive.delete()
@@ -320,7 +323,9 @@ object BuildToolInstaller {
             )
 
             val extractSuccess = extractor.extract(tempArchive, gradleTargetDir) { msg ->
-                onProgress(msg, 88f)
+                if (!msg.startsWith("Распаковка:") && !msg.startsWith("Unpacking:")) {
+                    onProgress(msg, 88f)
+                }
             }
 
             tempArchive.delete()
@@ -422,6 +427,7 @@ object BuildToolInstaller {
                 sb.appendLine("org.gradle.daemon=false")
                 sb.appendLine("org.gradle.parallel=false")
                 sb.appendLine("org.gradle.vfs.watch=false")
+                sb.appendLine("org.gradle.console=plain")
                 if (!javaHome.isNullOrBlank()) {
                     sb.appendLine("org.gradle.java.home=${javaHome.replace("\\", "/")}")
                 }
@@ -439,6 +445,10 @@ object BuildToolInstaller {
                 }
                 if (!propsText.contains("org.gradle.vfs.watch")) {
                     propsText += "\norg.gradle.vfs.watch=false\n"
+                    modified = true
+                }
+                if (!propsText.contains("org.gradle.console")) {
+                    propsText += "\norg.gradle.console=plain\n"
                     modified = true
                 }
                 if (!propsText.contains("org.gradle.java.home") && !javaHome.isNullOrBlank()) {
@@ -520,6 +530,47 @@ object BuildToolInstaller {
             sdkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
         } else {
             sdkDir.absolutePath
+        }
+
+        // Detect if project explicitly specifies ndkVersion in build.gradle
+        val ndkVersionRegex = Regex("""ndkVersion\s*=?\s*['"]([^'"]+)['"]""")
+        var projectRequestedNdkVersion: String? = null
+        val buildGradleFiles = listOf(
+            File(projectRootDir, "app/build.gradle"),
+            File(projectRootDir, "build.gradle"),
+            File(projectRootDir, "app/build.gradle.kts"),
+            File(projectRootDir, "build.gradle.kts")
+        )
+        for (bg in buildGradleFiles) {
+            if (bg.exists()) {
+                try {
+                    val text = bg.readText()
+                    val match = ndkVersionRegex.find(text)
+                    if (match != null) {
+                        projectRequestedNdkVersion = match.groupValues[1]
+                        break
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+
+        val effectiveRevision = projectRequestedNdkVersion ?: "26.2.11394342"
+
+        // Ensure source.properties exists in ndkDir and parent folders
+        if (ndkDir != null && ndkDir.exists()) {
+            NdkVersion.ensureNdkSourceProperties(ndkDir, effectiveRevision)
+            NdkVersion.ensureNdkPermissions(ndkDir)
+
+            // Also provision $sdkDir/ndk/$effectiveRevision symlink for AGP NDK resolution
+            try {
+                val sdkNdkDir = File(sdkDir, "ndk/$effectiveRevision")
+                if (!sdkNdkDir.exists()) {
+                    sdkNdkDir.parentFile?.mkdirs()
+                    try {
+                        android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath)
+                    } catch (_: Throwable) {}
+                }
+            } catch (_: Throwable) {}
         }
 
         if (!localProps.exists()) {
@@ -647,7 +698,9 @@ object BuildToolInstaller {
             )
 
             val extractSuccess = extractor.extract(tempArchive, platformsDir) { msg ->
-                onProgress(msg, 90f)
+                if (!msg.startsWith("Распаковка:") && !msg.startsWith("Unpacking:")) {
+                    onProgress(msg, 90f)
+                }
             }
             tempArchive.delete()
 
@@ -737,7 +790,9 @@ object BuildToolInstaller {
             )
 
             val extractSuccess = extractor.extract(tempArchive, buildToolsDir) { msg ->
-                onProgress(msg, 90f)
+                if (!msg.startsWith("Распаковка:") && !msg.startsWith("Unpacking:")) {
+                    onProgress(msg, 90f)
+                }
             }
             tempArchive.delete()
 
@@ -997,7 +1052,9 @@ object BuildToolInstaller {
             )
 
             val extractSuccess = extractor.extract(tempArchive, jdkTargetDir) { msg ->
-                onProgress(msg, 85f)
+                if (!msg.startsWith("Распаковка:") && !msg.startsWith("Unpacking:")) {
+                    onProgress(msg, 85f)
+                }
             }
 
             tempArchive.delete()

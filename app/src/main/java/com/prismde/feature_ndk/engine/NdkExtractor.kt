@@ -182,7 +182,7 @@ class NdkExtractor {
                 }
 
                 count++
-                if (count % 150 == 0) {
+                if (count % 1000 == 0) {
                     val isRu = java.util.Locale.getDefault().language == "ru"
                     onProgress(if (isRu) "Распаковка: извлечено $count файлов..." else "Unpacking: $count files extracted...")
                 }
@@ -248,7 +248,7 @@ class NdkExtractor {
                 }
 
                 count++
-                if (count % 150 == 0) {
+                if (count % 1000 == 0) {
                     val isRu = java.util.Locale.getDefault().language == "ru"
                     onProgress(if (isRu) "Распаковка: извлечено $count файлов..." else "Unpacking: $count files extracted...")
                 }

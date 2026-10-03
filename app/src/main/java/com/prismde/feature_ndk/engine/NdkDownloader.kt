@@ -63,6 +63,7 @@ class NdkDownloader(private val client: OkHttpClient) {
             var currentBytes = startOffset
 
             var lastTime = System.currentTimeMillis()
+            var lastProgressTime = 0L
             var bytesSinceLastTime = 0L
             var currentSpeed = 0L
 
@@ -85,8 +86,13 @@ class NdkDownloader(private val client: OkHttpClient) {
                     }
 
                     val percent = if (totalBytes > 0) (currentBytes.toFloat() / totalBytes) * 100f else 0f
-                    onProgress(currentBytes, totalBytes, percent, currentSpeed)
+                    if (now - lastProgressTime >= 250 || currentBytes >= totalBytes || percent >= 100f) {
+                        lastProgressTime = now
+                        onProgress(currentBytes, totalBytes, percent, currentSpeed)
+                    }
                 }
+                val finalPercent = if (totalBytes > 0) (currentBytes.toFloat() / totalBytes) * 100f else 100f
+                onProgress(currentBytes, totalBytes, finalPercent, currentSpeed)
             }
         }
     }

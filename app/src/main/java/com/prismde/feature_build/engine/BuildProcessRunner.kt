@@ -3,6 +3,7 @@ package com.prismde.feature_build.engine
 import android.content.Context
 import com.prismde.core.model.AndroidAbi
 import com.prismde.core.model.BuildConfiguration
+import com.prismde.core.model.DefaultNdkCatalog
 import com.prismde.core.model.Diagnostic
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
@@ -623,6 +624,10 @@ class BuildProcessRunner {
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
+        val effectiveNdk = ndk ?: DefaultNdkCatalog.AVAILABLE_VERSIONS.firstOrNull {
+            it.getEffectiveNdkDir()?.exists() == true
+        }
+
         // Ensure JDK runtime dependencies (libz.so.1, libc++_shared.so, etc.) and auto-install if missing
         var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
         if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(context, project.rootDir)) {
@@ -631,8 +636,13 @@ class BuildProcessRunner {
                     if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка автономного OpenJDK 17 LTS..."
                     else "ℹ Java JDK not found. Automatically downloading standalone OpenJDK 17 LTS..."
                 ))
+                var lastJdkPct = -1
                 val jdkInstalled = BuildToolInstaller.installJdk(context) { status, pct ->
-                    _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                    val step = (pct / 25f).toInt() * 25
+                    if (step != lastJdkPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖")) {
+                        lastJdkPct = step
+                        _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                    }
                 }
                 if (jdkInstalled) {
                     javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
@@ -650,8 +660,15 @@ class BuildProcessRunner {
 
             // Ensure Android SDK directory & licenses are created in PrismDE storage
             val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
+
+            // Ensure NDK has source.properties and permissions!
+            effectiveNdk?.let {
+                it.ensureSourceProperties()
+                it.ensurePermissions()
+            }
+
             // Ensure local.properties in project root has sdk.dir and ndk.dir
-            BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, ndk?.getEffectiveNdkDir())
+            BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir())
 
             // Auto-install Android SDK Platform 34 (android.jar) if missing!
             if (!BuildToolInstaller.isAndroidPlatformInstalled(context, 34)) {
@@ -659,8 +676,11 @@ class BuildProcessRunner {
                     if (isRu) "ℹ Android SDK Platform 34 (android.jar) не найден. Автоматическая загрузка (~58 МБ)..."
                     else "ℹ Android SDK Platform 34 (android.jar) not found. Automatically downloading (~58 MB)..."
                 ))
+                var lastPlatformPct = -1
                 val platformInstalled = BuildToolInstaller.installAndroidPlatform(context, 34) { status, pct ->
-                    if (pct == 5f || pct == 85f || pct == 100f) {
+                    val step = (pct / 25f).toInt() * 25
+                    if (step != lastPlatformPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
+                        lastPlatformPct = step
                         _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
                     }
                 }
@@ -678,8 +698,11 @@ class BuildProcessRunner {
                     if (isRu) "ℹ Android Build-Tools 34.0.0 не найдены. Автоматическая загрузка (~55 МБ)..."
                     else "ℹ Android Build-Tools 34.0.0 not found. Automatically downloading (~55 MB)..."
                 ))
+                var lastBtPct = -1
                 val btInstalled = BuildToolInstaller.installBuildTools(context, "34.0.0") { status, pct ->
-                    if (pct == 5f || pct == 85f || pct == 100f) {
+                    val step = (pct / 25f).toInt() * 25
+                    if (step != lastBtPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
+                        lastBtPct = step
                         _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
                     }
                 }
@@ -765,11 +788,15 @@ class BuildProcessRunner {
         if (!command.contains("--no-daemon") && !command.contains("--daemon")) {
             command.add("--no-daemon")
         }
+        // Force plain console output to eliminate interactive animation / carriage return spam
+        if (!command.contains("--console")) {
+            command.add("--console=plain")
+        }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, workingDir, extraBinDir, ndk, config, context)
+        val success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
 
         // Search for generated APK, AAR, or JAR in build outputs
         val artifacts = project.rootDir.walkTopDown().maxDepth(6).filter { file ->
@@ -849,6 +876,25 @@ class BuildProcessRunner {
                 pathEntries.add(termuxBin)
             }
 
+            // Add NDK toolchain bin directories to PATH so ndk-build, make, clang are directly accessible
+            ndk?.getEffectiveNdkDir()?.let { ndkDir ->
+                if (ndkDir.exists()) {
+                    val ndkBinDirs = listOf(
+                        File(ndkDir, "prebuilt/linux-arm64/bin"),
+                        File(ndkDir, "prebuilt/linux-aarch64/bin"),
+                        File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
+                        File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
+                        File(ndkDir, "bin"),
+                        ndkDir
+                    )
+                    for (b in ndkBinDirs) {
+                        if (b.exists() && b.isDirectory && !pathEntries.contains(b.absolutePath)) {
+                            pathEntries.add(b.absolutePath)
+                        }
+                    }
+                }
+            }
+
             // Auto-detect or use configured JAVA_HOME
             val configuredJava = if (config?.javaHome?.isNotBlank() == true) File(config.javaHome) else null
             val effectiveJavaHome = if (configuredJava != null && configuredJava.exists()) {
@@ -900,6 +946,7 @@ class BuildProcessRunner {
             ndk?.getEffectiveNdkDir()?.let { ndkDir ->
                 if (ndkDir.exists()) {
                     env["ANDROID_NDK_HOME"] = ndkDir.absolutePath
+                    env["ANDROID_NDK_ROOT"] = ndkDir.absolutePath
                     env["NDK_HOME"] = ndkDir.absolutePath
                 }
             }
@@ -984,6 +1031,20 @@ class BuildProcessRunner {
                 if (jdkServer.exists()) ldPaths.add(jdkServer.absolutePath)
                 if (jdkJli.exists()) ldPaths.add(jdkJli.absolutePath)
             }
+            ndk?.getEffectiveNdkDir()?.let { ndkDir ->
+                val ndkLibDirs = listOf(
+                    File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/lib64"),
+                    File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/lib"),
+                    File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/lib64"),
+                    File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/lib"),
+                    File(ndkDir, "lib")
+                )
+                for (libDir in ndkLibDirs) {
+                    if (libDir.exists() && libDir.isDirectory) {
+                        ldPaths.add(libDir.absolutePath)
+                    }
+                }
+            }
             extraBinDir?.let { binDir ->
                 val parentLib = File(binDir.parentFile, "lib")
                 if (parentLib.exists()) ldPaths.add(parentLib.absolutePath)
@@ -1000,14 +1061,30 @@ class BuildProcessRunner {
 
             val process = processBuilder.start()
 
+            val ansiRegex = Regex("\u001B\\[[;\\d]*[ -/]*[@-~]")
+            var lastStdoutWasBlank = false
+
             // Stream stdout and parse diagnostics (e.g. Maven, Gradle, Javac output to stdout)
             val stdoutThread = Thread {
                 BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        line?.let { l ->
-                            _events.tryEmit(BuildOutputEvent.LogLine(l))
-                            val diag = parser.parseLine(l)
+                        line?.let { raw ->
+                            val clean = raw.replace(ansiRegex, "").trimEnd('\r')
+                            val trimmed = clean.trim()
+                            // Filter out Gradle dynamic progress bar animation noise
+                            if (trimmed.startsWith("<") && (trimmed.contains("%") || trimmed.contains("====") || trimmed.contains("----"))) {
+                                return@let
+                            }
+                            if (trimmed.isEmpty()) {
+                                if (lastStdoutWasBlank) return@let
+                                lastStdoutWasBlank = true
+                            } else {
+                                lastStdoutWasBlank = false
+                            }
+
+                            _events.tryEmit(BuildOutputEvent.LogLine(clean))
+                            val diag = parser.parseLine(clean)
                             if (diag != null) {
                                 _events.tryEmit(BuildOutputEvent.DiagnosticFound(diag))
                             }
@@ -1016,14 +1093,27 @@ class BuildProcessRunner {
                 }
             }
 
+            var lastStderrWasBlank = false
             // Stream stderr and parse diagnostics
             val stderrThread = Thread {
                 BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        line?.let { l ->
-                            _events.tryEmit(BuildOutputEvent.LogLine(l, isError = true))
-                            val diag = parser.parseLine(l)
+                        line?.let { raw ->
+                            val clean = raw.replace(ansiRegex, "").trimEnd('\r')
+                            val trimmed = clean.trim()
+                            if (trimmed.startsWith("<") && (trimmed.contains("%") || trimmed.contains("====") || trimmed.contains("----"))) {
+                                return@let
+                            }
+                            if (trimmed.isEmpty()) {
+                                if (lastStderrWasBlank) return@let
+                                lastStderrWasBlank = true
+                            } else {
+                                lastStderrWasBlank = false
+                            }
+
+                            _events.tryEmit(BuildOutputEvent.LogLine(clean, isError = true))
+                            val diag = parser.parseLine(clean)
                             if (diag != null) {
                                 _events.tryEmit(BuildOutputEvent.DiagnosticFound(diag))
                             }

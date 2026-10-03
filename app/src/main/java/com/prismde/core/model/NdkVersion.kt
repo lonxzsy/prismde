@@ -158,13 +158,62 @@ data class NdkVersion(
         return null
     }
 
+    fun getPkgRevision(): String {
+        return when {
+            versionTag.startsWith("r27") -> "27.0.12077973"
+            versionTag.startsWith("r26") -> "26.2.11394342"
+            versionTag.startsWith("r25") -> "25.2.9519653"
+            versionTag.startsWith("r23") -> "23.2.8568313"
+            else -> "26.2.11394342"
+        }
+    }
+
+    fun ensureSourceProperties(overrideRevision: String? = null) {
+        val rev = overrideRevision ?: getPkgRevision()
+        val targets = mutableListOf<File>()
+        getEffectiveNdkDir()?.let { targets.add(it) }
+        installPath?.let { targets.add(File(it)) }
+        targets.add(File("/data/user/0/com.prismde/files/ndk/$versionTag"))
+        targets.add(File("/data/data/com.prismde/files/ndk/$versionTag"))
+        targets.add(File("/data/user/0/com.prismde/files/ndk/$versionTag/android-ndk-aide"))
+        targets.add(File("/data/data/com.prismde/files/ndk/$versionTag/android-ndk-aide"))
+
+        for (target in targets.distinct()) {
+            ensureNdkSourceProperties(target, rev)
+        }
+    }
+
     fun ensurePermissions() {
         getEffectiveNdkDir()?.let { ensureNdkPermissions(it) }
     }
 
     companion object {
+        fun ensureNdkSourceProperties(ndkDir: File, revision: String = "26.2.11394342") {
+            if (!ndkDir.exists() || !ndkDir.isDirectory) return
+
+            val targetDirs = listOf(
+                ndkDir,
+                File(ndkDir, "android-ndk-aide"),
+                ndkDir.parentFile
+            ).filterNotNull().filter { it.exists() && it.isDirectory }
+
+            val content = "Pkg.Desc = Android NDK\nPkg.Revision = $revision\n"
+
+            for (dir in targetDirs) {
+                val propFile = File(dir, "source.properties")
+                if (!propFile.exists() || propFile.length() == 0L) {
+                    try {
+                        propFile.writeText(content)
+                        propFile.setReadable(true, false)
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
+
         fun ensureNdkPermissions(ndkDir: File) {
             if (!ndkDir.exists()) return
+
+            ensureNdkSourceProperties(ndkDir)
 
             fun applyChmod755(target: File) {
                 try {
@@ -260,15 +309,50 @@ data class NdkVersion(
                 }
             }
 
-            // 4. Ensure scripts are executable
-            listOf(
+            // 4. Ensure scripts are executable, have valid shebangs and proper aliases
+            for (dir in listOf(ndkDir, File(ndkDir, "android-ndk-aide"))) {
+                if (dir.exists() && dir.isDirectory) {
+                    val mainNdkBuild = File(dir, "ndk-build")
+                    val altNdkBuild = File(dir, "ndk-build-android")
+                    if (!mainNdkBuild.exists() && altNdkBuild.exists()) {
+                        try {
+                            android.system.Os.symlink("ndk-build-android", mainNdkBuild.absolutePath)
+                        } catch (_: Throwable) {
+                            try { altNdkBuild.copyTo(mainNdkBuild, overwrite = true) } catch (_: Throwable) {}
+                        }
+                    }
+                }
+            }
+
+            val scriptTargets = listOf(
                 File(ndkDir, "ndk-build"),
                 File(ndkDir, "ndk-build-android"),
+                File(ndkDir, "build/ndk-build"),
                 File(ndkDir, "android-ndk-aide/ndk-build"),
-                File(ndkDir, "android-ndk-aide/ndk-build-android")
-            ).forEach { script ->
+                File(ndkDir, "android-ndk-aide/ndk-build-android"),
+                File(ndkDir, "android-ndk-aide/build/ndk-build")
+            )
+
+            for (script in scriptTargets) {
                 if (script.exists()) {
                     applyChmod755(script)
+                    try {
+                        val txt = script.readText()
+                        var modified = false
+                        var newTxt = txt
+                        if (txt.contains("\r\n")) {
+                            newTxt = newTxt.replace("\r\n", "\n")
+                            modified = true
+                        }
+                        if (newTxt.startsWith("#!/bin/sh") || newTxt.startsWith("#!/usr/bin/sh") || newTxt.startsWith("#!/bin/bash")) {
+                            newTxt = newTxt.replaceFirst(Regex("^#![^\\n]+"), "#!/system/bin/sh")
+                            modified = true
+                        }
+                        if (modified) {
+                            script.writeText(newTxt)
+                            applyChmod755(script)
+                        }
+                    } catch (_: Throwable) {}
                 }
             }
 
