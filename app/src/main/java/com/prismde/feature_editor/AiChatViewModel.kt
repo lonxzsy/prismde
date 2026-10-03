@@ -136,10 +136,38 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             result.onSuccess { finalExplanation ->
+                val fullText = finalExplanation.trim()
+                if (fullText.isNotEmpty()) {
+                    // Smooth progressive typing animation (~1 - 1.4 seconds)
+                    val targetDurationMs = 1200L
+                    val delayStepMs = 16L
+                    val totalSteps = (targetDurationMs / delayStepMs).toInt().coerceAtLeast(1)
+                    val stepSize = (fullText.length / totalSteps).coerceAtLeast(2)
+
+                    var currentLen = 0
+                    while (currentLen < fullText.length) {
+                        currentLen = minOf(fullText.length, currentLen + stepSize)
+                        val partial = fullText.substring(0, currentLen)
+                        val streamingMessages = _uiState.value.messages.map { msg ->
+                            if (msg.id == assistantMsgId) {
+                                msg.copy(
+                                    text = partial,
+                                    actions = actionsAcc.toList()
+                                )
+                            } else msg
+                        }
+                        _uiState.value = _uiState.value.copy(
+                            messages = streamingMessages,
+                            currentActivity = null
+                        )
+                        kotlinx.coroutines.delay(delayStepMs)
+                    }
+                }
+
                 val finalMessages = _uiState.value.messages.map { msg ->
                     if (msg.id == assistantMsgId) {
                         msg.copy(
-                            text = finalExplanation,
+                            text = fullText,
                             actions = actionsAcc.toList()
                         )
                     } else msg

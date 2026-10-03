@@ -1,8 +1,5 @@
 package com.prismde.feature_editor.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -99,10 +96,16 @@ fun AiChatBottomSheet(
     var showAttachDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    // Auto-scroll when new messages arrive
-    LaunchedEffect(uiState.messages.size, uiState.currentActivity) {
+    // Auto-scroll when new messages arrive or text is streaming
+    val lastMessageTextLength = uiState.messages.lastOrNull()?.text?.length ?: 0
+    LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
+        }
+    }
+    LaunchedEffect(lastMessageTextLength, uiState.currentActivity) {
+        if (uiState.messages.isNotEmpty() && uiState.isRunning) {
+            listState.scrollToItem(uiState.messages.size - 1)
         }
     }
 
@@ -294,7 +297,9 @@ fun AiChatBottomSheet(
                             ChatMessageItem(
                                 message = message,
                                 isRunning = uiState.isRunning,
-                                currentActivity = uiState.currentActivity
+                                currentActivity = uiState.currentActivity,
+                                isLastMessage = message.id == uiState.messages.lastOrNull()?.id,
+                                modifier = Modifier.animateItem()
                             )
                         }
                     }
@@ -422,12 +427,14 @@ fun AiChatBottomSheet(
 fun ChatMessageItem(
     message: AgentChatMessage,
     isRunning: Boolean,
-    currentActivity: String?
+    currentActivity: String?,
+    isLastMessage: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     val isUser = message.isUser
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         Column(
@@ -486,18 +493,23 @@ fun ChatMessageItem(
 
                     // Main text
                     if (message.text.isNotBlank()) {
-                        Text(
-                            text = message.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (isUser)
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            else
-                                MaterialTheme.colorScheme.onSurface
-                        )
+                        if (isUser) {
+                            Text(
+                                text = message.text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        } else {
+                            MarkdownText(
+                                markdown = message.text,
+                                textColor = MaterialTheme.colorScheme.onSurface,
+                                isStreaming = isRunning && isLastMessage
+                            )
+                        }
                     }
 
                     // Live activity status
-                    if (!isUser && isRunning && message == message && currentActivity != null) {
+                    if (!isUser && isRunning && isLastMessage && currentActivity != null) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(top = 8.dp)
