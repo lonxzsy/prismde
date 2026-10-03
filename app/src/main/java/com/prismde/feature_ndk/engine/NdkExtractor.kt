@@ -2,6 +2,7 @@ package com.prismde.feature_ndk.engine
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.ar.ArArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.tukaani.xz.XZInputStream
 import java.io.BufferedInputStream
@@ -19,6 +20,7 @@ class NdkExtractor {
         XZ,
         ZIP,
         TAR,
+        DEB,
         UNKNOWN
     }
 
@@ -59,6 +61,9 @@ class NdkExtractor {
                 ArchiveFormat.ZIP -> {
                     extractZip(archiveFile, targetDir, onProgress)
                 }
+                ArchiveFormat.DEB -> {
+                    extractDeb(archiveFile, targetDir, onProgress)
+                }
                 ArchiveFormat.UNKNOWN -> {
                     val isRu = java.util.Locale.getDefault().language == "ru"
                     throw IllegalArgumentException(if (isRu) "Неизвестный или неподдерживаемый формат архива: ${archiveFile.name}" else "Unknown or unsupported archive format: ${archiveFile.name}")
@@ -77,7 +82,7 @@ class NdkExtractor {
     private fun detectFormat(file: File): ArchiveFormat {
         try {
             FileInputStream(file).use { fis ->
-                val header = ByteArray(6)
+                val header = ByteArray(8)
                 val read = fis.read(header)
                 if (read >= 2 && header[0] == 0x1F.toByte() && header[1] == 0x8B.toByte()) {
                     return ArchiveFormat.GZIP
@@ -95,6 +100,17 @@ class NdkExtractor {
                 if (read >= 2 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()) {
                     return ArchiveFormat.ZIP
                 }
+                if (read >= 7 &&
+                    header[0] == '!'.code.toByte() &&
+                    header[1] == '<'.code.toByte() &&
+                    header[2] == 'a'.code.toByte() &&
+                    header[3] == 'r'.code.toByte() &&
+                    header[4] == 'c'.code.toByte() &&
+                    header[5] == 'h'.code.toByte() &&
+                    header[6] == '>'.code.toByte()
+                ) {
+                    return ArchiveFormat.DEB
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -104,6 +120,7 @@ class NdkExtractor {
         return when {
             file.name.endsWith(".tar.gz") || file.name.endsWith(".tgz") -> ArchiveFormat.GZIP
             file.name.endsWith(".tar.xz") -> ArchiveFormat.XZ
+            file.name.endsWith(".deb") -> ArchiveFormat.DEB
             file.name.endsWith(".zip") -> ArchiveFormat.ZIP
             file.name.endsWith(".tar") -> ArchiveFormat.TAR
             else -> ArchiveFormat.UNKNOWN
@@ -239,6 +256,68 @@ class NdkExtractor {
                 zipIn.closeEntry()
                 entry = zipIn.nextEntry
             }
+        }
+    }
+
+    private fun extractDeb(
+        archiveFile: File,
+        targetDir: File,
+        onProgress: (statusMessage: String) -> Unit
+    ) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        onProgress(if (isRu) "Анализ пакета Debian (.deb)..." else "Analyzing Debian package (.deb)...")
+
+        ArArchiveInputStream(BufferedInputStream(FileInputStream(archiveFile))).use { ar ->
+            var entry = ar.nextEntry
+            var foundData = false
+            while (entry != null) {
+                val name = entry.name.trim()
+                if (name.startsWith("data.tar")) {
+                    foundData = true
+                    onProgress(if (isRu) "Распаковка содержимого пакета OpenJDK ($name)..." else "Extracting OpenJDK package data ($name)...")
+                    val decompressedStream: InputStream = when {
+                        name.contains(".xz") -> XZInputStream(ar)
+                        name.contains(".gz") -> GZIPInputStream(ar)
+                        else -> ar
+                    }
+                    extractTarStream(decompressedStream, targetDir, onProgress)
+                    break
+                }
+                entry = ar.nextEntry
+            }
+            if (!foundData) {
+                throw IllegalStateException(
+                    if (isRu) "В архиве .deb не найден файл данных data.tar.*"
+                    else "data.tar.* not found inside .deb archive"
+                )
+            }
+        }
+
+        // Post-process Debian/Termux JVM hierarchy:
+        flattenJvmHierarchy(targetDir)
+    }
+
+    private fun flattenJvmHierarchy(targetDir: File) {
+        // Termux packages extract to: data/data/com.termux/files/usr/lib/jvm/java-17-openjdk/...
+        // Elevate all files from the nested JVM directory directly into targetDir root so targetDir/bin/java is present.
+        val candidateDir = targetDir.walkTopDown().firstOrNull { dir ->
+            dir.isDirectory && dir.name.startsWith("java-") && File(dir, "bin/java").exists()
+        } ?: targetDir.walkTopDown().firstOrNull { dir ->
+            dir.isDirectory && dir != targetDir && File(dir, "bin/java").exists()
+        }
+
+        if (candidateDir != null && candidateDir != targetDir) {
+            candidateDir.listFiles()?.forEach { child ->
+                val dest = File(targetDir, child.name)
+                if (dest.exists()) {
+                    dest.deleteRecursively()
+                }
+                if (!child.renameTo(dest)) {
+                    child.copyRecursively(dest, overwrite = true)
+                    child.deleteRecursively()
+                }
+            }
+            File(targetDir, "data").deleteRecursively()
         }
     }
 

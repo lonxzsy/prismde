@@ -497,11 +497,14 @@ fun SettingsScreen(
                                 val javaBin = BuildToolInstaller.getJdkExecutable(context)
                                 if (isRu) "Встроенный PrismDE JDK (${javaBin?.parentFile?.parentFile?.name ?: "tools/jdk"})"
                                 else "Internal PrismDE JDK (${javaBin?.parentFile?.parentFile?.name ?: "tools/jdk"})"
+                            } else if (BuildToolInstaller.hasAnyJdkInstalled(context)) {
+                                if (isRu) "Требуется обновление OpenJDK 17 (исправление Tagged Pointers для Android 12+)"
+                                else "OpenJDK 17 update required (Tagged Pointers fix for Android 12+)"
                             } else if (javaInfo.isAvailable) {
                                 javaInfo.sourceDescription
                             } else {
-                                if (isRu) "Автономный OpenJDK 17 LTS (загрузка прямо в приложение, ~150 МБ)"
-                                else "Standalone OpenJDK 17 LTS (direct in-app download, ~150 MB)"
+                                if (isRu) "Автономный OpenJDK 17 LTS (загрузка прямо в приложение, ~96 МБ)"
+                                else "Standalone OpenJDK 17 LTS (direct in-app download, ~96 MB)"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -540,6 +543,8 @@ fun SettingsScreen(
                             Text(
                                 if (isInternalJdkInstalled) {
                                     if (isRu) "Переустановить" else "Reinstall"
+                                } else if (BuildToolInstaller.hasAnyJdkInstalled(context)) {
+                                    if (isRu) "Обновить" else "Update"
                                 } else {
                                     if (isRu) "Установить" else "Install"
                                 }

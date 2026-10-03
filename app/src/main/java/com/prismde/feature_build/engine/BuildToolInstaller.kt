@@ -36,9 +36,17 @@ object BuildToolInstaller {
     private const val MAVEN_MIRROR_URL = "https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz"
 
     const val JDK_VERSION = "17.0.20"
-    const val JDK_DOWNLOAD_URL_PRIMARY = "https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
-    const val JDK_DOWNLOAD_URL_FAST_MIRROR = "https://gh-proxy.com/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
-    const val JDK_DOWNLOAD_URL_CDN_MIRROR = "https://ghfast.top/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
+    const val JDK_BUILD_TAG = "17.0.20-termux-deb-v3"
+
+    // Official Termux OpenJDK 17 LTS packages with built-in Android 12+ tagged pointers fix (patch 0021)
+    const val JDK_DEB_URL_PRIMARY = "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
+    const val JDK_DEB_URL_TSINGHUA = "https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
+    const val JDK_DEB_URL_BFSU = "https://mirrors.bfsu.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
+    const val JDK_DEB_URL_GRIMLER = "https://grimler.se/termux-packages-24/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
+
+    // Fallback mirrors
+    const val JDK_TAR_XZ_FALLBACK = "https://gh-proxy.com/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
+    const val JDK_TAR_XZ_CDN = "https://ghfast.top/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
 
     const val TERMUX_INSTALL_CMD = "pkg update -y && pkg install -y openjdk-17 maven"
 
@@ -166,6 +174,25 @@ object BuildToolInstaller {
                 return@withContext false
             }
 
+            // 1. Remove glibc jansi-native libraries which crash on Android Bionic (libc.so.6 not found)
+            val jansiNativeDir = File(mavenTargetDir, "lib/jansi-native")
+            if (jansiNativeDir.exists()) {
+                try { jansiNativeDir.deleteRecursively() } catch (_: Throwable) {}
+            }
+
+            // 2. Patch bin/mvn script to eliminate -Dlibrary.jansi.path loading
+            val mvnExecutable = getMavenExecutable(context)
+            if (mvnExecutable != null && mvnExecutable.exists() && !mvnExecutable.name.endsWith(".cmd")) {
+                try {
+                    val scriptText = mvnExecutable.readText()
+                    if (scriptText.contains("jansi-native")) {
+                        val patched = scriptText.replace("\"\${MAVEN_HOME}/lib/jansi-native\"", "\"\"")
+                                                .replace("\${MAVEN_HOME}/lib/jansi-native", "")
+                        mvnExecutable.writeText(patched)
+                    }
+                } catch (_: Throwable) {}
+            }
+
             // Ensure all files in bin/ are executable
             mavenTargetDir.walkTopDown().filter { it.parentFile?.name == "bin" }.forEach {
                 try { it.setExecutable(true, false) } catch (_: Throwable) {}
@@ -195,6 +222,12 @@ object BuildToolInstaller {
     }
 
     fun isJdkInstalled(context: Context): Boolean {
+        val exe = getJdkExecutable(context) ?: return false
+        val tagFile = File(getJdkDir(context), ".prism_jdk_tag")
+        return tagFile.exists() && tagFile.readText().trim() == JDK_BUILD_TAG
+    }
+
+    fun hasAnyJdkInstalled(context: Context): Boolean {
         return getJdkExecutable(context) != null
     }
 
@@ -229,17 +262,22 @@ object BuildToolInstaller {
     ): Boolean = withContext(Dispatchers.IO) {
         val isRu = java.util.Locale.getDefault().language == "ru"
         val jdkTargetDir = getJdkDir(context)
+
+        // Clear existing outdated or unpatched JDK before fresh installation
+        try {
+            jdkTargetDir.deleteRecursively()
+        } catch (_: Throwable) {}
         jdkTargetDir.mkdirs()
 
-        val tempArchive = File(context.cacheDir, "openjdk-17-aarch64.tar.xz")
+        val tempArchive = File(context.cacheDir, "openjdk-17-aarch64.deb")
         if (tempArchive.exists()) {
             tempArchive.delete()
         }
 
         try {
             onProgress(
-                if (isRu) "Подготовка к загрузке OpenJDK 17 LTS для Android (ARM64)..."
-                else "Preparing to download OpenJDK 17 LTS for Android (ARM64)...",
+                if (isRu) "Подготовка к загрузке официального OpenJDK 17 LTS (Termux ARM64)..."
+                else "Preparing to download official OpenJDK 17 LTS (Termux ARM64)...",
                 5f
             )
 
@@ -247,24 +285,34 @@ object BuildToolInstaller {
             if (!customUrl.isNullOrBlank()) {
                 urls.add(customUrl.trim())
             }
-            urls.add(JDK_DOWNLOAD_URL_PRIMARY)
-            urls.add(JDK_DOWNLOAD_URL_FAST_MIRROR)
-            urls.add(JDK_DOWNLOAD_URL_CDN_MIRROR)
+            urls.add(JDK_DEB_URL_PRIMARY)
+            urls.add(JDK_DEB_URL_TSINGHUA)
+            urls.add(JDK_DEB_URL_BFSU)
+            urls.add(JDK_DEB_URL_GRIMLER)
+            urls.add(JDK_TAR_XZ_FALLBACK)
+            urls.add(JDK_TAR_XZ_CDN)
 
             var downloadSuccess = false
             var lastErrorMessage: String? = null
 
             for (url in urls) {
                 try {
+                    val archiveToSave = if (url.endsWith(".tar.xz")) {
+                        File(context.cacheDir, "openjdk-17-aarch64.tar.xz")
+                    } else {
+                        tempArchive
+                    }
+                    if (archiveToSave.exists()) archiveToSave.delete()
+
                     onProgress(
                         if (isRu) "Подключение к источнику загрузки..."
                         else "Connecting to download server...",
                         10f
                     )
-                    downloader.download(url, tempArchive) { current, total, percent, speedBytesPerSec ->
+                    downloader.download(url, archiveToSave) { current, total, percent, speedBytesPerSec ->
                         val scaled = 10f + (percent * 0.65f) // 10% to 75%
                         val curMb = current / (1024 * 1024)
-                        val totalMb = if (total > 0) total / (1024 * 1024) else 150
+                        val totalMb = if (total > 0) total / (1024 * 1024) else 96
                         val speedMb = String.format(java.util.Locale.US, "%.1f", speedBytesPerSec.toFloat() / (1024 * 1024))
                         onProgress(
                             if (isRu) "Загрузка OpenJDK 17: $curMb / $totalMb МБ (${percent.toInt()}%) — $speedMb МБ/с"
@@ -272,11 +320,14 @@ object BuildToolInstaller {
                             scaled
                         )
                     }
-                    if (tempArchive.exists() && tempArchive.length() > 10 * 1024 * 1024L) {
+                    if (archiveToSave.exists() && archiveToSave.length() > 10 * 1024 * 1024L) {
                         downloadSuccess = true
+                        if (archiveToSave != tempArchive) {
+                            try { archiveToSave.renameTo(tempArchive) } catch (_: Throwable) {}
+                        }
                         break
                     } else {
-                        tempArchive.delete()
+                        archiveToSave.delete()
                     }
                 } catch (e: Exception) {
                     lastErrorMessage = e.message
@@ -332,9 +383,12 @@ object BuildToolInstaller {
             val installedJava = getJdkExecutable(context)
             val success = installedJava != null && installedJava.exists()
             if (success) {
+                try {
+                    File(jdkTargetDir, ".prism_jdk_tag").writeText(JDK_BUILD_TAG)
+                } catch (_: Throwable) {}
                 onProgress(
-                    if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище!"
-                    else "✔ OpenJDK 17 installed successfully into internal storage!",
+                    if (isRu) "✔ OpenJDK 17 (Termux LTS) успешно установлен во внутреннее хранилище!"
+                    else "✔ OpenJDK 17 (Termux LTS) installed successfully into internal storage!",
                     100f
                 )
             } else {
@@ -386,12 +440,23 @@ object BuildToolInstaller {
             val internalJava = getJdkExecutable(context)
             val internalHome = getJdkHomeDir(context)
             if (internalJava != null && internalJava.exists()) {
-                return JavaEnvironmentInfo(
-                    isAvailable = true,
-                    javaHome = internalHome,
-                    javaBin = internalJava,
-                    sourceDescription = if (isRu) "Встроенный PrismDE OpenJDK 17" else "Internal PrismDE OpenJDK 17"
-                )
+                val tagFile = File(getJdkDir(context), ".prism_jdk_tag")
+                val isUpToDate = tagFile.exists() && tagFile.readText().trim() == JDK_BUILD_TAG
+                if (isUpToDate) {
+                    return JavaEnvironmentInfo(
+                        isAvailable = true,
+                        javaHome = internalHome,
+                        javaBin = internalJava,
+                        sourceDescription = if (isRu) "Встроенный PrismDE OpenJDK 17 (Termux LTS)" else "Internal PrismDE OpenJDK 17 (Termux LTS)"
+                    )
+                } else {
+                    return JavaEnvironmentInfo(
+                        isAvailable = false,
+                        javaHome = internalHome,
+                        javaBin = internalJava,
+                        sourceDescription = if (isRu) "Требуется обновление OpenJDK 17 (исправление Pointer Tag для Android 12+)" else "OpenJDK 17 update required (Tagged Pointers fix for Android 12+)"
+                    )
+                }
             }
         }
 

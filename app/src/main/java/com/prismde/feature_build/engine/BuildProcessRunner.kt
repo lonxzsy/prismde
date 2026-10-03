@@ -473,6 +473,28 @@ class BuildProcessRunner {
             File(project.rootDir, ".prism_tmp").also { it.mkdirs() }
         }
 
+        // Neutralize Jansi native library dlopen on Android Bionic (avoid missing libc.so.6)
+        if (context != null) {
+            val mvnHome = BuildToolInstaller.getMavenHomeDir(context)
+            if (mvnHome != null) {
+                val jansiDir = File(mvnHome, "lib/jansi-native")
+                if (jansiDir.exists()) {
+                    try { jansiDir.deleteRecursively() } catch (_: Throwable) {}
+                }
+                val mvnBin = File(mvnHome, "bin/mvn")
+                if (mvnBin.exists()) {
+                    try {
+                        val txt = mvnBin.readText()
+                        if (txt.contains("jansi-native")) {
+                            val patched = txt.replace("\"\${MAVEN_HOME}/lib/jansi-native\"", "\"\"")
+                                             .replace("\${MAVEN_HOME}/lib/jansi-native", "")
+                            mvnBin.writeText(patched)
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
+
         val command = mutableListOf<String>()
         command.addAll(executableCmd)
         command.addAll(goals)
@@ -483,6 +505,7 @@ class BuildProcessRunner {
         // 2. Move java.io.tmpdir to internal app cache
         // 3. Disable CompressedOops to prevent Tagged Pointers truncation crash on Android 11+ (ARM64)
         val jvmFlags = listOf(
+            "-Dlibrary.jansi.path=",
             "-Djansi.native=false",
             "-Djansi.mode=strip",
             "-Djansi.passthrough=true",
@@ -764,11 +787,11 @@ class BuildProcessRunner {
             env["TMPDIR"] = tempDir.absolutePath
             env["NDK_ANDROID_TMPDIR"] = tempDir.absolutePath
             env["TEMP"] = tempDir.absolutePath
-            val jvmOpts = "-Djansi.native=false -Djansi.mode=strip -Djansi.passthrough=true -Dstyle.color=never -Dmaven.color=false -Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -XX:-UseCompressedOops -XX:-UseCompressedClassPointers"
+            val jvmOpts = "-Dlibrary.jansi.path= -Djansi.native=false -Djansi.mode=strip -Djansi.passthrough=true -Dstyle.color=never -Dmaven.color=false -Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -XX:-UseCompressedOops -XX:-UseCompressedClassPointers"
             env["JAVA_TOOL_OPTIONS"] = jvmOpts
             env["MAVEN_OPTS"] = jvmOpts
             env["MALLOC_CHECK_"] = "0"
-            env["SCUDO_OPTIONS"] = "DeallocationTypeMismatch=false:DeleteSizeMismatch=false"
+            env["SCUDO_OPTIONS"] = "DeallocationTypeMismatch=false:DeleteSizeMismatch=false:QuarantineSizeKb=0"
             env["HOME"] = workingDir.absolutePath
 
             val process = processBuilder.start()
