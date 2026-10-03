@@ -149,8 +149,15 @@ fun SettingsScreen(
     var jdkInstallProgress by remember { mutableStateOf(0f) }
     var jdkInstallStatus by remember { mutableStateOf("") }
 
+    var isInstallingGradle by remember { mutableStateOf(false) }
+    var gradleInstallProgress by remember { mutableStateOf(0f) }
+    var gradleInstallStatus by remember { mutableStateOf("") }
+
     val isMavenInstalled = remember(mavenRefreshTrigger) {
         BuildToolInstaller.isMavenInstalled(context)
+    }
+    val isGradleInstalled = remember(mavenRefreshTrigger) {
+        BuildToolInstaller.isGradleInstalled(context)
     }
     val isInternalJdkInstalled = remember(mavenRefreshTrigger) {
         BuildToolInstaller.isJdkInstalled(context)
@@ -344,9 +351,9 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // SECTION: Build Tools & SDK (Maven, JDK)
+        // SECTION: Build Tools & SDK (Maven, Gradle, JDK)
         SettingsSectionHeader(
-            title = if (isRu) "Инструменты сборки (Maven, JDK)" else "Build Tools & SDK (Maven, JDK)",
+            title = if (isRu) "Инструменты сборки (Maven, Gradle, JDK)" else "Build Tools & SDK (Maven, Gradle, JDK)",
             icon = Icons.Rounded.Code
         )
         Card(
@@ -460,6 +467,96 @@ fun SettingsScreen(
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = mavenInstallStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // Gradle Build Tool Card Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Gradle ${BuildToolInstaller.GRADLE_VERSION}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            if (isGradleInstalled) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (isRu) "Установлен" else "Installed",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = if (isGradleInstalled) {
+                                val exe = BuildToolInstaller.getGradleExecutable(context)
+                                exe?.parentFile?.parentFile?.name ?: "tools/gradle"
+                            } else {
+                                if (isRu) "Автономный Gradle (~125 МБ) или через gradlew" else "Standalone Gradle (~125 MB) or via gradlew"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (isInstallingGradle) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            if (gradleInstallProgress > 0f) {
+                                Text("${gradleInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isInstallingGradle = true
+                                    gradleInstallProgress = 0f
+                                    val ok = BuildToolInstaller.installGradle(context) { status, pct ->
+                                        gradleInstallStatus = status
+                                        gradleInstallProgress = pct
+                                    }
+                                    isInstallingGradle = false
+                                    mavenRefreshTrigger++
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (ok) (if (isRu) "✔ Gradle успешно установлен!" else "✔ Gradle installed successfully!")
+                                        else (if (isRu) "✖ Ошибка установки: $gradleInstallStatus" else "✖ Install error: $gradleInstallStatus"),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                if (isGradleInstalled) {
+                                    if (isRu) "Переустановить" else "Reinstall"
+                                } else {
+                                    if (isRu) "Установить" else "Install"
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (isInstallingGradle && gradleInstallStatus.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = gradleInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )

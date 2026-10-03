@@ -37,6 +37,12 @@ object BuildToolInstaller {
     private const val MAVEN_ZIP_URL = "https://archive.apache.org/dist/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.zip"
     private const val MAVEN_MIRROR_URL = "https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz"
 
+    const val GRADLE_VERSION = "8.5"
+    private const val GRADLE_ZIP_URL_PRIMARY = "https://mirrors.cloud.tencent.com/gradle/gradle-8.5-bin.zip"
+    private const val GRADLE_ZIP_URL_OFFICIAL = "https://services.gradle.org/distributions/gradle-8.5-bin.zip"
+    private const val GRADLE_ZIP_URL_ALIYUN = "https://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.5-bin.zip"
+    private const val GRADLE_ZIP_URL_FALLBACK = "https://downloads.gradle-dn.com/distributions/gradle-8.5-bin.zip"
+
     const val JDK_VERSION = "17.0.20"
     const val JDK_BUILD_TAG = "17.0.20-termux-deb-v3"
 
@@ -217,6 +223,233 @@ object BuildToolInstaller {
         }
     }
 
+    // ==================== Standalone Gradle Management ====================
+
+    fun getGradleDir(context: Context): File {
+        return File(getToolsDir(context), "gradle")
+    }
+
+    fun isGradleInstalled(context: Context): Boolean {
+        return getGradleExecutable(context) != null
+    }
+
+    fun getGradleExecutable(context: Context): File? {
+        val gradleDir = getGradleDir(context)
+        if (!gradleDir.exists()) return null
+
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+
+        val exe = if (isWindows) {
+            gradleDir.walkTopDown().firstOrNull { file ->
+                file.isFile && (file.name == "gradle.bat" || file.name == "gradle.cmd") && file.parentFile?.name == "bin"
+            } ?: gradleDir.walkTopDown().firstOrNull { file ->
+                file.isFile && file.name == "gradle" && file.parentFile?.name == "bin"
+            }
+        } else {
+            gradleDir.walkTopDown().firstOrNull { file ->
+                file.isFile && file.name == "gradle" && file.parentFile?.name == "bin"
+            }
+        }
+
+        exe?.let {
+            try { it.setExecutable(true, false) } catch (_: Throwable) {}
+        }
+        return exe
+    }
+
+    fun getGradleHomeDir(context: Context): File? {
+        val exe = getGradleExecutable(context) ?: return null
+        return exe.parentFile?.parentFile ?: getGradleDir(context)
+    }
+
+    suspend fun installGradle(
+        context: Context,
+        onProgress: (statusMessage: String, percent: Float) -> Unit = { _, _ -> }
+    ): Boolean = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val gradleTargetDir = getGradleDir(context)
+        gradleTargetDir.mkdirs()
+
+        val tempArchive = File(context.cacheDir, "gradle-$GRADLE_VERSION-bin.zip")
+
+        try {
+            onProgress(
+                if (isRu) "Загрузка Gradle $GRADLE_VERSION (~125 МБ)..."
+                else "Downloading Gradle $GRADLE_VERSION (~125 MB)...",
+                5f
+            )
+
+            var downloadSuccess = false
+            val urls = listOf(
+                GRADLE_ZIP_URL_PRIMARY,
+                GRADLE_ZIP_URL_OFFICIAL,
+                GRADLE_ZIP_URL_ALIYUN,
+                GRADLE_ZIP_URL_FALLBACK
+            )
+
+            for (url in urls) {
+                try {
+                    downloader.download(url, tempArchive) { current, total, percent, _ ->
+                        val scaled = 5f + (percent * 0.7f) // 5% to 75%
+                        onProgress(
+                            if (isRu) "Загрузка Gradle: ${(current / (1024 * 1024))} МБ / ${(total / (1024 * 1024))} МБ (${percent.toInt()}%)"
+                            else "Downloading Gradle: ${(current / (1024 * 1024))} MB / ${(total / (1024 * 1024))} MB (${percent.toInt()}%)",
+                            scaled
+                        )
+                    }
+                    downloadSuccess = true
+                    break
+                } catch (e: Exception) {
+                    tempArchive.delete()
+                }
+            }
+
+            if (!downloadSuccess) {
+                onProgress(
+                    if (isRu) "✖ Ошибка: Не удалось загрузить архив Gradle"
+                    else "✖ Error: Failed to download Gradle archive",
+                    0f
+                )
+                return@withContext false
+            }
+
+            onProgress(
+                if (isRu) "Распаковка Gradle..."
+                else "Extracting Gradle...",
+                80f
+            )
+
+            val extractSuccess = extractor.extract(tempArchive, gradleTargetDir) { msg ->
+                onProgress(msg, 88f)
+            }
+
+            tempArchive.delete()
+
+            if (!extractSuccess) {
+                return@withContext false
+            }
+
+            // Ensure all binaries in bin/ are executable and have Unix LF line endings
+            gradleTargetDir.walkTopDown().filter { it.parentFile?.name == "bin" }.forEach {
+                try { it.setExecutable(true, false) } catch (_: Throwable) {}
+                try { it.setReadable(true, false) } catch (_: Throwable) {}
+                if (!it.name.endsWith(".bat") && !it.name.endsWith(".cmd")) {
+                    try {
+                        val txt = it.readText()
+                        if (txt.contains("\r\n")) {
+                            it.writeText(txt.replace("\r\n", "\n"))
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+
+            val installedExe = getGradleExecutable(context)
+            val success = installedExe != null && installedExe.exists()
+            if (success) {
+                onProgress(
+                    if (isRu) "✔ Gradle $GRADLE_VERSION успешно установлен!"
+                    else "✔ Gradle $GRADLE_VERSION installed successfully!",
+                    100f
+                )
+            }
+            success
+        } catch (e: Exception) {
+            e.printStackTrace()
+            tempArchive.delete()
+            false
+        }
+    }
+
+    /**
+     * Ensures the project has gradle wrapper files (gradlew, gradlew.bat, gradle/wrapper/...)
+     * and a properly configured gradle.properties for optimal execution on Android.
+     */
+    fun ensureGradleWrapper(context: Context, projectRootDir: File): Boolean {
+        return try {
+            val gradlew = File(projectRootDir, "gradlew")
+            val gradlewBat = File(projectRootDir, "gradlew.bat")
+            val wrapperJar = File(projectRootDir, "gradle/wrapper/gradle-wrapper.jar")
+            val wrapperProps = File(projectRootDir, "gradle/wrapper/gradle-wrapper.properties")
+
+            val assetManager = context.assets
+
+            fun copyAssetFile(assetPath: String, destFile: File) {
+                destFile.parentFile?.mkdirs()
+                assetManager.open(assetPath).use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+
+            if (!gradlew.exists() || gradlew.length() == 0L) {
+                copyAssetFile("gradle_wrapper/gradlew", gradlew)
+            }
+            if (!gradlewBat.exists() || gradlewBat.length() == 0L) {
+                copyAssetFile("gradle_wrapper/gradlew.bat", gradlewBat)
+            }
+            if (!wrapperJar.exists() || wrapperJar.length() == 0L) {
+                copyAssetFile("gradle_wrapper/gradle/wrapper/gradle-wrapper.jar", wrapperJar)
+            }
+            if (!wrapperProps.exists() || wrapperProps.length() == 0L) {
+                copyAssetFile("gradle_wrapper/gradle/wrapper/gradle-wrapper.properties", wrapperProps)
+            }
+
+            // Ensure executable permissions and unix line endings on gradlew
+            if (gradlew.exists()) {
+                try { gradlew.setExecutable(true, false) } catch (_: Throwable) {}
+                try { gradlew.setReadable(true, false) } catch (_: Throwable) {}
+                val text = gradlew.readText()
+                if (text.contains("\r\n")) {
+                    gradlew.writeText(text.replace("\r\n", "\n"))
+                }
+            }
+
+            // Ensure gradle.properties exists with Android-optimized settings
+            val gradleProps = File(projectRootDir, "gradle.properties")
+            val javaHome = getJdkHomeDir(context)?.absolutePath
+            val defaultJvmArgs = "-XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xmx1024m"
+            if (!gradleProps.exists()) {
+                val sb = java.lang.StringBuilder()
+                sb.appendLine("# PrismDE Android Build Optimizations")
+                sb.appendLine("org.gradle.jvmargs=$defaultJvmArgs")
+                sb.appendLine("org.gradle.daemon=false")
+                sb.appendLine("org.gradle.parallel=false")
+                sb.appendLine("org.gradle.vfs.watch=false")
+                if (!javaHome.isNullOrBlank()) {
+                    sb.appendLine("org.gradle.java.home=${javaHome.replace("\\", "/")}")
+                }
+                gradleProps.writeText(sb.toString())
+            } else {
+                var propsText = gradleProps.readText()
+                var modified = false
+                if (!propsText.contains("org.gradle.jvmargs")) {
+                    propsText += "\norg.gradle.jvmargs=$defaultJvmArgs\n"
+                    modified = true
+                }
+                if (!propsText.contains("org.gradle.daemon")) {
+                    propsText += "\norg.gradle.daemon=false\n"
+                    modified = true
+                }
+                if (!propsText.contains("org.gradle.vfs.watch")) {
+                    propsText += "\norg.gradle.vfs.watch=false\n"
+                    modified = true
+                }
+                if (!propsText.contains("org.gradle.java.home") && !javaHome.isNullOrBlank()) {
+                    propsText += "\norg.gradle.java.home=${javaHome.replace("\\", "/")}\n"
+                    modified = true
+                }
+                if (modified) {
+                    gradleProps.writeText(propsText)
+                }
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
     // ==================== Standalone OpenJDK Management ====================
 
     fun getJdkDir(context: Context): File {
@@ -282,6 +515,17 @@ object BuildToolInstaller {
         libDir.walkTopDown().filter { it.isFile && (it.extension == "so" || it.name.contains(".so.")) }.forEach { f ->
             try { f.setExecutable(true, false) } catch (_: Throwable) {}
             try { f.setReadable(true, false) } catch (_: Throwable) {}
+        }
+
+        // 4. Ensure all binaries in bin/ are executable
+        val binDir = File(jdkDir, "bin")
+        if (binDir.exists()) {
+            binDir.listFiles()?.forEach { f ->
+                if (f.isFile) {
+                    try { f.setExecutable(true, false) } catch (_: Throwable) {}
+                    try { f.setReadable(true, false) } catch (_: Throwable) {}
+                }
+            }
         }
     }
 
@@ -663,6 +907,18 @@ object BuildToolInstaller {
                 else
                     "Build automation tool for Java/Kotlin and Android libraries",
                 sizeLabel = "~9 MB"
+            ),
+            BuildToolInfo(
+                id = "gradle",
+                name = "Gradle Build Tool",
+                version = GRADLE_VERSION,
+                isInstalled = isGradleInstalled(context),
+                installedPath = getGradleExecutable(context)?.absolutePath,
+                description = if (isRu)
+                    "Система сборки для проектов Android и Java/Kotlin"
+                else
+                    "Build system for Android and Java/Kotlin projects",
+                sizeLabel = "~125 MB"
             ),
             BuildToolInfo(
                 id = "jdk",

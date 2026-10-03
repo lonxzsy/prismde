@@ -645,11 +645,14 @@ class BuildProcessRunner {
         }
         if (context != null) {
             BuildToolInstaller.ensureJdkRuntimeLibraries(context)
+            // Ensure Gradle Wrapper and Android-optimized gradle.properties are in place
+            BuildToolInstaller.ensureGradleWrapper(context, project.rootDir)
         }
 
         // 1. Detect Gradle Wrapper (gradlew / gradlew.bat) or installed Gradle binary
         val gradlewFile = File(project.rootDir, "gradlew")
         val gradlewBat = File(project.rootDir, "gradlew.bat")
+        val internalGradle = if (context != null) BuildToolInstaller.getGradleExecutable(context) else null
 
         val (executableCmd, workingDir, extraBinDir) = when {
             gradlewFile.exists() -> {
@@ -667,6 +670,10 @@ class BuildProcessRunner {
                 _events.emit(BuildOutputEvent.LogLine("Using Gradle Wrapper (gradlew.bat)..."))
                 Triple(listOf("cmd.exe", "/c", gradlewBat.absolutePath), project.rootDir, null)
             }
+            internalGradle != null && internalGradle.exists() -> {
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется встроенный Gradle: ${internalGradle.absolutePath}" else "Using internal Gradle: ${internalGradle.absolutePath}"))
+                Triple(listOf("/system/bin/sh", internalGradle.absolutePath), project.rootDir, internalGradle.parentFile)
+            }
             else -> {
                 // Search installed gradle binary in Termux / system paths
                 val candidatePaths = listOf(
@@ -681,6 +688,21 @@ class BuildProcessRunner {
                     try { found.setExecutable(true, false) } catch (_: Throwable) {}
                     _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется установленный Gradle: ${found.absolutePath}" else "Using installed Gradle: ${found.absolutePath}"))
                     Triple(listOf("/system/bin/sh", found.absolutePath), project.rootDir, found.parentFile)
+                } else if (context != null) {
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "ℹ Gradle не найден. Запуск автоматической установки Gradle ${BuildToolInstaller.GRADLE_VERSION}..." else "ℹ Gradle not found. Starting automatic installation of Gradle ${BuildToolInstaller.GRADLE_VERSION}..."))
+                    val installed = BuildToolInstaller.installGradle(context) { status, pct ->
+                        if (pct == 10f || pct == 75f || pct == 100f) {
+                            _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                        }
+                    }
+                    val newlyInstalledGradle = BuildToolInstaller.getGradleExecutable(context)
+                    if (installed && newlyInstalledGradle != null) {
+                        _events.emit(BuildOutputEvent.LogLine(if (isRu) "✔ Gradle успешно установлен: ${newlyInstalledGradle.absolutePath}" else "✔ Gradle installed successfully: ${newlyInstalledGradle.absolutePath}"))
+                        Triple(listOf("/system/bin/sh", newlyInstalledGradle.absolutePath), project.rootDir, newlyInstalledGradle.parentFile)
+                    } else {
+                        _events.emit(BuildOutputEvent.LogLine(if (isRu) "Поиск gradle в системном PATH..." else "Searching for gradle in system PATH..."))
+                        Triple(listOf("gradle"), project.rootDir, null)
+                    }
                 } else {
                     _events.emit(BuildOutputEvent.LogLine(if (isRu) "Поиск gradle в системном PATH..." else "Searching for gradle in system PATH..."))
                     Triple(listOf("gradle"), project.rootDir, null)
@@ -824,11 +846,13 @@ class BuildProcessRunner {
                 }
                 if (env["ANDROID_HOME"].isNullOrBlank()) {
                     val sdkCandidates = listOf(
+                        if (context != null) File(context.filesDir, "tools/android-sdk") else null,
+                        if (context != null) File(context.filesDir, "android-sdk") else null,
                         File("/data/data/com.termux/files/home/android-sdk"),
                         File("/sdcard/Android/sdk"),
                         File("/sdcard/android-sdk"),
                         File("/data/local/android-sdk")
-                    )
+                    ).filterNotNull()
                     sdkCandidates.firstOrNull { it.exists() }?.let {
                         env["ANDROID_HOME"] = it.absolutePath
                         env["ANDROID_SDK_ROOT"] = it.absolutePath
@@ -909,6 +933,7 @@ class BuildProcessRunner {
             env["JAVA_TOOL_OPTIONS"] = jvmOpts
             env["MAVEN_OPTS"] = jvmOpts
             env["MAVEN_ARGS"] = "-Duser.home=${homeDir.absolutePath} -Dmaven.repo.local=${m2RepoDir.absolutePath}"
+            env["GRADLE_OPTS"] = "-Dorg.gradle.daemon=false -Duser.home=${homeDir.absolutePath} -Djava.io.tmpdir=${tempDir.absolutePath} -XX:-UseCompressedOops -XX:-UseCompressedClassPointers"
             env["MALLOC_CHECK_"] = "0"
             env["SCUDO_OPTIONS"] = "DeallocationTypeMismatch=false:DeleteSizeMismatch=false:QuarantineSizeKb=0"
 

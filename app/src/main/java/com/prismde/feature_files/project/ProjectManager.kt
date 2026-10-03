@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.prismde.core.model.Project
 import com.prismde.core.model.ProjectType
+import com.prismde.feature_build.engine.BuildToolInstaller
 import com.prismde.feature_build.engine.ProjectDetector
 import java.io.File
 import java.io.FileOutputStream
@@ -343,6 +344,9 @@ object ProjectManager {
                     }
                     """.trimIndent()
                 )
+
+                // Provision Gradle Wrapper (gradlew, gradlew.bat, wrapper jar/properties) & gradle.properties
+                BuildToolInstaller.ensureGradleWrapper(context, projectDir)
             }
 
             ProjectType.SINGLE_FILE_EXECUTABLE, ProjectType.AUTO_DETECT -> {
