@@ -479,13 +479,19 @@ class BuildProcessRunner {
         command.addAll(flags)
 
         // Essential Android JVM system properties:
-        // 1. Move java.io.tmpdir to internal app cache (avoids noexec partition on /storage/emulated/0)
-        // 2. Disable Jansi JNI native library extraction (passthrough ANSI codes)
+        // 1. Disable Jansi JNI native library extraction (avoids missing libc.so.6 on Android)
+        // 2. Move java.io.tmpdir to internal app cache
+        // 3. Disable CompressedOops to prevent Tagged Pointers truncation crash on Android 11+ (ARM64)
         val jvmFlags = listOf(
+            "-Djansi.native=false",
+            "-Djansi.mode=strip",
+            "-Djansi.passthrough=true",
+            "-Dstyle.color=never",
+            "-Dmaven.color=false",
             "-Djava.io.tmpdir=${tempDir.absolutePath}",
             "-Djansi.tmpdir=${tempDir.absolutePath}",
-            "-Djansi.passthrough=true",
-            "-Dstyle.color=never"
+            "-XX:-UseCompressedOops",
+            "-XX:-UseCompressedClassPointers"
         )
         for (flag in jvmFlags) {
             if (!command.contains(flag)) {
@@ -758,9 +764,11 @@ class BuildProcessRunner {
             env["TMPDIR"] = tempDir.absolutePath
             env["NDK_ANDROID_TMPDIR"] = tempDir.absolutePath
             env["TEMP"] = tempDir.absolutePath
-            env["TMP"] = tempDir.absolutePath
-            env["JAVA_TOOL_OPTIONS"] = "-Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -Djansi.passthrough=true -Dstyle.color=never"
-            env["MAVEN_OPTS"] = "-Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -Djansi.passthrough=true -Dstyle.color=never"
+            val jvmOpts = "-Djansi.native=false -Djansi.mode=strip -Djansi.passthrough=true -Dstyle.color=never -Dmaven.color=false -Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -XX:-UseCompressedOops -XX:-UseCompressedClassPointers"
+            env["JAVA_TOOL_OPTIONS"] = jvmOpts
+            env["MAVEN_OPTS"] = jvmOpts
+            env["MALLOC_CHECK_"] = "0"
+            env["SCUDO_OPTIONS"] = "DeallocationTypeMismatch=false:DeleteSizeMismatch=false"
             env["HOME"] = workingDir.absolutePath
 
             val process = processBuilder.start()
