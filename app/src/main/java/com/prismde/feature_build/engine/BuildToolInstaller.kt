@@ -747,33 +747,35 @@ object BuildToolInstaller {
         if (!platformsDir.exists()) return
         val targetPlatformDir = File(platformsDir, "android-$apiLevel")
 
-        // 1. Resolve diverted directories created by AGP or extraction (e.g. android-34-2, android-34-ext7, android-34-1)
+        // 1. Resolve diverted directories created by AGP or extraction (e.g. android-34-2, android-34-3, android-34-ext7, android-34-1)
         val altDirs = platformsDir.listFiles { f ->
             f.isDirectory && f != targetPlatformDir && (f.name.startsWith("android-$apiLevel-") || f.name.contains("android-$apiLevel"))
         }?.sortedByDescending { it.lastModified() } ?: emptyList()
 
-        for (alt in altDirs) {
-            val altJar = File(alt, "android.jar")
-            val targetJar = File(targetPlatformDir, "android.jar")
-            if (altJar.exists() && (!targetJar.exists() || targetJar.length() < 1000L)) {
-                try {
-                    if (targetPlatformDir.exists()) targetPlatformDir.deleteRecursively()
-                    val renamed = alt.renameTo(targetPlatformDir)
-                    if (!renamed) {
-                        alt.copyRecursively(targetPlatformDir, overwrite = true)
-                        alt.deleteRecursively()
-                    }
-                } catch (_: Throwable) {
-                    try {
-                        alt.copyRecursively(targetPlatformDir, overwrite = true)
-                        alt.deleteRecursively()
-                    } catch (_: Throwable) {}
+        val validAlt = altDirs.firstOrNull { File(it, "android.jar").exists() && File(it, "android.jar").length() > 1000L }
+        if (validAlt != null) {
+            // A newer/diverted complete download exists (e.g. android-34-3 from AGP). Replace targetPlatformDir with it.
+            try {
+                if (targetPlatformDir.exists()) {
+                    targetPlatformDir.deleteRecursively()
                 }
-            } else if (alt.exists() && targetJar.exists() && targetJar.length() > 1000L) {
+                val renamed = validAlt.renameTo(targetPlatformDir)
+                if (!renamed) {
+                    validAlt.copyRecursively(targetPlatformDir, overwrite = true)
+                    validAlt.deleteRecursively()
+                }
+            } catch (_: Throwable) {
                 try {
-                    alt.copyRecursively(targetPlatformDir, overwrite = false)
-                    alt.deleteRecursively()
+                    validAlt.copyRecursively(targetPlatformDir, overwrite = true)
+                    validAlt.deleteRecursively()
                 } catch (_: Throwable) {}
+            }
+        }
+
+        // Clean up any remaining diverted folders to prevent AGP collision/re-download
+        altDirs.forEach { dir ->
+            if (dir.exists() && dir != targetPlatformDir) {
+                try { dir.deleteRecursively() } catch (_: Throwable) {}
             }
         }
 
