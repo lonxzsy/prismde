@@ -77,11 +77,16 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.value = _uiState.value.copy(diagnostics = sorted)
                     }
                     is BuildOutputEvent.Completed -> {
+                        val logFile = writeBuildLog(event.projectRoot, _uiState.value.logs, event.success)
                         _uiState.value = _uiState.value.copy(
                             isBuilding = false,
                             buildSuccess = event.success,
                             artifactFile = event.artifactFile,
-                            showExportDialog = event.success && event.artifactFile != null
+                            showExportDialog = event.success && event.artifactFile != null,
+                            logs = _uiState.value.logs + BuildOutputEvent.LogLine(
+                                if (logFile != null) "Build log saved: ${logFile.absolutePath}"
+                                else "Build log was not saved"
+                            )
                         )
                     }
                 }
@@ -148,5 +153,29 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissExportDialog() {
         _uiState.value = _uiState.value.copy(showExportDialog = false)
+    }
+
+    private fun writeBuildLog(
+        projectRoot: File?,
+        logs: List<BuildOutputEvent.LogLine>,
+        success: Boolean
+    ): File? {
+        if (projectRoot == null || !projectRoot.exists()) return null
+        return try {
+            val file = File(projectRoot, "prismde-build.log")
+            val text = buildString {
+                appendLine("PrismDE build log")
+                appendLine("success=$success")
+                appendLine("time=${java.time.Instant.now()}")
+                appendLine("----")
+                logs.forEach { line ->
+                    appendLine(if (line.isError) "[E] ${line.text}" else line.text)
+                }
+            }
+            file.writeText(text)
+            file
+        } catch (_: Throwable) {
+            null
+        }
     }
 }

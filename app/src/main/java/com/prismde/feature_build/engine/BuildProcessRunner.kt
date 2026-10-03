@@ -19,7 +19,12 @@ import java.io.InputStreamReader
 sealed class BuildOutputEvent {
     data class LogLine(val text: String, val isError: Boolean = false) : BuildOutputEvent()
     data class DiagnosticFound(val diagnostic: Diagnostic) : BuildOutputEvent()
-    data class Completed(val exitCode: Int, val success: Boolean, val artifactFile: File? = null) : BuildOutputEvent()
+    data class Completed(
+        val exitCode: Int,
+        val success: Boolean,
+        val artifactFile: File? = null,
+        val projectRoot: File? = null
+    ) : BuildOutputEvent()
 }
 
 class BuildProcessRunner {
@@ -64,7 +69,7 @@ class BuildProcessRunner {
                 } else {
                     _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки. Проверьте карточки ошибок выше." else "✖ Build failed. Check the error diagnostics above.", isError = true))
                 }
-                _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+                _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile, project.rootDir))
                 return@withContext success
             }
 
@@ -81,7 +86,7 @@ class BuildProcessRunner {
             } else {
                 _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки Gradle. Проверьте вывод и карточки ошибок выше." else "✖ Gradle build failed. Check the output and error diagnostics above.", isError = true))
             }
-            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile, project.rootDir))
             return@withContext success
         }
 
@@ -99,13 +104,13 @@ class BuildProcessRunner {
             } else {
                 _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки Maven. Проверьте вывод и карточки ошибок выше." else "✖ Maven build failed. Check the output and error diagnostics above.", isError = true))
             }
-            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile, project.rootDir))
             return@withContext success
         }
 
         if (ndk == null || !ndk.isInstalled) {
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка: NDK не установлен для сборки C/C++ проекта." else "✖ Error: NDK is not installed for building C/C++ project.", isError = true))
-            _events.emit(BuildOutputEvent.Completed(1, false, null))
+            _events.emit(BuildOutputEvent.Completed(1, false, null, project.rootDir))
             return@withContext false
         }
 
@@ -144,7 +149,7 @@ class BuildProcessRunner {
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки. Проверьте карточки ошибок выше." else "✖ Build failed. Check the error diagnostics above.", isError = true))
         }
 
-        _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+        _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile, project.rootDir))
         success
     }
 

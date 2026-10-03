@@ -964,34 +964,47 @@ object BuildToolInstaller {
             )
 
             var downloadSuccess = false
-            val urls = mutableListOf<String>()
-            for (rev in listOf("03", "02", "01")) {
-                urls.add("https://dl.google.com/android/repository/platform-${apiLevel}_r$rev.zip")
-                urls.add("https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r$rev.zip")
-                urls.add("https://mirrors.aliyun.com/android/repository/platform-${apiLevel}_r$rev.zip")
-            }
+            val hosts = listOf(
+                "https://dl.google.com/android/repository/",
+                "https://mirrors.cloud.tencent.com/android/repository/",
+                "https://mirrors.aliyun.com/android/repository/"
+            )
+            val archives = listOf(
+                "platform-${apiLevel}-ext7_r03.zip",
+                "platform-${apiLevel}-ext7_r02.zip",
+                "platform-${apiLevel}_r03.zip",
+                "platform-${apiLevel}_r02.zip",
+                "platform-${apiLevel}_r01.zip"
+            )
+            val urls = hosts.flatMap { host -> archives.map { host + it } }
+            var lastDownloadError = "unknown"
 
             for (url in urls) {
                 try {
                     downloader.download(url, tempArchive) { current, total, percent, _ ->
-                        val scaled = 5f + (percent * 0.75f) // 5% to 80%
+                        val scaled = 5f + (percent * 0.75f)
                         onProgress(
                             if (isRu) "Загрузка Android SDK Platform $apiLevel: ${(current / (1024 * 1024))} МБ / ${(total / (1024 * 1024))} МБ (${percent.toInt()}%)"
                             else "Downloading Android SDK Platform $apiLevel: ${(current / (1024 * 1024))} MB / ${(total / (1024 * 1024))} MB (${percent.toInt()}%)",
                             scaled
                         )
                     }
-                    downloadSuccess = true
-                    break
+                    if (tempArchive.exists() && tempArchive.length() > 1_000_000L) {
+                        downloadSuccess = true
+                        break
+                    }
+                    lastDownloadError = "archive too small (${tempArchive.length()} bytes) from $url"
+                    tempArchive.delete()
                 } catch (e: Exception) {
+                    lastDownloadError = "${e.message ?: e.javaClass.simpleName} ($url)"
                     tempArchive.delete()
                 }
             }
 
             if (!downloadSuccess) {
                 onProgress(
-                    if (isRu) "✖ Ошибка: Не удалось загрузить архив Android Platform"
-                    else "✖ Error: Failed to download Android Platform archive",
+                    if (isRu) "✖ Ошибка: Не удалось загрузить архив Android Platform: $lastDownloadError"
+                    else "✖ Error: Failed to download Android Platform archive: $lastDownloadError",
                     0f
                 )
                 return@withContext false
