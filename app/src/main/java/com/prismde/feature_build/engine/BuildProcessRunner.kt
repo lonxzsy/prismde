@@ -670,6 +670,13 @@ class BuildProcessRunner {
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)
 
+            // Collapse diverted platform dirs (android-34-2, android-34-ext7, ...) before AGP looks them up
+            val platformsDir = File(sdkDir, "platforms")
+            BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
+
+            // Detect compileSdk requested by the project (defaults to 34)
+            val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
+
             // Ensure project build scripts do not reference unsupported ABIs (e.g. armeabi) and specify ndkVersion
             BuildToolInstaller.ensureProjectAbiFilters(
                 project.rootDir,
@@ -677,14 +684,14 @@ class BuildProcessRunner {
                 effectiveNdk?.getPkgRevision() ?: "26.2.11394342"
             )
 
-            // Auto-install Android SDK Platform 34 (android.jar) if missing!
-            if (!BuildToolInstaller.isAndroidPlatformInstalled(context, 34)) {
+            // Auto-install the Android SDK Platform required by the project if missing
+            if (!BuildToolInstaller.isAndroidPlatformInstalled(context, requiredApi)) {
                 _events.emit(BuildOutputEvent.LogLine(
-                    if (isRu) "ℹ Android SDK Platform 34 (android.jar) не найден. Автоматическая загрузка (~58 МБ)..."
-                    else "ℹ Android SDK Platform 34 (android.jar) not found. Automatically downloading (~58 MB)..."
+                    if (isRu) "ℹ Android SDK Platform $requiredApi (android.jar) не найден. Автоматическая загрузка (~58 МБ)..."
+                    else "ℹ Android SDK Platform $requiredApi (android.jar) not found. Automatically downloading (~58 MB)..."
                 ))
                 var lastPlatformPct = -1
-                val platformInstalled = BuildToolInstaller.installAndroidPlatform(context, 34) { status, pct ->
+                val platformInstalled = BuildToolInstaller.installAndroidPlatform(context, requiredApi) { status, pct ->
                     val step = (pct / 25f).toInt() * 25
                     if (step != lastPlatformPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
                         lastPlatformPct = step
@@ -692,11 +699,14 @@ class BuildProcessRunner {
                     }
                 }
                 if (platformInstalled) {
+                    BuildToolInstaller.normalizeSdkPlatform(platformsDir, requiredApi)
                     _events.emit(BuildOutputEvent.LogLine(
-                        if (isRu) "✔ Android SDK Platform 34 успешно установлен!"
-                        else "✔ Android SDK Platform 34 installed successfully!"
+                        if (isRu) "✔ Android SDK Platform $requiredApi успешно установлен!"
+                        else "✔ Android SDK Platform $requiredApi installed successfully!"
                     ))
                 }
+            } else {
+                BuildToolInstaller.normalizeSdkPlatform(platformsDir, requiredApi)
             }
 
             // Auto-install Android Build-Tools 34.0.0 if missing!
@@ -813,7 +823,8 @@ class BuildProcessRunner {
             command.add("-Pandroid.ndkVersion=$ndkRev")
         }
         if (!command.any { it.startsWith("-Pandroid.suppressUnsupportedCompileSdk") }) {
-            command.add("-Pandroid.suppressUnsupportedCompileSdk=34")
+            val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
+            command.add("-Pandroid.suppressUnsupportedCompileSdk=$requiredApi")
         }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))

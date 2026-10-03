@@ -743,6 +743,55 @@ object BuildToolInstaller {
         }
     }
 
+    /**
+     * Detects the compileSdk / compileSdkVersion requested by the user's Gradle project.
+     * Falls back to ANDROID_PLATFORM_API_DEFAULT (34) if not found.
+     */
+    fun detectProjectCompileSdk(projectRootDir: File): Int {
+        val compileSdkRegex = Regex("""compileSdk(?:Version)?\s*=?\s*['"]?(\d+)['"]?""")
+        val buildGradleFiles = listOf(
+            File(projectRootDir, "app/build.gradle"),
+            File(projectRootDir, "app/build.gradle.kts"),
+            File(projectRootDir, "build.gradle"),
+            File(projectRootDir, "build.gradle.kts")
+        )
+        for (bg in buildGradleFiles) {
+            if (bg.exists() && bg.isFile) {
+                try {
+                    val text = bg.readText()
+                    val match = compileSdkRegex.find(text)
+                    if (match != null) {
+                        val api = match.groupValues[1].toIntOrNull()
+                        if (api != null && api in 21..36) return api
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+        return ANDROID_PLATFORM_API_DEFAULT
+    }
+
+    /**
+     * Normalizes all android-* platform directories under platformsDir.
+     * Collapses diverted folders (android-34-2, android-34-ext7, etc.) into canonical android-XX
+     * and strips ExtensionLevel so AGP hash lookup succeeds.
+     */
+    fun normalizeAllSdkPlatforms(platformsDir: File) {
+        if (!platformsDir.exists()) return
+        val apiLevels = mutableSetOf<Int>()
+        platformsDir.listFiles()?.forEach { f ->
+            if (!f.isDirectory) return@forEach
+            val name = f.name
+            if (name.startsWith("android-")) {
+                val rest = name.removePrefix("android-")
+                val api = rest.takeWhile { it.isDigit() }.toIntOrNull()
+                if (api != null && api in 21..36) apiLevels.add(api)
+            }
+        }
+        for (api in apiLevels) {
+            normalizeSdkPlatform(platformsDir, api)
+        }
+    }
+
     fun normalizeSdkPlatform(platformsDir: File, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT) {
         if (!platformsDir.exists()) return
         val targetPlatformDir = File(platformsDir, "android-$apiLevel")
