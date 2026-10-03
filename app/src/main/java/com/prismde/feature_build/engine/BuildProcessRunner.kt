@@ -197,12 +197,27 @@ class BuildProcessRunner {
                 "APP_BUILD_SCRIPT=${androidMkFile.absolutePath}",
                 "NDK_PROJECT_PATH=${mkDir.absolutePath}",
                 "APP_ABI=${config.selectedAbi.abiString}",
-                "APP_PLATFORM=android-${config.minApiLevel}"
+                "APP_PLATFORM=android-${config.minApiLevel}",
+                "APP_CFLAGS+=-D_USE_MATH_DEFINES",
+                "APP_CPPFLAGS+=-D_USE_MATH_DEFINES"
             )
             if (appMkFile != null) {
                 command.add("NDK_APPLICATION_MK=${appMkFile.absolutePath}")
             }
-            executeProcess(command, mkDir, ndkBuildScript.parentFile, ndk, config, context)
+
+            // Clean up stale target .so before building to prevent false positive on compilation failure
+            try {
+                targetSo.delete()
+                File(mkDir, "libs/${config.selectedAbi.abiString}/$soName").delete()
+                File(mkParentDir, "libs/${config.selectedAbi.abiString}/$soName").delete()
+                File(project.rootDir, "libs/${config.selectedAbi.abiString}/$soName").delete()
+            } catch (_: Throwable) {}
+
+            val buildSuccess = executeProcess(command, mkDir, ndkBuildScript.parentFile, ndk, config, context)
+            if (!buildSuccess) {
+                return null
+            }
+
             val candidateSos = listOf(
                 targetSo,
                 File(mkDir, "libs/${config.selectedAbi.abiString}/$soName"),
@@ -452,10 +467,31 @@ class BuildProcessRunner {
         val goals = config.mavenGoals.split(" ").filter { it.isNotBlank() }.ifEmpty { listOf("package") }
         val flags = config.mavenCustomFlags.split(" ").filter { it.isNotBlank() }
 
+        val tempDir = if (context != null) {
+            File(context.cacheDir, "prism_tmp").also { it.mkdirs() }
+        } else {
+            File(project.rootDir, ".prism_tmp").also { it.mkdirs() }
+        }
+
         val command = mutableListOf<String>()
         command.addAll(executableCmd)
         command.addAll(goals)
         command.addAll(flags)
+
+        // Essential Android JVM system properties:
+        // 1. Move java.io.tmpdir to internal app cache (avoids noexec partition on /storage/emulated/0)
+        // 2. Disable Jansi JNI native library extraction (passthrough ANSI codes)
+        val jvmFlags = listOf(
+            "-Djava.io.tmpdir=${tempDir.absolutePath}",
+            "-Djansi.tmpdir=${tempDir.absolutePath}",
+            "-Djansi.passthrough=true",
+            "-Dstyle.color=never"
+        )
+        for (flag in jvmFlags) {
+            if (!command.contains(flag)) {
+                command.add(flag)
+            }
+        }
 
         // Add batch mode flag to avoid interactive prompt freezes in mobile background process
         if (!command.contains("-B") && !command.contains("--batch-mode")) {
@@ -473,8 +509,8 @@ class BuildProcessRunner {
             if (!success) {
                 _events.emit(
                     BuildOutputEvent.LogLine(
-                        if (isRu) "Подсказка: Для сборки без mvnw установите Maven в Termux (pkg install maven openjdk-17) или добавьте wrapper mvnw в корень проекта."
-                        else "Hint: For building without mvnw, install Maven in Termux (pkg install maven openjdk-17) or add wrapper mvnw to project root.",
+                        if (isRu) "Подсказка: Проверьте логи сборки выше и настройки pom.xml. Убедитесь, что все зависимости и плагины Maven доступны."
+                        else "Hint: Check build logs above and pom.xml settings. Ensure all dependencies and Maven plugins are accessible.",
                         isError = true
                     )
                 )
@@ -498,8 +534,8 @@ class BuildProcessRunner {
             if (!success) {
                 _events.emit(
                     BuildOutputEvent.LogLine(
-                        if (isRu) "Подсказка: Для сборки без mvnw установите Maven в Termux (pkg install maven openjdk-17) или добавьте wrapper mvnw в корень проекта."
-                        else "Hint: For building without mvnw, install Maven in Termux (pkg install maven openjdk-17) or add wrapper mvnw to project root.",
+                        if (isRu) "Подсказка: Проверьте логи сборки выше и настройки pom.xml. Убедитесь, что все зависимости и плагины Maven доступны."
+                        else "Hint: Check build logs above and pom.xml settings. Ensure all dependencies and Maven plugins are accessible.",
                         isError = true
                     )
                 )
@@ -709,7 +745,11 @@ class BuildProcessRunner {
                 }
             }
 
-            val tempDir = File(workingDir, ".prism_tmp").also { it.mkdirs() }
+            val tempDir = if (context != null) {
+                File(context.cacheDir, "prism_tmp").also { it.mkdirs() }
+            } else {
+                File(workingDir, ".prism_tmp").also { it.mkdirs() }
+            }
             try {
                 tempDir.setReadable(true, false)
                 tempDir.setWritable(true, false)
@@ -718,6 +758,9 @@ class BuildProcessRunner {
             env["TMPDIR"] = tempDir.absolutePath
             env["NDK_ANDROID_TMPDIR"] = tempDir.absolutePath
             env["TEMP"] = tempDir.absolutePath
+            env["TMP"] = tempDir.absolutePath
+            env["JAVA_TOOL_OPTIONS"] = "-Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -Djansi.passthrough=true -Dstyle.color=never"
+            env["MAVEN_OPTS"] = "-Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -Djansi.passthrough=true -Dstyle.color=never"
             env["HOME"] = workingDir.absolutePath
 
             val process = processBuilder.start()
