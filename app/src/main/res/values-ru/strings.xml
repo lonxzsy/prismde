@@ -59,7 +59,13 @@
     <string name="type_jni_so">JNI .so библиотека (Android.mk)</string>
     <string name="type_cmake">CMake / C++ проект</string>
     <string name="type_single_file">C++ Исполняемый файл</string>
+    <string name="type_maven">Maven проект (pom.xml)</string>
     <string name="type_auto_detect">Автоопределение</string>
+    <string name="template_maven_desc">Java / Android библиотека или приложение с системой сборки Maven (pom.xml)</string>
+    <string name="ai_thinking_title">Модель думает...</string>
+    <string name="ai_thinking_completed">Размышления модели</string>
+    <string name="ai_thinking_show">Показать ход мыслей</string>
+    <string name="ai_thinking_hide">Скрыть ход мыслей</string>
     <string name="delete_project_title_internal">Удалить проект?</string>
     <string name="delete_project_title_external">Убрать проект?</string>
     <string name="delete_project_desc_internal">Вы уверены, что хотите удалить проект «%s» со всеми файлами?</string>

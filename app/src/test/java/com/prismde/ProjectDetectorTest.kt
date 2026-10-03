@@ -69,4 +69,47 @@ class ProjectDetectorTest {
         val includeDirs = ProjectDetector.findIncludeDirectories(proj)
         org.junit.Assert.assertTrue(includeDirs.contains(root))
     }
+
+    @Test
+    fun testDetectMavenProject() {
+        val root = tempFolder.newFolder("test_maven_project")
+        File(root, "pom.xml").writeText("<project><modelVersion>4.0.0</modelVersion></project>")
+
+        val detected = ProjectDetector.detect(root)
+        assertEquals(ProjectType.MAVEN, detected)
+    }
+
+    @Test
+    fun testDetectMavenWrapperProject() {
+        val root = tempFolder.newFolder("test_mvnw_project")
+        File(root, "mvnw").writeText("#!/bin/sh\n")
+
+        val detected = ProjectDetector.detect(root)
+        assertEquals(ProjectType.MAVEN, detected)
+    }
+
+    @Test
+    fun testProjectSkillsLoading() {
+        val root = tempFolder.newFolder("test_skills_project")
+        val skillsDir = File(root, ".prismde/skills").also { it.mkdirs() }
+        File(skillsDir, "ndk_rules.md").writeText("# NDK Rules\nAlways check JNIEnv before calling native methods.")
+
+        val skills = com.prismde.feature_build.engine.ProjectSkillManager.loadProjectSkills(root)
+        assertEquals(1, skills.size)
+        assertEquals("ndk_rules", skills[0].name)
+        org.junit.Assert.assertTrue(skills[0].content.contains("JNIEnv"))
+    }
+
+    @Test
+    fun testMavenDiagnosticParsing() {
+        val parser = com.prismde.feature_build.engine.ClangDiagnosticParser()
+        val line = "[ERROR] /src/main/java/Main.java:[15,8] cannot find symbol"
+        val diag = parser.parseLine(line)
+
+        org.junit.Assert.assertNotNull(diag)
+        assertEquals(15, diag?.line)
+        assertEquals(8, diag?.column)
+        assertEquals(com.prismde.core.model.DiagnosticSeverity.ERROR, diag?.severity)
+        assertEquals("cannot find symbol", diag?.rawMessage)
+    }
 }

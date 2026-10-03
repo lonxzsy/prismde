@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 sealed class AiAgentAction {
-    data class Thinking(val message: String) : AiAgentAction()
+    data class Thinking(val message: String, val thoughtDetail: String? = null) : AiAgentAction()
     data class ReadFile(val relativePath: String, val lineCount: Int) : AiAgentAction()
     data class WriteFile(
         val relativePath: String,
@@ -30,6 +30,7 @@ sealed class AiAgentAction {
     data class ListFiles(val fileCount: Int) : AiAgentAction()
     data class BuildProject(val status: String, val isSuccess: Boolean, val errorCount: Int = 0) : AiAgentAction()
     data class ContextCompacted(val savedTokens: Int) : AiAgentAction()
+    data class TokenUsageUpdated(val promptTokens: Int, val completionTokens: Int, val totalTokens: Int) : AiAgentAction()
     data class FinalAnswer(val text: String) : AiAgentAction()
     data class Error(val message: String) : AiAgentAction()
 }
@@ -46,6 +47,8 @@ data class AgentChatMessage(
     val text: String = "",
     val attachedFiles: List<String> = emptyList(),
     val actions: List<AiAgentAction> = emptyList(),
+    val thinkingText: String? = null,
+    val serverTokens: Int = 0,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -76,7 +79,9 @@ class AiAgentEngine(
         val isRu = java.util.Locale.getDefault().language == "ru"
         val projectFiles = listProjectRelativeFiles(project.rootDir)
 
-        val systemPrompt = buildSystemPrompt(project, projectFiles, isRu)
+        val skills = ProjectSkillManager.loadProjectSkills(project.rootDir)
+        val skillsPrompt = ProjectSkillManager.formatSkillsPrompt(skills, isRu)
+        val systemPrompt = buildSystemPrompt(project, projectFiles, isRu) + skillsPrompt
         val initialUserPrompt = buildInitialUserPrompt(userPrompt, project, attachedFiles, isRu)
 
         // Internal message history for the LLM
@@ -100,6 +105,14 @@ class AiAgentEngine(
         val maxIterations = 8
         var currentIteration = 0
         var finalExplanation = ""
+        var lastBuildSuccess: Boolean? = null
+        var filesModifiedSinceBuild = false
+        val userPromptLower = userPrompt.lowercase()
+        val userRequestedBuild = userPromptLower.contains("собер") ||
+                userPromptLower.contains("билд") ||
+                userPromptLower.contains("build") ||
+                userPromptLower.contains("compil") ||
+                userPromptLower.contains("компил")
 
         onAction(AiAgentAction.Thinking(if (isRu) "ИИ анализирует задачу..." else "AI is analyzing task..."))
 
@@ -113,13 +126,38 @@ class AiAgentEngine(
                 return@withContext Result.failure(Exception(err))
             }
 
-            val responseText = completionResult.getOrNull() ?: ""
+            val completionResponse = completionResult.getOrNull()
+            val responseText = completionResponse?.text ?: ""
+            val reasoning = completionResponse?.reasoning
+
+            if (completionResponse != null && completionResponse.totalTokens > 0) {
+                onAction(AiAgentAction.TokenUsageUpdated(completionResponse.promptTokens, completionResponse.completionTokens, completionResponse.totalTokens))
+            }
+
+            if (!reasoning.isNullOrBlank()) {
+                onAction(AiAgentAction.Thinking(message = if (isRu) "Размышления модели" else "Model reasoning", thoughtDetail = reasoning))
+            }
+
             llmMessages.add(CustomChatMessage(role = "assistant", content = responseText))
 
             // Check if AI performed any tool calls
             val toolCalls = extractToolCalls(responseText)
 
             if (toolCalls.isEmpty()) {
+                // If code was changed or build previously failed, force re-verification before finishing
+                if ((lastBuildSuccess == false && filesModifiedSinceBuild) || (userRequestedBuild && (lastBuildSuccess == null || filesModifiedSinceBuild))) {
+                    if (currentIteration < maxIterations) {
+                        val reminder = if (isRu) {
+                            "ВНИМАНИЕ: Файлы проекта были изменены, но сборка еще не была повторно запущена для проверки (или предыдущая сборка завершилась ошибкой). Обязательно вызови <tool_call name=\"build_project\"></tool_call> прямо сейчас, чтобы проверить успешность сборки перед окончательным ответом."
+                        } else {
+                            "ATTENTION: Project files were modified, but build has not been re-run to verify compilation (or previous build failed). You MUST invoke <tool_call name=\"build_project\"></tool_call> right now to verify compilation before giving your final answer."
+                        }
+                        onAction(AiAgentAction.Thinking(if (isRu) "Проверка сборки: тестирование компиляции изменений..." else "Verifying build: testing compilation of changes..."))
+                        llmMessages.add(CustomChatMessage(role = "user", content = reminder))
+                        continue
+                    }
+                }
+
                 // No more tool calls; extract cleanly formatted final text
                 finalExplanation = cleanResponseText(responseText)
                 onAction(AiAgentAction.FinalAnswer(finalExplanation))
@@ -153,6 +191,7 @@ class AiAgentEngine(
                             val isNew = !file.exists()
                             val oldContent = if (file.exists()) file.readText() else ""
                             file.writeText(newContent)
+                            filesModifiedSinceBuild = true
 
                             val (added, removed) = computeLineDiff(oldContent, newContent, isNew)
                             onAction(AiAgentAction.WriteFile(path, added, removed, isNew, newContent))
@@ -169,8 +208,24 @@ class AiAgentEngine(
                     }
 
                     "build_project" -> {
-                        onAction(AiAgentAction.Thinking(if (isRu) "Запуск компиляции проекта через NDK..." else "Running project compilation with NDK..."))
-                        if (ndk == null || !ndk.isInstalled) {
+                        val detectedType = if (buildConfig?.projectType == com.prismde.core.model.ProjectType.AUTO_DETECT || buildConfig == null) {
+                            ProjectDetector.detect(project.rootDir)
+                        } else {
+                            buildConfig.projectType
+                        }
+                        val isMaven = detectedType == com.prismde.core.model.ProjectType.MAVEN
+
+                        onAction(
+                            AiAgentAction.Thinking(
+                                if (isMaven) {
+                                    if (isRu) "Запуск сборки проекта через Maven..." else "Running project compilation with Maven..."
+                                } else {
+                                    if (isRu) "Запуск компиляции проекта через NDK..." else "Running project compilation with NDK..."
+                                }
+                            )
+                        )
+
+                        if (!isMaven && (ndk == null || !ndk.isInstalled)) {
                             val errMsg = if (isRu) "Ошибка: NDK не установлен или не настроен. Установите NDK в Настройках для сборки."
                                          else "Error: Android NDK is not installed or configured. Please install NDK from Settings."
                             onAction(AiAgentAction.BuildProject(status = if (isRu) "NDK не установлен" else "NDK not installed", isSuccess = false, errorCount = 1))
@@ -194,18 +249,21 @@ class AiAgentEngine(
 
                             val buildSuccess = runner.runBuild(project, ndk, bConfig)
                             collectJob.cancel()
+                            lastBuildSuccess = buildSuccess
+                            filesModifiedSinceBuild = false
 
                             val errors = diagnostics.filter { it.severity == com.prismde.core.model.DiagnosticSeverity.ERROR || it.severity == com.prismde.core.model.DiagnosticSeverity.FATAL }
                             val errorCount = if (errors.isNotEmpty()) errors.size else if (!buildSuccess) 1 else 0
 
                             if (buildSuccess) {
-                                val artifact = completedEvent?.artifactFile?.absolutePath ?: "libs/${bConfig.selectedAbi.abiString}/lib${project.name}.so"
+                                val defaultArtifact = if (isMaven) "target/${project.name}.jar" else "libs/${bConfig.selectedAbi.abiString}/lib${project.name}.so"
+                                val artifact = completedEvent?.artifactFile?.absolutePath ?: defaultArtifact
                                 onAction(AiAgentAction.BuildProject(status = if (isRu) "Сборка успешна" else "Build Succeeded", isSuccess = true, errorCount = 0))
                                 toolResults.append(
                                     "<tool_result name=\"build_project\" status=\"SUCCESS\">\n" +
                                     "Build completed successfully!\n" +
                                     "Artifact: $artifact\n" +
-                                    "All native source files compiled cleanly without errors.\n" +
+                                    (if (isMaven) "Maven project compiled cleanly without errors.\n" else "All native source files compiled cleanly without errors.\n") +
                                     "</tool_result>\n"
                                 )
                             } else {
@@ -215,7 +273,7 @@ class AiAgentEngine(
                                 for (diag in errors.take(12)) {
                                     errorDetails.append("- ${diag.filePath}:${diag.line}:${diag.column}: [${diag.severity}] ${diag.rawMessage}\n")
                                 }
-                                val errorLogs = logs.filter { it.contains("error:", ignoreCase = true) || it.contains("failed", ignoreCase = true) }.takeLast(8)
+                                val errorLogs = logs.filter { it.contains("error:", ignoreCase = true) || it.contains("failed", ignoreCase = true) || it.contains("[ERROR]", ignoreCase = true) }.takeLast(8)
                                 if (errorLogs.isNotEmpty()) {
                                     errorDetails.append("\nCompiler error output:\n").append(errorLogs.joinToString("\n"))
                                 }
@@ -303,9 +361,9 @@ class AiAgentEngine(
     private suspend fun sendChatCompletion(
         messages: List<CustomChatMessage>,
         config: AiConfig
-    ): Result<String> {
+    ): Result<ChatCompletionResponse> {
         return when (config.provider) {
-            "custom" -> customEndpointClient.sendChatCompletion(messages, config)
+            "custom" -> customEndpointClient.sendChatCompletionDetails(messages, config)
             "antigravity" -> sendAntigravityChat(messages, config)
             else -> sendGeminiApiChat(messages, config)
         }
@@ -314,7 +372,7 @@ class AiAgentEngine(
     private suspend fun sendGeminiApiChat(
         messages: List<CustomChatMessage>,
         config: AiConfig
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         val cleanKey = config.apiKey.trim()
         val targetModel = config.model.trim().ifBlank { "gemini-2.5-flash" }
         val isRu = java.util.Locale.getDefault().language == "ru"
@@ -363,9 +421,50 @@ class AiAgentEngine(
                     return@use Result.failure(Exception("Gemini API (HTTP ${response.code}): $bodyStr"))
                 }
                 val respJson = JSONObject(bodyStr)
+                val usageMeta = respJson.optJSONObject("usageMetadata")
+                val promptTokens = usageMeta?.optInt("promptTokenCount") ?: 0
+                val completionTokens = usageMeta?.optInt("candidatesTokenCount") ?: 0
+                val totalTokens = usageMeta?.optInt("totalTokenCount") ?: (promptTokens + completionTokens)
+
                 val candidates = respJson.optJSONArray("candidates")
-                val text = candidates?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text") ?: ""
-                Result.success(text)
+                val candidateObj = candidates?.optJSONObject(0)
+                val parts = candidateObj?.optJSONObject("content")?.optJSONArray("parts")
+
+                var mainText = ""
+                var reasoningText: String? = null
+
+                if (parts != null) {
+                    for (i in 0 until parts.length()) {
+                        val part = parts.optJSONObject(i)
+                        val text = part?.optString("text") ?: ""
+                        if (part?.optBoolean("thought") == true) {
+                            reasoningText = text.trim()
+                        } else {
+                            mainText += text
+                        }
+                    }
+                }
+
+                // Check for embedded <think>...</think> tags if not already separated
+                val thinkPattern = java.util.regex.Pattern.compile("""<think>([\s\S]*?)</think>""", java.util.regex.Pattern.CASE_INSENSITIVE)
+                val thinkMatcher = thinkPattern.matcher(mainText)
+                if (thinkMatcher.find()) {
+                    val foundThink = thinkMatcher.group(1)?.trim() ?: ""
+                    if (foundThink.isNotBlank() && reasoningText == null) {
+                        reasoningText = foundThink
+                    }
+                    mainText = mainText.replace(Regex("""<think>[\s\S]*?</think>""", RegexOption.IGNORE_CASE), "").trim()
+                }
+
+                Result.success(
+                    ChatCompletionResponse(
+                        text = mainText,
+                        reasoning = reasoningText,
+                        promptTokens = promptTokens,
+                        completionTokens = completionTokens,
+                        totalTokens = totalTokens
+                    )
+                )
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -375,7 +474,7 @@ class AiAgentEngine(
     private suspend fun sendAntigravityChat(
         messages: List<CustomChatMessage>,
         config: AiConfig
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         val isRu = java.util.Locale.getDefault().language == "ru"
         if (config.antigravityAccessToken.isBlank()) {
             return@withContext Result.failure(
@@ -391,7 +490,6 @@ class AiAgentEngine(
             promptBuilder.append("[${m.role.uppercase()}]:\n${m.content}\n\n")
         }
 
-        val targetModel = config.model.trim().ifBlank { "gemini-3.8-flash" }
         val explainer = GeminiExplainer(client, antigravityAuthManager)
         val dummyDiag = com.prismde.core.model.Diagnostic(
             id = "chat_task",
@@ -405,7 +503,25 @@ class AiAgentEngine(
         )
 
         // Delegate to existing Antigravity execution pipeline
-        explainer.explainDiagnostic(dummyDiag, promptBuilder.toString(), config)
+        val res = explainer.explainDiagnostic(dummyDiag, promptBuilder.toString(), config)
+        res.map { text ->
+            var mainText = text
+            var reasoning: String? = null
+            val thinkMatcher = java.util.regex.Pattern.compile("""<think>([\s\S]*?)</think>""", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text)
+            if (thinkMatcher.find()) {
+                reasoning = thinkMatcher.group(1)?.trim()
+                mainText = mainText.replace(Regex("""<think>[\s\S]*?</think>""", RegexOption.IGNORE_CASE), "").trim()
+            }
+            val estPrompt = TokenEstimator.estimateTokens(promptBuilder.toString())
+            val estCompl = TokenEstimator.estimateTokens(mainText)
+            ChatCompletionResponse(
+                text = mainText,
+                reasoning = reasoning,
+                promptTokens = estPrompt,
+                completionTokens = estCompl,
+                totalTokens = estPrompt + estCompl
+            )
+        }
     }
 
     data class ParsedToolCall(val name: String, val args: Map<String, String>)
@@ -543,7 +659,7 @@ class AiAgentEngine(
 
     private fun buildSystemPrompt(project: Project, files: List<String>, isRu: Boolean): String {
         return if (isRu) """
-            Ты автономный AI-ассистент разработчика в мобильной IDE PrismDE (C/C++, Android NDK).
+            Ты автономный AI-ассистент разработчика в мобильной IDE PrismDE (C/C++, Android NDK, CMake, Maven Java/Android).
             Твоя цель — помочь разработчику реализовать функциональность, исправить баги или создать новые файлы в проекте "${project.name}".
 
             Файлы в текущем проекте:
@@ -564,19 +680,19 @@ class AiAgentEngine(
             3. Просмотр структуры файлов проекта:
                <tool_call name="list_files"></tool_call>
 
-            4. Сборка и компиляция проекта (Clang/NDK/CMake):
+            4. Сборка и компиляция проекта (Clang/NDK/CMake или Maven pom.xml):
                <tool_call name="build_project"></tool_call>
 
             ПРАВИЛА РАБОТЫ:
             - Если тебе нужно узнать содержимое файла, вызови <tool_call name="read_file">.
             - Если нужно создать или модифицировать код, вызови <tool_call name="write_file">. Всегда предоставляй ПОЛНОЕ валидное содержимое файла в теге <content>.
-            - Если пользователь просит собрать или проверить проект, или после внесения правок в код C/C++, вызови <tool_call name="build_project"></tool_call>.
-            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang, открой указанные файлы, исправь ошибки и при необходимости снова вызови build_project.
+            - Если пользователь просит собрать или проверить проект, или после внесения правок в код C/C++/Java, вызови <tool_call name="build_project"></tool_call>.
+            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang/Javac, открой указанные файлы, исправь ошибки через write_file и ОБЯЗАТЕЛЬНО снова вызови build_project для подтверждения успешного исправления.
             - ВНИМАНИЕ: Используй ТОЛЬКО стандартный тег <tool_call name="...">...</tool_call>. НЕ используй спецсимволы DSML (<|DSML|>, invoke, calls, parameter). Обязательно закрывай каждый вызов тегом </tool_call>.
             - После выполнения всех операций напиши краткое, профессиональное и понятное резюме на русском языке без лишней воды.
         """.trimIndent()
         else """
-            You are an autonomous developer AI assistant in the mobile IDE PrismDE (C/C++, Android NDK).
+            You are an autonomous developer AI assistant in the mobile IDE PrismDE (C/C++, Android NDK, CMake, Maven Java/Android).
             Your goal is to help the developer implement features, fix bugs, or create new files in project "${project.name}".
 
             Project files:
@@ -597,14 +713,14 @@ class AiAgentEngine(
             3. List project files:
                <tool_call name="list_files"></tool_call>
 
-            4. Build and compile project (Clang/NDK/CMake):
+            4. Build and compile project (Clang/NDK/CMake or Maven pom.xml):
                <tool_call name="build_project"></tool_call>
 
             RULES:
             - When you need file contents, call <tool_call name="read_file">.
             - When writing or modifying code, call <tool_call name="write_file">. Always provide the COMPLETE, valid file content inside <content>.
-            - If user asks to build or compile the project, or after making changes to native code, invoke <tool_call name="build_project"></tool_call>.
-            - If the build fails with errors (FAILURE), carefully read the compiler diagnostics (file and line numbers), inspect the code, fix errors with write_file, and re-test.
+            - If user asks to build or compile the project, or after making changes to native or Java code, invoke <tool_call name="build_project"></tool_call>.
+            - If the build fails with errors (FAILURE), carefully read the compiler diagnostics (file and line numbers), inspect the code, fix errors with write_file, and RE-TEST with build_project to verify the fix.
             - ATTENTION: Strictly use standard XML format: <tool_call name="...">...</tool_call>. Do NOT use DSML tokens (<|DSML|>, invoke, calls, parameter). Always close each tool call with </tool_call>.
             - When finished, provide a clear, concise summary of the changes made.
         """.trimIndent()

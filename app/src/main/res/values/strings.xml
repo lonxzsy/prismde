@@ -59,7 +59,13 @@
     <string name="type_jni_so">JNI .so Library (Android.mk)</string>
     <string name="type_cmake">CMake / C++ Project</string>
     <string name="type_single_file">C++ Executable</string>
+    <string name="type_maven">Maven Project (pom.xml)</string>
     <string name="type_auto_detect">Auto-detect</string>
+    <string name="template_maven_desc">Java / Android library or application with Maven build system (pom.xml)</string>
+    <string name="ai_thinking_title">Model is thinking...</string>
+    <string name="ai_thinking_completed">Model reasoning</string>
+    <string name="ai_thinking_show">Show thought process</string>
+    <string name="ai_thinking_hide">Hide thought process</string>
     <string name="delete_project_title_internal">Delete Project?</string>
     <string name="delete_project_title_external">Remove Project?</string>
     <string name="delete_project_desc_internal">Are you sure you want to permanently delete project \"%s\" and all its files?</string>

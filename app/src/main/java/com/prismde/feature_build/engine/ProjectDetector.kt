@@ -6,13 +6,18 @@ import java.io.File
 
 object ProjectDetector {
 
-    val COMPILABLE_EXTENSIONS = setOf("c", "cpp", "cc", "cxx", "c++", "cp", "s", "S")
+    val COMPILABLE_EXTENSIONS = setOf("c", "cpp", "cc", "cxx", "c++", "cp", "s", "S", "java", "kt")
     val HEADER_EXTENSIONS = setOf("h", "hpp", "hxx", "hh", "inc", "inl")
-    private val IGNORED_DIRS = setOf("build", ".git", ".gradle", "libs", "obj", "bin", ".idea")
+    private val IGNORED_DIRS = setOf("build", ".git", ".gradle", "libs", "obj", "bin", ".idea", "target", ".mvn")
 
     fun detect(rootDir: File): ProjectType {
         if (!rootDir.exists() || !rootDir.isDirectory) {
             return ProjectType.SINGLE_FILE_EXECUTABLE
+        }
+
+        val hasPom = File(rootDir, "pom.xml").exists() || File(rootDir, "mvnw").exists() || File(rootDir, "mvnw.cmd").exists()
+        if (hasPom) {
+            return ProjectType.MAVEN
         }
 
         val isJniNamed = rootDir.name.equals("jni", ignoreCase = true)

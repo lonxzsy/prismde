@@ -238,6 +238,7 @@ fun ProjectPickerBottomSheet(
                                             ProjectType.PURE_JNI_SO -> stringResource(R.string.type_jni_so)
                                             ProjectType.CMAKE -> stringResource(R.string.type_cmake)
                                             ProjectType.SINGLE_FILE_EXECUTABLE -> stringResource(R.string.type_single_file)
+                                            ProjectType.MAVEN -> stringResource(R.string.type_maven)
                                             ProjectType.AUTO_DETECT -> stringResource(R.string.type_auto_detect)
                                         },
                                         style = MaterialTheme.typography.bodySmall,
@@ -367,6 +368,11 @@ fun CreateProjectDialog(
                         ProjectType.SINGLE_FILE_EXECUTABLE,
                         stringResource(R.string.type_single_file),
                         stringResource(R.string.template_exec_desc)
+                    ),
+                    Triple(
+                        ProjectType.MAVEN,
+                        stringResource(R.string.type_maven),
+                        stringResource(R.string.template_maven_desc)
                     )
                 )
 

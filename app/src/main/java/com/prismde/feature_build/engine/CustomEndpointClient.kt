@@ -16,6 +16,14 @@ data class CustomChatMessage(
     val content: String
 )
 
+data class ChatCompletionResponse(
+    val text: String,
+    val reasoning: String? = null,
+    val promptTokens: Int = 0,
+    val completionTokens: Int = 0,
+    val totalTokens: Int = 0
+)
+
 class CustomEndpointClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -197,13 +205,13 @@ class CustomEndpointClient(
     }
 
     /**
-     * Executes OpenAI-compatible chat completion.
+     * Executes OpenAI-compatible chat completion and extracts reasoning and token usage.
      */
-    suspend fun sendChatCompletion(
+    suspend fun sendChatCompletionDetails(
         messages: List<CustomChatMessage>,
         config: AiConfig,
         temperature: Double = 0.2
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         val isRu = java.util.Locale.getDefault().language == "ru"
         val baseUrl = config.customBaseUrl.trim()
         if (baseUrl.isBlank()) {
@@ -254,13 +262,30 @@ class CustomEndpointClient(
                 }
 
                 val responseJson = JSONObject(bodyStr)
+                val usageObj = responseJson.optJSONObject("usage")
+                val promptTokens = usageObj?.optInt("prompt_tokens") ?: 0
+                val completionTokens = usageObj?.optInt("completion_tokens") ?: 0
+                val totalTokens = usageObj?.optInt("total_tokens") ?: (promptTokens + completionTokens)
+
                 val choices = responseJson.optJSONArray("choices")
                 if (choices != null && choices.length() > 0) {
                     val firstChoice = choices.getJSONObject(0)
                     val messageObj = firstChoice.optJSONObject("message")
-                    val content = messageObj?.optString("content") ?: ""
-                    val toolCallsArray = messageObj?.optJSONArray("tool_calls")
+                    var content = messageObj?.optString("content") ?: ""
+                    var reasoning = messageObj?.optString("reasoning_content")?.trim() ?: ""
 
+                    // Check for embedded <think>...</think> tags (e.g. DeepSeek-R1 / Qwen)
+                    val thinkPattern = java.util.regex.Pattern.compile("""<think>([\s\S]*?)</think>""", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    val thinkMatcher = thinkPattern.matcher(content)
+                    if (thinkMatcher.find()) {
+                        val foundThink = thinkMatcher.group(1)?.trim() ?: ""
+                        if (foundThink.isNotBlank() && reasoning.isBlank()) {
+                            reasoning = foundThink
+                        }
+                        content = content.replace(Regex("""<think>[\s\S]*?</think>""", RegexOption.IGNORE_CASE), "").trim()
+                    }
+
+                    val toolCallsArray = messageObj?.optJSONArray("tool_calls")
                     if (toolCallsArray != null && toolCallsArray.length() > 0) {
                         val sb = StringBuilder()
                         if (content.isNotBlank()) sb.append(content).append("\n\n")
@@ -281,16 +306,39 @@ class CustomEndpointClient(
                             }
                             sb.append("</tool_call>\n")
                         }
-                        return@use Result.success(sb.toString().trim())
+                        return@use Result.success(
+                            ChatCompletionResponse(
+                                text = sb.toString().trim(),
+                                reasoning = reasoning.ifBlank { null },
+                                promptTokens = promptTokens,
+                                completionTokens = completionTokens,
+                                totalTokens = totalTokens
+                            )
+                        )
                     }
 
                     if (content.isNotBlank()) {
-                        return@use Result.success(content)
+                        return@use Result.success(
+                            ChatCompletionResponse(
+                                text = content,
+                                reasoning = reasoning.ifBlank { null },
+                                promptTokens = promptTokens,
+                                completionTokens = completionTokens,
+                                totalTokens = totalTokens
+                            )
+                        )
                     }
 
-                    val reasoning = messageObj?.optString("reasoning_content") ?: ""
                     if (reasoning.isNotBlank()) {
-                        return@use Result.success(reasoning)
+                        return@use Result.success(
+                            ChatCompletionResponse(
+                                text = reasoning,
+                                reasoning = reasoning,
+                                promptTokens = promptTokens,
+                                completionTokens = completionTokens,
+                                totalTokens = totalTokens
+                            )
+                        )
                     }
                 }
 
@@ -304,6 +352,14 @@ class CustomEndpointClient(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    suspend fun sendChatCompletion(
+        messages: List<CustomChatMessage>,
+        config: AiConfig,
+        temperature: Double = 0.2
+    ): Result<String> {
+        return sendChatCompletionDetails(messages, config, temperature).map { it.text }
     }
 
     private fun extractErrorMessage(bodyStr: String): String {

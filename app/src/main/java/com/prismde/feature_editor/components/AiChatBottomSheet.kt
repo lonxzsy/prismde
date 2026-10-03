@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddComment
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
@@ -46,6 +47,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
@@ -66,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -599,14 +602,30 @@ fun ChatMessageItem(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    // Agent Action Cards Timeline
-                    if (!isUser && message.actions.isNotEmpty()) {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                    val thinkingDetail = message.thinkingText
+                        ?: message.actions.filterIsInstance<AiAgentAction.Thinking>().firstOrNull { it.thoughtDetail != null }?.thoughtDetail
+                    val isActivelyThinking = !isUser && isRunning && isLastMessage && (currentActivity?.contains("анализ", ignoreCase = true) == true || currentActivity?.contains("размыш", ignoreCase = true) == true || currentActivity?.contains("think", ignoreCase = true) == true)
+
+                    // Thinking Card
+                    if (!isUser && (isActivelyThinking || !thinkingDetail.isNullOrBlank())) {
+                        ThinkingCard(
+                            isThinkingActive = isActivelyThinking && thinkingDetail.isNullOrBlank(),
+                            thinkingDetail = thinkingDetail,
                             modifier = Modifier.padding(bottom = 8.dp)
-                        ) {
-                            for (action in message.actions) {
-                                ActionCard(action)
+                        )
+                    }
+
+                    // Agent Action Cards Timeline (excluding thinking and token actions since handled above)
+                    if (!isUser && message.actions.isNotEmpty()) {
+                        val otherActions = message.actions.filterNot { it is AiAgentAction.Thinking || it is AiAgentAction.TokenUsageUpdated }
+                        if (otherActions.isNotEmpty()) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            ) {
+                                for (action in otherActions) {
+                                    ActionCard(action)
+                                }
                             }
                         }
                     }
@@ -629,7 +648,7 @@ fun ChatMessageItem(
                     }
 
                     // Live activity status
-                    if (!isUser && isRunning && isLastMessage && currentActivity != null) {
+                    if (!isUser && isRunning && isLastMessage && currentActivity != null && !isActivelyThinking) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(top = 8.dp)
@@ -648,6 +667,106 @@ fun ChatMessageItem(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun ThinkingCard(
+    isThinkingActive: Boolean,
+    thinkingDetail: String?,
+    modifier: Modifier = Modifier
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (isThinkingActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = !thinkingDetail.isNullOrBlank()) {
+                isExpanded = !isExpanded
+            }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    if (isThinkingActive) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(13.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.Memory,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (isThinkingActive) stringResource(R.string.ai_thinking_title)
+                               else stringResource(R.string.ai_thinking_completed),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isThinkingActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (!thinkingDetail.isNullOrBlank()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 4.dp)
+                    ) {
+                        Text(
+                            text = if (isExpanded) stringResource(R.string.ai_thinking_hide)
+                                   else stringResource(R.string.ai_thinking_show),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(2.dp))
+                        Icon(
+                            imageVector = Icons.Rounded.ArrowDropDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .rotate(if (isExpanded) 180f else 0f)
+                        )
+                    }
+                }
+            }
+
+            if (isExpanded && !thinkingDetail.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = thinkingDetail.trim(),
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

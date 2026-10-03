@@ -215,13 +215,47 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun calculateTokens(messages: List<AgentChatMessage>, attached: List<AttachedFile>): Int {
-        var tokens = 600 // System prompt estimation
-        for (att in attached) {
-            tokens += (att.sizeBytes / 4).toInt().coerceAtMost(3500)
+    private fun calculateTokens(messages: List<AgentChatMessage>, attached: List<AttachedFile>, project: Project? = null): Int {
+        val lastServerMsg = messages.lastOrNull { !it.isUser && it.serverTokens > 0 }
+        if (lastServerMsg != null && lastServerMsg.serverTokens > 0) {
+            val subsequent = messages.takeLastWhile { it != lastServerMsg }
+            var delta = 0
+            for (m in subsequent) {
+                delta += TokenEstimator.estimateTokens(m.text)
+            }
+            return lastServerMsg.serverTokens + delta
         }
+
+        var tokens = 750 // Base system prompt
+        if (project != null && project.rootDir.exists()) {
+            val projFiles = engine.listProjectRelativeFiles(project.rootDir)
+            for (f in projFiles) {
+                tokens += (f.length / 3).coerceAtLeast(1)
+            }
+            val skills = com.prismde.feature_build.engine.ProjectSkillManager.loadProjectSkills(project.rootDir)
+            for (s in skills) {
+                tokens += TokenEstimator.estimateTokens(s.content)
+            }
+        }
+
+        for (att in attached) {
+            tokens += (att.sizeBytes / 3.5).toInt().coerceAtLeast(1)
+        }
+
         for (m in messages) {
             tokens += TokenEstimator.estimateTokens(m.text)
+            if (!m.thinkingText.isNullOrBlank()) {
+                tokens += TokenEstimator.estimateTokens(m.thinkingText)
+            }
+            for (action in m.actions) {
+                when (action) {
+                    is AiAgentAction.ReadFile -> tokens += (action.lineCount * 6)
+                    is AiAgentAction.WriteFile -> tokens += TokenEstimator.estimateTokens(action.content)
+                    is AiAgentAction.BuildProject -> tokens += 150
+                    is AiAgentAction.Thinking -> if (action.thoughtDetail != null) tokens += TokenEstimator.estimateTokens(action.thoughtDetail)
+                    else -> {}
+                }
+            }
         }
         return tokens
     }
@@ -261,7 +295,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             isRunning = false,
             currentActivity = null,
             errorMessage = null,
-            estimatedTokensUsed = calculateTokens(emptyList(), _uiState.value.attachedFiles)
+            estimatedTokensUsed = calculateTokens(emptyList(), _uiState.value.attachedFiles, project)
         )
         if (project != null) {
             persistCurrentSession(project)
@@ -303,12 +337,14 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             currentActivity = null,
             errorMessage = null,
             modelMaxTokens = maxTokens,
-            estimatedTokensUsed = calculateTokens(currentMessages, attached)
+            estimatedTokensUsed = calculateTokens(currentMessages, attached, project)
         )
 
         activeJob = viewModelScope.launch {
             val isRu = java.util.Locale.getDefault().language == "ru"
             val actionsAcc = mutableListOf<AiAgentAction>()
+            var currentThinkingText: String? = null
+            var lastServerTokens = 0
 
             val result = engine.executeTask(
                 userPrompt = trimmed,
@@ -320,6 +356,18 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                 buildConfig = buildConfig
             ) { action ->
                 actionsAcc.add(action)
+
+                when (action) {
+                    is AiAgentAction.Thinking -> {
+                        if (action.thoughtDetail != null) {
+                            currentThinkingText = action.thoughtDetail
+                        }
+                    }
+                    is AiAgentAction.TokenUsageUpdated -> {
+                        lastServerTokens = action.totalTokens
+                    }
+                    else -> {}
+                }
 
                 // Real-time status update for UI
                 val statusText = when (action) {
@@ -334,21 +382,27 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                     is AiAgentAction.ListFiles -> if (isRu) "Анализ файлов проекта (${action.fileCount} файлов)..." else "Scanning project structure (${action.fileCount} files)..."
                     is AiAgentAction.BuildProject -> if (isRu) "Сборка проекта: ${action.status}..." else "Building project: ${action.status}..."
                     is AiAgentAction.ContextCompacted -> if (isRu) "Контекст сжат (~${action.savedTokens} токенов)..." else "Context compacted (~${action.savedTokens} tokens)..."
+                    is AiAgentAction.TokenUsageUpdated -> null
                     is AiAgentAction.FinalAnswer -> null
                     is AiAgentAction.Error -> action.message
                 }
 
-                // Update assistant message with live actions list
+                // Update assistant message with live actions list, thinking and tokens
                 val updatedMessages = _uiState.value.messages.map { msg ->
                     if (msg.id == assistantMsgId) {
-                        msg.copy(actions = actionsAcc.toList())
+                        msg.copy(
+                            actions = actionsAcc.toList(),
+                            thinkingText = currentThinkingText,
+                            serverTokens = lastServerTokens
+                        )
                     } else msg
                 }
 
+                val currentUsed = if (lastServerTokens > 0) lastServerTokens else calculateTokens(updatedMessages, attached, project)
                 _uiState.value = _uiState.value.copy(
                     messages = updatedMessages,
                     currentActivity = statusText,
-                    estimatedTokensUsed = calculateTokens(updatedMessages, attached)
+                    estimatedTokensUsed = currentUsed
                 )
             }
 
@@ -369,7 +423,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             if (msg.id == assistantMsgId) {
                                 msg.copy(
                                     text = partial,
-                                    actions = actionsAcc.toList()
+                                    actions = actionsAcc.toList(),
+                                    thinkingText = currentThinkingText,
+                                    serverTokens = lastServerTokens
                                 )
                             } else msg
                         }
@@ -385,15 +441,18 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                     if (msg.id == assistantMsgId) {
                         msg.copy(
                             text = fullText,
-                            actions = actionsAcc.toList()
+                            actions = actionsAcc.toList(),
+                            thinkingText = currentThinkingText,
+                            serverTokens = lastServerTokens
                         )
                     } else msg
                 }
+                val finalUsed = if (lastServerTokens > 0) lastServerTokens else calculateTokens(finalMessages, attached, project)
                 _uiState.value = _uiState.value.copy(
                     messages = finalMessages,
                     isRunning = false,
                     currentActivity = null,
-                    estimatedTokensUsed = calculateTokens(finalMessages, attached)
+                    estimatedTokensUsed = finalUsed
                 )
 
                 // Save session state to disk

@@ -48,6 +48,8 @@ fun BuildPresetDialog(
     var minApiStr by remember { mutableStateOf(initialConfig.minApiLevel.toString()) }
     var customCFlags by remember { mutableStateOf(initialConfig.customCFlags) }
     var customLdFlags by remember { mutableStateOf(initialConfig.customLdFlags) }
+    var mavenGoals by remember { mutableStateOf(initialConfig.mavenGoals) }
+    var mavenCustomFlags by remember { mutableStateOf(initialConfig.mavenCustomFlags) }
 
     val scrollState = rememberScrollState()
 
@@ -86,7 +88,8 @@ fun BuildPresetDialog(
                     ProjectType.AUTO_DETECT to stringResource(R.string.type_auto_detect),
                     ProjectType.PURE_JNI_SO to stringResource(R.string.type_jni_so),
                     ProjectType.CMAKE to stringResource(R.string.type_cmake),
-                    ProjectType.SINGLE_FILE_EXECUTABLE to stringResource(R.string.type_single_file)
+                    ProjectType.SINGLE_FILE_EXECUTABLE to stringResource(R.string.type_single_file),
+                    ProjectType.MAVEN to stringResource(R.string.type_maven)
                 ).forEach { (type, label) ->
                     Row(
                         modifier = Modifier
@@ -153,6 +156,28 @@ fun BuildPresetDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Maven Goals
+                OutlinedTextField(
+                    value = mavenGoals,
+                    onValueChange = { mavenGoals = it },
+                    label = { Text(if (isRu) "Maven цели (Goals, напр: package)" else "Maven Goals (e.g.: package)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Maven Flags
+                OutlinedTextField(
+                    value = mavenCustomFlags,
+                    onValueChange = { mavenCustomFlags = it },
+                    label = { Text(if (isRu) "Maven флаги (напр: -DskipTests)" else "Maven Flags (e.g.: -DskipTests)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
@@ -167,7 +192,9 @@ fun BuildPresetDialog(
                             projectType = selectedProjectType,
                             minApiLevel = api,
                             customCFlags = customCFlags,
-                            customLdFlags = customLdFlags
+                            customLdFlags = customLdFlags,
+                            mavenGoals = mavenGoals,
+                            mavenCustomFlags = mavenCustomFlags
                         )
                     )
                 },

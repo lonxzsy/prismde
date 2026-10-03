@@ -29,7 +29,7 @@ class BuildProcessRunner {
 
     suspend fun runBuild(
         project: Project,
-        ndk: NdkVersion,
+        ndk: NdkVersion?,
         config: BuildConfiguration
     ): Boolean = withContext(Dispatchers.IO) {
         val detectedType = if (config.projectType == ProjectType.AUTO_DETECT) {
@@ -39,6 +39,31 @@ class BuildProcessRunner {
         }
 
         val isRu = java.util.Locale.getDefault().language == "ru"
+
+        if (detectedType == ProjectType.MAVEN) {
+            _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System (Maven) ==="))
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "Тип проекта: MAVEN (pom.xml)" else "Project type: MAVEN (pom.xml)"))
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "Цели (Goals): ${config.mavenGoals} ${config.mavenCustomFlags}" else "Goals: ${config.mavenGoals} ${config.mavenCustomFlags}"))
+
+            val artifactFile = buildMaven(project, config)
+            val success = artifactFile != null && artifactFile.exists()
+            val exitCode = if (success) 0 else 1
+            if (success) {
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "✔ Сборка Maven успешно завершена! Создан артефакт: ${artifactFile.absolutePath}" else "✔ Maven build completed successfully! Generated artifact: ${artifactFile.absolutePath}"))
+            } else {
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки Maven. Проверьте вывод и карточки ошибок выше." else "✖ Maven build failed. Check the output and error diagnostics above.", isError = true))
+            }
+            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+            return@withContext success
+        }
+
+        if (ndk == null || !ndk.isInstalled) {
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка: NDK не установлен для сборки C/C++ проекта." else "✖ Error: NDK is not installed for building C/C++ project.", isError = true))
+            _events.emit(BuildOutputEvent.Completed(1, false, null))
+            return@withContext false
+        }
+
         _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System ==="))
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Тип проекта: $detectedType" else "Project type: $detectedType"))
@@ -249,6 +274,94 @@ class BuildProcessRunner {
         return if (success && targetExe.exists()) targetExe else null
     }
 
+    private suspend fun buildMaven(
+        project: Project,
+        config: BuildConfiguration
+    ): File? {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+
+        // 1. Check for Maven wrapper (mvnw) in project root
+        val mvnwFile = File(project.rootDir, "mvnw")
+        val mvnwCmd = File(project.rootDir, "mvnw.cmd")
+
+        val (executableCmd, workingDir, extraBinDir) = when {
+            mvnwFile.exists() -> {
+                try { mvnwFile.setExecutable(true, false) } catch (_: Throwable) {}
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется Maven Wrapper (./mvnw)..." else "Using Maven Wrapper (./mvnw)..."))
+                Triple(listOf("/system/bin/sh", mvnwFile.absolutePath), project.rootDir, null)
+            }
+            mvnwCmd.exists() && System.getProperty("os.name")?.lowercase()?.contains("windows") == true -> {
+                _events.emit(BuildOutputEvent.LogLine("Using Maven Wrapper (mvnw.cmd)..."))
+                Triple(listOf("cmd.exe", "/c", mvnwCmd.absolutePath), project.rootDir, null)
+            }
+            else -> {
+                // Search installed mvn binaries in common Termux / system paths
+                val candidatePaths = listOf(
+                    "/data/data/com.termux/files/usr/bin/mvn",
+                    "/data/user/0/com.termux/files/usr/bin/mvn",
+                    "/data/data/com.termux/files/usr/share/maven/bin/mvn",
+                    "/system/bin/mvn",
+                    "/system/xbin/mvn"
+                )
+                val found = candidatePaths.map { File(it) }.firstOrNull { it.exists() }
+                if (found != null) {
+                    try { found.setExecutable(true, false) } catch (_: Throwable) {}
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется установленный Maven: ${found.absolutePath}" else "Using installed Maven: ${found.absolutePath}"))
+                    Triple(listOf("/system/bin/sh", found.absolutePath), project.rootDir, found.parentFile)
+                } else {
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "Поиск mvn в системном PATH..." else "Searching for mvn in system PATH..."))
+                    Triple(listOf("mvn"), project.rootDir, null)
+                }
+            }
+        }
+
+        val goals = config.mavenGoals.split(" ").filter { it.isNotBlank() }.ifEmpty { listOf("package") }
+        val flags = config.mavenCustomFlags.split(" ").filter { it.isNotBlank() }
+
+        val command = mutableListOf<String>()
+        command.addAll(executableCmd)
+        command.addAll(goals)
+        command.addAll(flags)
+
+        // Add batch mode flag to avoid interactive prompt freezes in mobile background process
+        if (!command.contains("-B") && !command.contains("--batch-mode")) {
+            command.add("-B")
+        }
+
+        _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Maven:" else "Executing Maven command:"))
+        _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
+
+        val success = executeProcess(command, workingDir, extraBinDir)
+
+        // Find resulting artifact in target/ directory (.jar, .aar, .war, .apk)
+        val targetDir = File(project.rootDir, "target")
+        if (!targetDir.exists()) {
+            if (!success) {
+                _events.emit(
+                    BuildOutputEvent.LogLine(
+                        if (isRu) "Подсказка: Для сборки без mvnw установите Maven в Termux (pkg install maven openjdk-17) или добавьте wrapper mvnw в корень проекта."
+                        else "Hint: For building without mvnw, install Maven in Termux (pkg install maven openjdk-17) or add wrapper mvnw to project root.",
+                        isError = true
+                    )
+                )
+            }
+            return null
+        }
+
+        val artifacts = targetDir.walkTopDown().maxDepth(3).filter { file ->
+            file.isFile &&
+                    (file.extension.equals("jar", ignoreCase = true) ||
+                     file.extension.equals("aar", ignoreCase = true) ||
+                     file.extension.equals("war", ignoreCase = true) ||
+                     file.extension.equals("apk", ignoreCase = true)) &&
+                    !file.name.endsWith("-sources.jar", ignoreCase = true) &&
+                    !file.name.endsWith("-javadoc.jar", ignoreCase = true) &&
+                    !file.name.startsWith("original-", ignoreCase = true)
+        }.toList()
+
+        return artifacts.maxByOrNull { it.lastModified() }
+    }
+
     private suspend fun executeProcess(
         command: List<String>,
         workingDir: File,
@@ -261,9 +374,30 @@ class BuildProcessRunner {
 
             val env = processBuilder.environment()
             val existingPath = env["PATH"] ?: "/system/bin"
+            val termuxBin = "/data/data/com.termux/files/usr/bin"
+            val pathEntries = mutableListOf<String>()
             if (extraBinDir != null && extraBinDir.exists()) {
-                env["PATH"] = "${extraBinDir.absolutePath}:$existingPath"
+                pathEntries.add(extraBinDir.absolutePath)
             }
+            if (File(termuxBin).exists()) {
+                pathEntries.add(termuxBin)
+            }
+            if (pathEntries.isNotEmpty()) {
+                env["PATH"] = pathEntries.joinToString(":") + ":$existingPath"
+            }
+
+            // Auto-detect JAVA_HOME if not already provided
+            if (env["JAVA_HOME"].isNullOrBlank()) {
+                val jvmCandidates = listOf(
+                    File("/data/data/com.termux/files/usr/lib/jvm/openjdk-17"),
+                    File("/data/data/com.termux/files/usr/lib/jvm/default-jvm"),
+                    File("/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk")
+                )
+                jvmCandidates.firstOrNull { it.exists() }?.let {
+                    env["JAVA_HOME"] = it.absolutePath
+                }
+            }
+
             val tempDir = File(workingDir, ".prism_tmp").also { it.mkdirs() }
             try {
                 tempDir.setReadable(true, false)

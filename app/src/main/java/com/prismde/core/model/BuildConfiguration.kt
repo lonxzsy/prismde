@@ -26,7 +26,8 @@ enum class ProjectType {
     AUTO_DETECT,
     PURE_JNI_SO,             // Project with jni/ folder building .so only
     CMAKE,                   // CMakeLists.txt project
-    SINGLE_FILE_EXECUTABLE   // Single .cpp or .c file executable
+    SINGLE_FILE_EXECUTABLE,  // Single .cpp or .c file executable
+    MAVEN                    // pom.xml / mvnw Java or Android project
 }
 
 data class BuildConfiguration(
@@ -37,5 +38,7 @@ data class BuildConfiguration(
     val projectType: ProjectType = ProjectType.AUTO_DETECT,
     val customCFlags: String = "-Wall -fexceptions -frtti",
     val customLdFlags: String = "-llog",
-    val activeNdkTag: String = "r26c"
+    val activeNdkTag: String = "r26c",
+    val mavenGoals: String = "package",
+    val mavenCustomFlags: String = "-DskipTests"
 )
