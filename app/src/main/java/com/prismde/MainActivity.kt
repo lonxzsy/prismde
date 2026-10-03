@@ -82,6 +82,9 @@ class MainActivity : ComponentActivity() {
             requestAppPermissions()
         }
 
+        // Check for app updates automatically on start
+        updateViewModel.checkForUpdates(manual = false)
+
         val settingsRepo = SettingsRepository(applicationContext)
 
         // If NDK is already installed, mark setup completed to prevent any flash
@@ -254,6 +257,16 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!updateViewModel.uiState.value.isChecking &&
+            !updateViewModel.uiState.value.isDownloading &&
+            updateViewModel.uiState.value.releaseInfo == null
+        ) {
+            updateViewModel.checkForUpdates(manual = false)
         }
     }
 }

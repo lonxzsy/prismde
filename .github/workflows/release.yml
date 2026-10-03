@@ -99,33 +99,11 @@ jobs:
           SHA="${{ steps.apk_info.outputs.apk_sha256 }}"
           SIZE="${{ steps.apk_info.outputs.apk_size }}"
           
-          echo "## 📱 PrismDE $TAG" > release_notes.md
+          echo "✨ Обновление $TAG / Update $TAG" > release_notes.md
           echo "" >> release_notes.md
-          echo "### 📦 Установка / Installation:" >> release_notes.md
-          echo "Скачайте файл \`app-release.apk\` ниже и установите на Android устройство (ARM64 & x86_64)." >> release_notes.md
-          echo "Download \`app-release.apk\` below and install on your Android device (ARM64 & x86_64)." >> release_notes.md
+          git log -1 --pretty=%s >> release_notes.md
           echo "" >> release_notes.md
-          echo "---" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### ✨ Что нового / What's New:" >> release_notes.md
-          git log -1 --pretty=%B >> release_notes.md
-          echo "" >> release_notes.md
-          echo "---" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### 🚀 Основные возможности PrismDE / Key Features:" >> release_notes.md
-          echo "- ⚡ **C/C++ IDE для Android**: компиляция нативных \`.so\` библиотек и программ прямо на телефоне." >> release_notes.md
-          echo "- 🛠️ **Встроенный NDK Clang 17**: поддержка \`ndk-build\`, \`Android.mk\`, \`CMakeLists.txt\` и компиляции исходников." >> release_notes.md
-          echo "- 🤖 **AI-ассистент**: анализ ошибок и исправление кода с помощью Google Antigravity & AI Studio (Gemini 3, Claude, GPT)." >> release_notes.md
-          echo "- 🔍 **Оффлайн-диагностика**: мгновенные подсказки и исправления Clang ошибок без интернета." >> release_notes.md
-          echo "- 🌍 **Двуязычный интерфейс**: автоматическая поддержка Русского и Английского языков." >> release_notes.md
-          echo "- 🎨 **Material You**: динамическая адаптивная цветовая тема." >> release_notes.md
-          echo "" >> release_notes.md
-          echo "---" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### 🔒 Контрольная сумма / Checksum:" >> release_notes.md
-          echo "- **File**: \`app-release.apk\`" >> release_notes.md
-          echo "- **Size**: $SIZE bytes" >> release_notes.md
-          echo "- **SHA-256**: \`$SHA\`" >> release_notes.md
+          echo "📦 app-release.apk ($SIZE байт)" >> release_notes.md
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
