@@ -670,21 +670,17 @@ class BuildProcessRunner {
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)
 
-            // Collapse diverted platform dirs (android-34-2, android-34-ext7, ...) before AGP looks them up
+            val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
             val platformsDir = File(sdkDir, "platforms")
+            BuildToolInstaller.purgeBrokenPlatform(platformsDir, requiredApi)
             BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
 
-            // Detect compileSdk requested by the project (defaults to 34)
-            val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
-
-            // Ensure project build scripts do not reference unsupported ABIs (e.g. armeabi) and specify ndkVersion
             BuildToolInstaller.ensureProjectAbiFilters(
                 project.rootDir,
                 config.selectedAbi.abiString,
                 effectiveNdk?.getPkgRevision() ?: "26.2.11394342"
             )
 
-            // Auto-install the Android SDK Platform required by the project if missing
             if (!BuildToolInstaller.isAndroidPlatformInstalled(context, requiredApi)) {
                 _events.emit(BuildOutputEvent.LogLine(
                     if (isRu) "ℹ Android SDK Platform $requiredApi (android.jar) не найден. Автоматическая загрузка (~58 МБ)..."
@@ -822,6 +818,9 @@ class BuildProcessRunner {
         if (!command.any { it.startsWith("-Pandroid.ndkVersion") }) {
             command.add("-Pandroid.ndkVersion=$ndkRev")
         }
+        if (!command.any { it.startsWith("-Pandroid.builder.sdkDownload") }) {
+            command.add("-Pandroid.builder.sdkDownload=false")
+        }
         if (!command.any { it.startsWith("-Pandroid.suppressUnsupportedCompileSdk") }) {
             val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
             command.add("-Pandroid.suppressUnsupportedCompileSdk=$requiredApi")
@@ -831,6 +830,13 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
         val success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
+
+        if (context != null) {
+            try {
+                val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
+                BuildToolInstaller.normalizeAllSdkPlatforms(File(sdkDir, "platforms"))
+            } catch (_: Throwable) {}
+        }
 
         // Search for generated APK, AAR, or JAR in build outputs
         val artifacts = project.rootDir.walkTopDown().maxDepth(6).filter { file ->

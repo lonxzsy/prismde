@@ -429,6 +429,7 @@ object BuildToolInstaller {
                 sb.appendLine("org.gradle.vfs.watch=false")
                 sb.appendLine("org.gradle.console=plain")
                 sb.appendLine("android.suppressUnsupportedCompileSdk=34,35")
+                sb.appendLine("android.builder.sdkDownload=false")
                 if (!javaHome.isNullOrBlank()) {
                     sb.appendLine("org.gradle.java.home=${javaHome.replace("\\", "/")}")
                 }
@@ -454,6 +455,10 @@ object BuildToolInstaller {
                 }
                 if (!propsText.contains("android.suppressUnsupportedCompileSdk")) {
                     propsText += "\nandroid.suppressUnsupportedCompileSdk=34,35\n"
+                    modified = true
+                }
+                if (!propsText.contains("android.builder.sdkDownload")) {
+                    propsText += "\nandroid.builder.sdkDownload=false\n"
                     modified = true
                 }
                 if (!propsText.contains("org.gradle.java.home") && !javaHome.isNullOrBlank()) {
@@ -829,65 +834,89 @@ object BuildToolInstaller {
         }
 
         if (targetPlatformDir.exists()) {
-            // 2. Ensure source.properties exists and strips any AndroidVersion.ExtensionLevel to match target hash 'android-34'
+            // 2. source.properties must NOT contain ExtensionLevel, otherwise the hash becomes android-XX-extN
             val propFile = File(targetPlatformDir, "source.properties")
             val currentProps = if (propFile.exists()) {
                 try { propFile.readLines() } catch (_: Throwable) { emptyList() }
             } else emptyList()
 
             val sanitizedLines = currentProps.filterNot { it.contains("ExtensionLevel", ignoreCase = true) }.toMutableList()
-            if (!sanitizedLines.any { it.startsWith("AndroidVersion.ApiLevel") }) {
-                sanitizedLines.add("AndroidVersion.ApiLevel=$apiLevel")
+            fun upsert(prefix: String, line: String) {
+                val idx = sanitizedLines.indexOfFirst { it.trim().startsWith(prefix) }
+                if (idx >= 0) sanitizedLines[idx] = line else sanitizedLines.add(line)
             }
-            if (!sanitizedLines.any { it.startsWith("Pkg.Desc") }) {
-                sanitizedLines.add("Pkg.Desc=Android SDK Platform $apiLevel")
-            }
-            if (!sanitizedLines.any { it.startsWith("Pkg.Revision") }) {
-                sanitizedLines.add("Pkg.Revision=3")
-            }
-            if (!sanitizedLines.any { it.startsWith("Platform.Version") }) {
-                sanitizedLines.add("Platform.Version=14")
-            }
-            if (!sanitizedLines.any { it.startsWith("Layoutlib.Api") }) {
-                sanitizedLines.add("Layoutlib.Api=15")
-            }
+            upsert("AndroidVersion.ApiLevel", "AndroidVersion.ApiLevel=$apiLevel")
+            upsert("Pkg.Desc", "Pkg.Desc=Android SDK Platform $apiLevel")
+            upsert("Pkg.Revision", "Pkg.Revision=3")
+            upsert("Platform.Version", "Platform.Version=14")
+            upsert("Layoutlib.Api", "Layoutlib.Api=15")
             try {
                 propFile.writeText(sanitizedLines.joinToString("\n") + "\n")
                 propFile.setReadable(true, false)
             } catch (_: Throwable) {}
 
-            // 3. Ensure package.xml exists so AGP SDK Manager recognizes package as installed
+            // 3. Always rewrite package.xml. A partial/hand-written one makes sdkmanager
+            // treat the folder as occupied-but-not-installed and divert into android-XX-N.
             val packageXml = File(targetPlatformDir, "package.xml")
-            if (!packageXml.exists() || packageXml.length() == 0L) {
-                try {
-                    packageXml.writeText(
-                        """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns8="http://schemas.android.com/sdk/android/repo/repository2/02">
+            try {
+                packageXml.writeText(
+                    """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns3="http://schemas.android.com/repository/android/common/01" xmlns:ns4="http://schemas.android.com/repository/android/generic/01" xmlns:ns5="http://schemas.android.com/repository/android/generic/02" xmlns:ns6="http://schemas.android.com/sdk/android/repo/addon2/01" xmlns:ns7="http://schemas.android.com/sdk/android/repo/addon2/02" xmlns:ns8="http://schemas.android.com/sdk/android/repo/addon2/03" xmlns:ns9="http://schemas.android.com/sdk/android/repo/repository2/01" xmlns:ns10="http://schemas.android.com/sdk/android/repo/repository2/02" xmlns:ns11="http://schemas.android.com/sdk/android/repo/repository2/03" xmlns:ns12="http://schemas.android.com/sdk/android/repo/sys-img2/03" xmlns:ns13="http://schemas.android.com/sdk/android/repo/sys-img2/02" xmlns:ns14="http://schemas.android.com/sdk/android/repo/sys-img2/01">
+    <license id="android-sdk-license" type="text">Terms and Conditions</license>
     <localPackage path="platforms;android-$apiLevel" obsolete="false">
-        <type-details xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="ns8:platformDetailsType">
+        <type-details xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="ns11:platformDetailsType">
             <api-level>$apiLevel</api-level>
             <codename></codename>
             <layoutlib api="15"/>
         </type-details>
         <revision>
             <major>3</major>
+            <minor>0</minor>
+            <micro>0</micro>
         </revision>
         <display-name>Android SDK Platform $apiLevel</display-name>
+        <uses-license ref="android-sdk-license"/>
     </localPackage>
 </ns2:repository>
 """.trimIndent()
+                )
+                packageXml.setReadable(true, false)
+            } catch (_: Throwable) {}
+
+            val buildProp = File(targetPlatformDir, "build.prop")
+            if (!buildProp.exists() || buildProp.length() == 0L) {
+                try {
+                    buildProp.writeText(
+                        "ro.build.version.sdk=$apiLevel\nro.build.version.release=14\n"
                     )
-                    packageXml.setReadable(true, false)
                 } catch (_: Throwable) {}
             }
 
-            // 4. Ensure android.jar has readable permissions
             val androidJar = File(targetPlatformDir, "android.jar")
             if (androidJar.exists()) {
                 try {
                     androidJar.setReadable(true, false)
-                    try { android.system.Os.chmod(androidJar.absolutePath, 420) } catch (_: Throwable) {} // 0644
+                    try { android.system.Os.chmod(androidJar.absolutePath, 420) } catch (_: Throwable) {}
                 } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    /**
+     * Deletes a broken canonical platform dir (no usable android.jar) and every diverted
+     * android-XX-N sibling. sdkmanager otherwise refuses to install into android-XX
+     * ("already exists") and writes android-XX-2, which DefaultSdkLoader cannot resolve.
+     */
+    fun purgeBrokenPlatform(platformsDir: File, apiLevel: Int) {
+        if (!platformsDir.exists()) return
+        val target = File(platformsDir, "android-$apiLevel")
+        val jar = File(target, "android.jar")
+        if (target.exists() && (!jar.exists() || jar.length() < 100_000L)) {
+            try { target.deleteRecursively() } catch (_: Throwable) {}
+        }
+        platformsDir.listFiles()?.forEach { f ->
+            if (f.isDirectory && f != target && f.name.startsWith("android-$apiLevel-")) {
+                try { f.deleteRecursively() } catch (_: Throwable) {}
             }
         }
     }
