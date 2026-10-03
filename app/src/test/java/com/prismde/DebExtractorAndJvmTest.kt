@@ -167,4 +167,22 @@ class DebExtractorAndJvmTest {
         val needUpdateAfter = !marker.exists() || marker.readText().trim() != currentVersion
         assertFalse("Should not need update once marker is set", needUpdateAfter)
     }
+
+    @Test
+    fun testMavenLocalRepositoryConfiguration() {
+        val homeDir = tempFolder.newFolder("home_test")
+        val m2Dir = File(homeDir, ".m2").also { it.mkdirs() }
+        val m2RepoDir = File(m2Dir, "repository").also { it.mkdirs() }
+
+        val settingsXml = File(m2Dir, "settings.xml")
+        settingsXml.writeText(
+            "<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\">\n" +
+            "  <localRepository>${m2RepoDir.absolutePath}</localRepository>\n" +
+            "</settings>"
+        )
+
+        assertTrue(settingsXml.exists())
+        assertTrue(settingsXml.readText().contains(m2RepoDir.absolutePath))
+        assertTrue(m2RepoDir.exists() && m2RepoDir.isDirectory)
+    }
 }

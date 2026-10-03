@@ -473,6 +473,40 @@ class BuildProcessRunner {
             File(project.rootDir, ".prism_tmp").also { it.mkdirs() }
         }
 
+        // Configure private app HOME and local repository directory
+        val homeDir = if (context != null) {
+            File(context.filesDir, "home").also { it.mkdirs() }
+        } else {
+            File(project.rootDir, ".prism_home").also { it.mkdirs() }
+        }
+        val m2Dir = File(homeDir, ".m2").also { it.mkdirs() }
+        val m2RepoDir = File(m2Dir, "repository").also { it.mkdirs() }
+        try {
+            homeDir.setReadable(true, false)
+            homeDir.setWritable(true, false)
+            homeDir.setExecutable(true, false)
+            m2Dir.setReadable(true, false)
+            m2Dir.setWritable(true, false)
+            m2Dir.setExecutable(true, false)
+            m2RepoDir.setReadable(true, false)
+            m2RepoDir.setWritable(true, false)
+            m2RepoDir.setExecutable(true, false)
+        } catch (_: Throwable) {}
+
+        // Ensure user settings.xml explicitly directs localRepository into app sandbox
+        val userSettingsFile = File(m2Dir, "settings.xml")
+        if (!userSettingsFile.exists()) {
+            try {
+                userSettingsFile.writeText(
+                    "<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\"\n" +
+                    "  xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
+                    "  xsi:schemaLocation=\"http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd\">\n" +
+                    "  <localRepository>${m2RepoDir.absolutePath}</localRepository>\n" +
+                    "</settings>"
+                )
+            } catch (_: Throwable) {}
+        }
+
         // Ensure JDK runtime dependencies (libz.so.1, libandroid-shmem, libandroid-spawn, libiconv) are in place
         if (context != null) {
             BuildToolInstaller.ensureJdkRuntimeLibraries(context)
@@ -506,10 +540,13 @@ class BuildProcessRunner {
         command.addAll(flags)
 
         // Essential Android JVM system properties:
-        // 1. Disable Jansi JNI native library extraction (avoids missing libc.so.6 on Android)
-        // 2. Move java.io.tmpdir to internal app cache
-        // 3. Disable CompressedOops to prevent Tagged Pointers truncation crash on Android 11+ (ARM64)
+        // 1. Point user.home and maven.repo.local to writable internal app storage
+        // 2. Disable Jansi JNI native library extraction (avoids missing libc.so.6 on Android)
+        // 3. Move java.io.tmpdir to internal app cache
+        // 4. Disable CompressedOops to prevent Tagged Pointers truncation crash on Android 11+ (ARM64)
         val jvmFlags = listOf(
+            "-Duser.home=${homeDir.absolutePath}",
+            "-Dmaven.repo.local=${m2RepoDir.absolutePath}",
             "-Dlibrary.jansi.path=",
             "-Djansi.native=false",
             "-Djansi.mode=strip",
@@ -792,12 +829,60 @@ class BuildProcessRunner {
             env["TMPDIR"] = tempDir.absolutePath
             env["NDK_ANDROID_TMPDIR"] = tempDir.absolutePath
             env["TEMP"] = tempDir.absolutePath
-            val jvmOpts = "-Dlibrary.jansi.path= -Djansi.native=false -Djansi.mode=strip -Djansi.passthrough=true -Dstyle.color=never -Dmaven.color=false -Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -XX:-UseCompressedOops -XX:-UseCompressedClassPointers"
+            // Configure private app HOME and local repository directory
+            val homeDir = if (context != null) {
+                File(context.filesDir, "home").also { it.mkdirs() }
+            } else {
+                File(workingDir, ".prism_home").also { it.mkdirs() }
+            }
+            val m2Dir = File(homeDir, ".m2").also { it.mkdirs() }
+            val m2RepoDir = File(m2Dir, "repository").also { it.mkdirs() }
+            val gradleHomeDir = File(homeDir, ".gradle").also { it.mkdirs() }
+            try {
+                homeDir.setReadable(true, false)
+                homeDir.setWritable(true, false)
+                homeDir.setExecutable(true, false)
+                m2Dir.setReadable(true, false)
+                m2Dir.setWritable(true, false)
+                m2Dir.setExecutable(true, false)
+                m2RepoDir.setReadable(true, false)
+                m2RepoDir.setWritable(true, false)
+                m2RepoDir.setExecutable(true, false)
+                gradleHomeDir.setReadable(true, false)
+                gradleHomeDir.setWritable(true, false)
+                gradleHomeDir.setExecutable(true, false)
+            } catch (_: Throwable) {}
+
+            env["HOME"] = homeDir.absolutePath
+            env["USERPROFILE"] = homeDir.absolutePath
+            env["GRADLE_USER_HOME"] = gradleHomeDir.absolutePath
+
+            val mvnHome = context?.let { BuildToolInstaller.getMavenHomeDir(it) }
+            if (mvnHome != null && mvnHome.exists()) {
+                env["M2_HOME"] = mvnHome.absolutePath
+                env["MAVEN_HOME"] = mvnHome.absolutePath
+                val settingsXml = File(mvnHome, "conf/settings.xml")
+                if (settingsXml.exists()) {
+                    try {
+                        val content = settingsXml.readText()
+                        if (!content.contains("<localRepository>${m2RepoDir.absolutePath}</localRepository>")) {
+                            val patched = if (content.contains("<localRepository>")) {
+                                content.replace(Regex("<localRepository>.*?</localRepository>"), "<localRepository>${m2RepoDir.absolutePath}</localRepository>")
+                            } else {
+                                content.replace("<settings", "<settings>\n  <localRepository>${m2RepoDir.absolutePath}</localRepository>")
+                            }
+                            settingsXml.writeText(patched)
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+
+            val jvmOpts = "-Duser.home=${homeDir.absolutePath} -Dmaven.repo.local=${m2RepoDir.absolutePath} -Dlibrary.jansi.path= -Djansi.native=false -Djansi.mode=strip -Djansi.passthrough=true -Dstyle.color=never -Dmaven.color=false -Djava.io.tmpdir=${tempDir.absolutePath} -Djansi.tmpdir=${tempDir.absolutePath} -XX:-UseCompressedOops -XX:-UseCompressedClassPointers"
             env["JAVA_TOOL_OPTIONS"] = jvmOpts
             env["MAVEN_OPTS"] = jvmOpts
+            env["MAVEN_ARGS"] = "-Duser.home=${homeDir.absolutePath} -Dmaven.repo.local=${m2RepoDir.absolutePath}"
             env["MALLOC_CHECK_"] = "0"
             env["SCUDO_OPTIONS"] = "DeallocationTypeMismatch=false:DeleteSizeMismatch=false:QuarantineSizeKb=0"
-            env["HOME"] = workingDir.absolutePath
 
             // Configure LD_LIBRARY_PATH so child processes (java, ndk-build, clang) locate their shared libraries
             val jdkHome = effectiveJavaHome ?: (context?.let { BuildToolInstaller.getJdkHomeDir(it) })
