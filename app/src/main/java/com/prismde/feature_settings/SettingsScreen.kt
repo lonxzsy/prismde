@@ -156,7 +156,7 @@ fun SettingsScreen(
         BuildToolInstaller.isJdkInstalled(context)
     }
     val javaInfo = remember(customJavaHomeInput, mavenRefreshTrigger) {
-        BuildToolInstaller.detectJavaEnvironment(context)
+        BuildToolInstaller.detectJavaEnvironment(context, customJavaHome = customJavaHomeInput)
     }
 
     val quotaGroups = remember(antigravityQuotaSummaryJson) {
@@ -493,10 +493,15 @@ fun SettingsScreen(
                             }
                         }
                         Text(
-                            text = if (javaInfo.isAvailable) {
+                            text = if (isInternalJdkInstalled) {
+                                val javaBin = BuildToolInstaller.getJdkExecutable(context)
+                                if (isRu) "Встроенный PrismDE JDK (${javaBin?.parentFile?.parentFile?.name ?: "tools/jdk"})"
+                                else "Internal PrismDE JDK (${javaBin?.parentFile?.parentFile?.name ?: "tools/jdk"})"
+                            } else if (javaInfo.isAvailable) {
                                 javaInfo.sourceDescription
                             } else {
-                                if (isRu) "Встроенный автономный OpenJDK (~45 МБ)" else "Standalone internal OpenJDK (~45 MB)"
+                                if (isRu) "Автономный OpenJDK 17 LTS (загрузка прямо в приложение, ~150 МБ)"
+                                else "Standalone OpenJDK 17 LTS (direct in-app download, ~150 MB)"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -524,8 +529,8 @@ fun SettingsScreen(
                                     mavenRefreshTrigger++
                                     android.widget.Toast.makeText(
                                         context,
-                                        if (ok) (if (isRu) "OpenJDK 17 успешно установлен!" else "OpenJDK 17 installed successfully!")
-                                        else (if (isRu) "Ошибка установки OpenJDK: $jdkInstallStatus" else "JDK install failed: $jdkInstallStatus"),
+                                        if (ok) (if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище!" else "✔ OpenJDK 17 installed successfully into internal storage!")
+                                        else (if (isRu) "✖ Ошибка установки: $jdkInstallStatus" else "✖ Install error: $jdkInstallStatus"),
                                         android.widget.Toast.LENGTH_LONG
                                     ).show()
                                 }
@@ -544,7 +549,7 @@ fun SettingsScreen(
                 }
 
                 if (isInstallingJdk && jdkInstallStatus.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = jdkInstallStatus,
                         style = MaterialTheme.typography.bodySmall,
@@ -552,34 +557,20 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = if (isRu) "Или использовать внешний Termux JDK:" else "Or use external Termux JDK:",
+                        text = if (isRu) "💡 На Android песочница безопасности (SELinux/UID) блокирует доступ к каталогам других приложений (например, Termux). Поэтому OpenJDK 17 устанавливается прямо внутрь PrismDE и работает на 100% автономно без других программ."
+                        else "💡 On Android, the security sandbox (SELinux/UID) blocks access to other apps' directories (like Termux). Therefore OpenJDK 17 installs directly inside PrismDE and runs 100% autonomously without external apps.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(10.dp)
                     )
-                    OutlinedButton(
-                        onClick = {
-                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(BuildToolInstaller.TERMUX_INSTALL_CMD))
-                            android.widget.Toast.makeText(
-                                context,
-                                if (isRu) "Команда Termux скопирована: ${BuildToolInstaller.TERMUX_INSTALL_CMD}"
-                                else "Termux command copied: ${BuildToolInstaller.TERMUX_INSTALL_CMD}",
-                                android.widget.Toast.LENGTH_LONG
-                            ).show()
-                        },
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Termux", style = MaterialTheme.typography.labelMedium)
-                    }
                 }
 
                 Spacer(Modifier.height(10.dp))

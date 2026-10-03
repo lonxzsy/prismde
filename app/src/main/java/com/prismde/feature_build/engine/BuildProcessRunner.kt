@@ -412,23 +412,27 @@ class BuildProcessRunner {
         }
 
         // Check JDK availability before execution and auto-install if missing!
-        var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir)
+        var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
         if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(project.rootDir)) {
             if (context != null) {
                 _events.emit(BuildOutputEvent.LogLine(
-                    if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка переносимого OpenJDK 17 (~45 МБ)..."
-                    else "ℹ Java JDK not found. Automatically downloading standalone OpenJDK 17 (~45 MB)..."
+                    if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка автономного OpenJDK 17 LTS..."
+                    else "ℹ Java JDK not found. Automatically downloading standalone OpenJDK 17 LTS..."
                 ))
                 val jdkInstalled = BuildToolInstaller.installJdk(context) { status, pct ->
-                    if (pct == 10f || pct == 80f || pct == 100f) {
-                        _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
-                    }
+                    _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
                 }
                 if (jdkInstalled) {
-                    javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir)
+                    javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
                     _events.emit(BuildOutputEvent.LogLine(
-                        if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище!"
-                        else "✔ OpenJDK 17 installed successfully into internal storage!"
+                        if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище PrismDE!"
+                        else "✔ OpenJDK 17 installed successfully into PrismDE internal storage!"
+                    ))
+                } else {
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "⚠ Автоматическая установка OpenJDK не удалась. Откройте Настройки -> Инструменты сборки для повтора."
+                        else "⚠ Automatic OpenJDK installation failed. Open Settings -> Build Tools to retry.",
+                        isError = true
                     ))
                 }
             } else {

@@ -35,16 +35,19 @@ object BuildToolInstaller {
     private const val MAVEN_ZIP_URL = "https://archive.apache.org/dist/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.zip"
     private const val MAVEN_MIRROR_URL = "https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz"
 
-    const val JDK_VERSION = "17.0.8"
-    const val JDK_DOWNLOAD_URL_AARCH64 = "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/jdk-17/jdk17-aarch64.tar.xz"
-    const val JDK_BACKUP_URL = "https://github.com/lonxzsy/prismde-ndk/releases/download/v1.0.1/openjdk-17-aarch64.tar.xz"
+    const val JDK_VERSION = "17.0.20"
+    const val JDK_DOWNLOAD_URL_PRIMARY = "https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
+    const val JDK_DOWNLOAD_URL_FAST_MIRROR = "https://gh-proxy.com/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
+    const val JDK_DOWNLOAD_URL_CDN_MIRROR = "https://ghfast.top/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
 
     const val TERMUX_INSTALL_CMD = "pkg update -y && pkg install -y openjdk-17 maven"
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val downloader = NdkDownloader(httpClient)
@@ -229,45 +232,62 @@ object BuildToolInstaller {
         jdkTargetDir.mkdirs()
 
         val tempArchive = File(context.cacheDir, "openjdk-17-aarch64.tar.xz")
+        if (tempArchive.exists()) {
+            tempArchive.delete()
+        }
 
         try {
             onProgress(
-                if (isRu) "Загрузка переносимого OpenJDK 17 для Android (~45 МБ)..."
-                else "Downloading portable OpenJDK 17 for Android (~45 MB)...",
-                10f
+                if (isRu) "Подготовка к загрузке OpenJDK 17 LTS для Android (ARM64)..."
+                else "Preparing to download OpenJDK 17 LTS for Android (ARM64)...",
+                5f
             )
 
             val urls = mutableListOf<String>()
             if (!customUrl.isNullOrBlank()) {
-                urls.add(customUrl)
+                urls.add(customUrl.trim())
             }
-            urls.add(JDK_DOWNLOAD_URL_AARCH64)
-            urls.add(JDK_BACKUP_URL)
+            urls.add(JDK_DOWNLOAD_URL_PRIMARY)
+            urls.add(JDK_DOWNLOAD_URL_FAST_MIRROR)
+            urls.add(JDK_DOWNLOAD_URL_CDN_MIRROR)
 
             var downloadSuccess = false
+            var lastErrorMessage: String? = null
+
             for (url in urls) {
                 try {
-                    downloader.download(url, tempArchive) { current, total, percent, _ ->
+                    onProgress(
+                        if (isRu) "Подключение к источнику загрузки..."
+                        else "Connecting to download server...",
+                        10f
+                    )
+                    downloader.download(url, tempArchive) { current, total, percent, speedBytesPerSec ->
                         val scaled = 10f + (percent * 0.65f) // 10% to 75%
                         val curMb = current / (1024 * 1024)
-                        val totalMb = if (total > 0) total / (1024 * 1024) else 45
+                        val totalMb = if (total > 0) total / (1024 * 1024) else 150
+                        val speedMb = String.format(java.util.Locale.US, "%.1f", speedBytesPerSec.toFloat() / (1024 * 1024))
                         onProgress(
-                            if (isRu) "Загрузка OpenJDK 17: $curMb МБ / $totalMb МБ (${percent.toInt()}%)"
-                            else "Downloading OpenJDK 17: $curMb MB / $totalMb MB (${percent.toInt()}%)",
+                            if (isRu) "Загрузка OpenJDK 17: $curMb / $totalMb МБ (${percent.toInt()}%) — $speedMb МБ/с"
+                            else "Downloading OpenJDK 17: $curMb / $totalMb MB (${percent.toInt()}%) — $speedMb MB/s",
                             scaled
                         )
                     }
-                    downloadSuccess = true
-                    break
+                    if (tempArchive.exists() && tempArchive.length() > 10 * 1024 * 1024L) {
+                        downloadSuccess = true
+                        break
+                    } else {
+                        tempArchive.delete()
+                    }
                 } catch (e: Exception) {
+                    lastErrorMessage = e.message
                     tempArchive.delete()
                 }
             }
 
             if (!downloadSuccess) {
                 onProgress(
-                    if (isRu) "✖ Ошибка: Не удалось загрузить OpenJDK 17. Проверьте сеть или укажите свой URL."
-                    else "✖ Error: Failed to download OpenJDK 17. Check internet or provide custom URL.",
+                    if (isRu) "✖ Ошибка: Не удалось загрузить OpenJDK 17: ${lastErrorMessage ?: "ошибка сети"}. Проверьте подключение."
+                    else "✖ Error: Failed to download OpenJDK 17: ${lastErrorMessage ?: "network error"}. Check connection.",
                     0f
                 )
                 return@withContext false
@@ -276,7 +296,7 @@ object BuildToolInstaller {
             onProgress(
                 if (isRu) "Распаковка OpenJDK 17 во внутреннее хранилище PrismDE..."
                 else "Extracting OpenJDK 17 into PrismDE internal storage...",
-                80f
+                78f
             )
 
             val extractSuccess = extractor.extract(tempArchive, jdkTargetDir) { msg ->
@@ -286,12 +306,27 @@ object BuildToolInstaller {
             tempArchive.delete()
 
             if (!extractSuccess) {
+                onProgress(
+                    if (isRu) "✖ Ошибка при распаковке архива OpenJDK 17."
+                    else "✖ Error extracting OpenJDK 17 archive.",
+                    0f
+                )
                 return@withContext false
             }
 
-            // Ensure executable permissions on all tools in bin/
-            jdkTargetDir.walkTopDown().filter { it.parentFile?.name == "bin" }.forEach {
-                try { it.setExecutable(true, false) } catch (_: Throwable) {}
+            // Ensure executable permissions on all tools in bin/ and shared libraries in lib/
+            onProgress(
+                if (isRu) "Настройка прав доступа исполняемых файлов..."
+                else "Configuring binary permissions...",
+                95f
+            )
+            jdkTargetDir.walkTopDown().forEach { file ->
+                if (file.isFile) {
+                    if (file.parentFile?.name == "bin" || file.extension == "so" || file.name == "java") {
+                        try { file.setExecutable(true, false) } catch (_: Throwable) {}
+                        try { file.setReadable(true, false) } catch (_: Throwable) {}
+                    }
+                }
             }
 
             val installedJava = getJdkExecutable(context)
@@ -302,21 +337,51 @@ object BuildToolInstaller {
                     else "✔ OpenJDK 17 installed successfully into internal storage!",
                     100f
                 )
+            } else {
+                onProgress(
+                    if (isRu) "⚠ Файлы извлечены, но бинарный файл java не обнаружен."
+                    else "⚠ Files extracted, but java binary was not found.",
+                    0f
+                )
             }
             success
         } catch (e: Exception) {
             e.printStackTrace()
             tempArchive.delete()
+            onProgress(
+                if (isRu) "✖ Исключение при установке: ${e.message}"
+                else "✖ Installation exception: ${e.message}",
+                0f
+            )
             false
         }
     }
 
     // ==================== Java Environment Detection ====================
 
-    fun detectJavaEnvironment(context: Context? = null, workingDir: File? = null): JavaEnvironmentInfo {
+    fun detectJavaEnvironment(
+        context: Context? = null,
+        workingDir: File? = null,
+        customJavaHome: String? = null
+    ): JavaEnvironmentInfo {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
-        // 1. Check internal tools/jdk inside PrismDE first (completely autonomous, zero external dependencies!)
+        // 1. Check user-configured custom JAVA_HOME first if provided
+        if (!customJavaHome.isNullOrBlank()) {
+            val dir = File(customJavaHome.trim())
+            if (dir.exists()) {
+                val bin = File(dir, "bin/java")
+                val altBin = if (dir.isFile && dir.name == "java") dir else null
+                return JavaEnvironmentInfo(
+                    isAvailable = true,
+                    javaHome = if (dir.isDirectory) dir else dir.parentFile?.parentFile,
+                    javaBin = if (bin.exists()) bin else altBin,
+                    sourceDescription = if (isRu) "Пользовательский ($customJavaHome)" else "Custom ($customJavaHome)"
+                )
+            }
+        }
+
+        // 2. Check internal tools/jdk inside PrismDE (completely autonomous, zero external dependencies!)
         if (context != null) {
             val internalJava = getJdkExecutable(context)
             val internalHome = getJdkHomeDir(context)
@@ -330,7 +395,7 @@ object BuildToolInstaller {
             }
         }
 
-        // 2. Check local.properties in project
+        // 3. Check local.properties in project
         if (workingDir != null) {
             val lp = File(workingDir, "local.properties")
             if (lp.exists()) {
