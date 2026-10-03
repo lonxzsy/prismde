@@ -473,6 +473,11 @@ class BuildProcessRunner {
             File(project.rootDir, ".prism_tmp").also { it.mkdirs() }
         }
 
+        // Ensure JDK runtime dependencies (libz.so.1, libandroid-shmem, libandroid-spawn, libiconv) are in place
+        if (context != null) {
+            BuildToolInstaller.ensureJdkRuntimeLibraries(context)
+        }
+
         // Neutralize Jansi native library dlopen on Android Bionic (avoid missing libc.so.6)
         if (context != null) {
             val mvnHome = BuildToolInstaller.getMavenHomeDir(context)
@@ -793,6 +798,28 @@ class BuildProcessRunner {
             env["MALLOC_CHECK_"] = "0"
             env["SCUDO_OPTIONS"] = "DeallocationTypeMismatch=false:DeleteSizeMismatch=false:QuarantineSizeKb=0"
             env["HOME"] = workingDir.absolutePath
+
+            // Configure LD_LIBRARY_PATH so child processes (java, ndk-build, clang) locate their shared libraries
+            val jdkHome = effectiveJavaHome ?: (context?.let { BuildToolInstaller.getJdkHomeDir(it) })
+            val ldPaths = mutableListOf<String>()
+            if (jdkHome != null && jdkHome.exists()) {
+                val jdkLib = File(jdkHome, "lib")
+                val jdkServer = File(jdkLib, "server")
+                val jdkJli = File(jdkLib, "jli")
+                if (jdkLib.exists()) ldPaths.add(jdkLib.absolutePath)
+                if (jdkServer.exists()) ldPaths.add(jdkServer.absolutePath)
+                if (jdkJli.exists()) ldPaths.add(jdkJli.absolutePath)
+            }
+            extraBinDir?.let { binDir ->
+                val parentLib = File(binDir.parentFile, "lib")
+                if (parentLib.exists()) ldPaths.add(parentLib.absolutePath)
+            }
+            val currentLd = env["LD_LIBRARY_PATH"] ?: ""
+            if (currentLd.isNotBlank()) ldPaths.add(currentLd)
+            ldPaths.add("/system/lib64")
+            ldPaths.add("/vendor/lib64")
+            ldPaths.add("/apex/com.android.runtime/lib64/bionic")
+            env["LD_LIBRARY_PATH"] = ldPaths.distinct().joinToString(":")
 
             val process = processBuilder.start()
 

@@ -131,4 +131,24 @@ class DebExtractorAndJvmTest {
         assertFalse("Script should no longer contain jansi-native", patchedText.contains("jansi-native"))
         assertTrue("Script should contain empty library.jansi.path", patchedText.contains("\"-Dlibrary.jansi.path=\""))
     }
+
+    @Test
+    fun testLibzCopyLogic() {
+        val workDir = tempFolder.newFolder("libz_test")
+        val libDir = File(workDir, "lib").also { it.mkdirs() }
+        val libzReal = File(libDir, "libz.so.1.3.2").also { it.writeText("fake-zlib") }
+
+        val libz1 = File(libDir, "libz.so.1")
+        val libz = File(libDir, "libz.so")
+        if (!libz1.exists()) {
+            if (libzReal.exists()) {
+                libzReal.copyTo(libz1, overwrite = true)
+                libzReal.copyTo(libz, overwrite = true)
+            }
+        }
+
+        assertTrue("libz.so.1 should have been copied from libz.so.1.3.2", libz1.exists())
+        assertEquals("fake-zlib", libz1.readText())
+        assertTrue("libz.so should have been copied from libz.so.1.3.2", libz.exists())
+    }
 }

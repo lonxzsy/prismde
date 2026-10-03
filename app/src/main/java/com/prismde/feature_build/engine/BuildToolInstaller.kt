@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 data class BuildToolInfo(
@@ -221,10 +223,76 @@ object BuildToolInstaller {
         return File(getToolsDir(context), "jdk")
     }
 
+    fun ensureJdkRuntimeLibraries(context: Context, jdkDir: File = getJdkDir(context)) {
+        val libDir = File(jdkDir, "lib")
+        if (!libDir.exists()) libDir.mkdirs()
+
+        // 1. Copy bundled native libraries from app assets (arm64-v8a)
+        try {
+            val assetManager = context.assets
+            val assetFiles = assetManager.list("jdk_libs/arm64-v8a")
+            if (assetFiles != null && assetFiles.isNotEmpty()) {
+                for (name in assetFiles) {
+                    val destFile = File(libDir, name)
+                    if (!destFile.exists() || destFile.length() == 0L) {
+                        try {
+                            assetManager.open("jdk_libs/arm64-v8a/$name").use { input ->
+                                FileOutputStream(destFile).use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            try { destFile.setExecutable(true, false) } catch (_: Throwable) {}
+                            try { destFile.setReadable(true, false) } catch (_: Throwable) {}
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+
+        // 2. Ensure libz.so.1 and libz.so exist
+        val libz1 = File(libDir, "libz.so.1")
+        val libz = File(libDir, "libz.so")
+        val libzReal = File(libDir, "libz.so.1.3.2")
+        if (!libz1.exists() || libz1.length() == 0L) {
+            if (libzReal.exists()) {
+                try { libzReal.copyTo(libz1, overwrite = true) } catch (_: Throwable) {}
+                try { libzReal.copyTo(libz, overwrite = true) } catch (_: Throwable) {}
+            } else {
+                // Fallback to system libz.so
+                val systemLibzCandidates = listOf(
+                    File("/system/lib64/libz.so"),
+                    File("/apex/com.android.runtime/lib64/bionic/libz.so"),
+                    File("/system/lib/libz.so")
+                )
+                val systemLibz = systemLibzCandidates.firstOrNull { it.exists() }
+                if (systemLibz != null) {
+                    try { systemLibz.copyTo(libz1, overwrite = true) } catch (_: Throwable) {}
+                    try { systemLibz.copyTo(libz, overwrite = true) } catch (_: Throwable) {}
+                }
+            }
+        }
+
+        // 3. Set executable & readable permissions on all native libraries
+        libDir.walkTopDown().filter { it.isFile && (it.extension == "so" || it.name.contains(".so.")) }.forEach { f ->
+            try { f.setExecutable(true, false) } catch (_: Throwable) {}
+            try { f.setReadable(true, false) } catch (_: Throwable) {}
+        }
+    }
+
     fun isJdkInstalled(context: Context): Boolean {
         val exe = getJdkExecutable(context) ?: return false
-        val tagFile = File(getJdkDir(context), ".prism_jdk_tag")
-        return tagFile.exists() && tagFile.readText().trim() == JDK_BUILD_TAG
+        val jdkDir = getJdkDir(context)
+        ensureJdkRuntimeLibraries(context, jdkDir)
+        val libz1 = File(jdkDir, "lib/libz.so.1")
+        val tagFile = File(jdkDir, ".prism_jdk_tag")
+        val isTagged = tagFile.exists() && (tagFile.readText().trim() == JDK_BUILD_TAG || tagFile.readText().trim().startsWith("17.0.20-termux-deb"))
+        if (exe.exists() && libz1.exists()) {
+            if (!tagFile.exists() || tagFile.readText().trim() != JDK_BUILD_TAG) {
+                try { tagFile.writeText(JDK_BUILD_TAG) } catch (_: Throwable) {}
+            }
+            return true
+        }
+        return isTagged
     }
 
     fun hasAnyJdkInstalled(context: Context): Boolean {
@@ -379,6 +447,9 @@ object BuildToolInstaller {
                     }
                 }
             }
+
+            // Ensure essential runtime dependencies (libz.so.1, libandroid-shmem, libandroid-spawn, libiconv)
+            ensureJdkRuntimeLibraries(context, jdkTargetDir)
 
             val installedJava = getJdkExecutable(context)
             val success = installedJava != null && installedJava.exists()
