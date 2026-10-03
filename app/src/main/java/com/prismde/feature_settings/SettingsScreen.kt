@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import com.prismde.feature_build.engine.BuildToolInstaller
 import com.prismde.feature_build.engine.CustomEndpointClient
 import com.prismde.feature_setup.DonationModalSheet
 import androidx.compose.material3.Button
@@ -134,6 +135,22 @@ fun SettingsScreen(
     val customAuthType by settingsRepository.customAiAuthTypeFlow.collectAsState(initial = "bearer")
     val customHeaderName by settingsRepository.customAiHeaderNameFlow.collectAsState(initial = "Authorization")
     val customCachedModels by settingsRepository.customAiCachedModelsFlow.collectAsState(initial = emptyList())
+
+    val autoInstallTools by settingsRepository.autoInstallToolsFlow.collectAsState(initial = true)
+    val customJavaHome by settingsRepository.customJavaHomeFlow.collectAsState(initial = "")
+    var customJavaHomeInput by remember(customJavaHome) { mutableStateOf(customJavaHome) }
+
+    var isInstallingMaven by remember { mutableStateOf(false) }
+    var mavenInstallProgress by remember { mutableStateOf(0f) }
+    var mavenInstallStatus by remember { mutableStateOf("") }
+    var mavenRefreshTrigger by remember { mutableStateOf(0) }
+
+    val isMavenInstalled = remember(mavenRefreshTrigger) {
+        BuildToolInstaller.isMavenInstalled(context)
+    }
+    val javaInfo = remember(customJavaHomeInput, mavenRefreshTrigger) {
+        BuildToolInstaller.detectJavaEnvironment(context)
+    }
 
     val quotaGroups = remember(antigravityQuotaSummaryJson) {
         AntigravityAuthManager.parseQuotaSummaryJson(antigravityQuotaSummaryJson)
@@ -315,6 +332,202 @@ fun SettingsScreen(
                     Text(stringResource(R.string.active_toolchain, activeNdk), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
                 Icon(Icons.AutoMirrored.Rounded.NavigateNext, contentDescription = null)
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // SECTION: Build Tools & SDK (Maven, JDK)
+        SettingsSectionHeader(
+            title = if (isRu) "Инструменты сборки (Maven, JDK)" else "Build Tools & SDK (Maven, JDK)",
+            icon = Icons.Rounded.Code
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                // Auto-install toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isRu) "Авто-установка утилит сборки" else "Auto-install build tools",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (isRu) "Автоматически загружать Maven и недостающие компоненты при старте сборки"
+                            else "Automatically download Maven and missing tools when starting build",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = autoInstallTools,
+                        onCheckedChange = { enabled ->
+                            coroutineScope.launch { settingsRepository.setAutoInstallTools(enabled) }
+                        }
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // Maven Tool Card Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Apache Maven 3.9.6",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            if (isMavenInstalled) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (isRu) "Установлен" else "Installed",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = if (isMavenInstalled) {
+                                val exe = BuildToolInstaller.getMavenExecutable(context)
+                                exe?.parentFile?.parentFile?.name ?: "tools/maven"
+                            } else {
+                                if (isRu) "Не установлен (~9 МБ)" else "Not installed (~9 MB)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (isInstallingMaven) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            if (mavenInstallProgress > 0f) {
+                                Text("${mavenInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isInstallingMaven = true
+                                    mavenInstallProgress = 0f
+                                    val ok = BuildToolInstaller.installMaven(context) { status, pct ->
+                                        mavenInstallStatus = status
+                                        mavenInstallProgress = pct
+                                    }
+                                    isInstallingMaven = false
+                                    mavenRefreshTrigger++
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                if (isMavenInstalled) {
+                                    if (isRu) "Переустановить" else "Reinstall"
+                                } else {
+                                    if (isRu) "Установить" else "Install"
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (isInstallingMaven && mavenInstallStatus.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = mavenInstallStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // Java JDK Environment Status
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Java Development Kit (JDK)",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                color = if (javaInfo.isAvailable) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (javaInfo.isAvailable) (if (isRu) "Доступен" else "Available") else (if (isRu) "Не найден" else "Missing"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (javaInfo.isAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (javaInfo.isAvailable) {
+                                javaInfo.sourceDescription
+                            } else {
+                                if (isRu) "Требуется для сборки Maven и Gradle" else "Required for Maven and Gradle builds"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(BuildToolInstaller.TERMUX_INSTALL_CMD))
+                            android.widget.Toast.makeText(
+                                context,
+                                if (isRu) "Команда Termux скопирована: ${BuildToolInstaller.TERMUX_INSTALL_CMD}"
+                                else "Termux command copied: ${BuildToolInstaller.TERMUX_INSTALL_CMD}",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Termux")
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Custom JAVA_HOME input
+                OutlinedTextField(
+                    value = customJavaHomeInput,
+                    onValueChange = {
+                        customJavaHomeInput = it
+                        coroutineScope.launch { settingsRepository.setCustomJavaHome(it) }
+                    },
+                    label = { Text(if (isRu) "Пользовательский путь JAVA_HOME (опционально)" else "Custom JAVA_HOME path (optional)") },
+                    placeholder = { Text("/data/data/com.termux/files/usr/lib/jvm/openjdk-17") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 

@@ -1,6 +1,7 @@
 package com.prismde.feature_build
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.Diagnostic
@@ -30,8 +31,9 @@ data class BuildUiState(
     val aiLoadingMap: Map<String, Boolean> = emptyMap()
 )
 
-class BuildViewModel : ViewModel() {
+class BuildViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val context = application.applicationContext
     private val runner = BuildProcessRunner()
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -99,7 +101,7 @@ class BuildViewModel : ViewModel() {
         )
 
         viewModelScope.launch {
-            runner.runBuild(project, ndk, config)
+            runner.runBuild(project, ndk, config, context)
         }
     }
 

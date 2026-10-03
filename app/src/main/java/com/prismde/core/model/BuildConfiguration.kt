@@ -43,6 +43,7 @@ data class BuildConfiguration(
     val mavenGoals: String = "package",
     val mavenCustomFlags: String = "-DskipTests",
     val gradleTasks: String = "assembleDebug",
-    val gradleCustomFlags: String = "--no-daemon"
+    val gradleCustomFlags: String = "--no-daemon",
+    val javaHome: String = ""
 )
 

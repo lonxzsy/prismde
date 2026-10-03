@@ -45,6 +45,29 @@ class ClangDiagnosticParser {
 
     fun parseLine(line: String): Diagnostic? {
         val trimmed = line.trim()
+        // Handle Gradle wrapper missing Java / JAVA_HOME error
+        if (trimmed.contains("JAVA_HOME is not set", ignoreCase = true) ||
+            trimmed.contains("no 'java' command could be found", ignoreCase = true)) {
+            val isRu = java.util.Locale.getDefault().language == "ru"
+            val diagnostic = Diagnostic(
+                filePath = "gradlew",
+                line = 1,
+                column = 1,
+                severity = DiagnosticSeverity.ERROR,
+                rawMessage = trimmed,
+                humanTitle = if (isRu) "JAVA_HOME не установлен (JDK не найден)" else "JAVA_HOME is not set (JDK not found)",
+                humanExplanation = if (isRu)
+                    "Для запуска Gradle (./gradlew) на Android требуется установленный JDK (Java). Переменная JAVA_HOME не задана, а команда 'java' отсутствует в PATH."
+                else
+                    "Gradle wrapper (./gradlew) requires Java (JDK) to run. JAVA_HOME is not set and no 'java' command was found in PATH.",
+                offlineHint = if (isRu)
+                    "• Если вам нужна только нативная C/C++ библиотека (.so): откройте параметры сборки (значок рядом с Build) и выберите «JNI .so библиотека (Android.mk)».\n• Для сборки полного APK через Gradle: установите Termux и выполните команду 'pkg install openjdk-17'."
+                else
+                    "• To build the native C/C++ library (.so): open Build Settings and select 'JNI .so Library (Android.mk)'.\n• To build full APK with Gradle: install Termux and run 'pkg install openjdk-17'."
+            )
+            lastDiagnostic = diagnostic
+            return diagnostic
+        }
 
         // Check if line is a Clang fix-it hint for the preceding diagnostic
         val fixMatch = fixItRegex.find(trimmed)

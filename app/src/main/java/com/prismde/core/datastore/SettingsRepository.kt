@@ -29,6 +29,8 @@ class SettingsRepository(private val context: Context) {
         val KEY_EDITOR_WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
         val KEY_LAST_PROJECT_PATH = stringPreferencesKey("last_project_path")
         val KEY_SETUP_COMPLETED = booleanPreferencesKey("setup_completed")
+        val KEY_AUTO_INSTALL_TOOLS = booleanPreferencesKey("auto_install_build_tools")
+        val KEY_CUSTOM_JAVA_HOME = stringPreferencesKey("custom_java_home")
         
         // AI Preferences
         val KEY_AI_PROVIDER = stringPreferencesKey("ai_provider") // "gemini_api" or "antigravity"
@@ -73,6 +75,8 @@ class SettingsRepository(private val context: Context) {
     val editorTabSizeFlow: Flow<Int> = context.dataStore.data.map { it[KEY_EDITOR_TAB_SIZE] ?: 4 }
     val editorWordWrapFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_EDITOR_WORD_WRAP] ?: false }
     val lastProjectPathFlow: Flow<String?> = context.dataStore.data.map { it[KEY_LAST_PROJECT_PATH] }
+    val autoInstallToolsFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_AUTO_INSTALL_TOOLS] ?: true }
+    val customJavaHomeFlow: Flow<String> = context.dataStore.data.map { it[KEY_CUSTOM_JAVA_HOME] ?: "" }
 
     val aiProviderFlow: Flow<String> = context.dataStore.data.map { it[KEY_AI_PROVIDER] ?: "gemini_api" }
     val geminiModelFlow: Flow<String> = context.dataStore.data.map { it[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash" }
@@ -279,6 +283,14 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSetupCompleted(completed: Boolean) {
         syncPrefs.edit().putBoolean("setup_completed", completed).apply()
         context.dataStore.edit { it[KEY_SETUP_COMPLETED] = completed }
+    }
+
+    suspend fun setAutoInstallTools(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_AUTO_INSTALL_TOOLS] = enabled }
+    }
+
+    suspend fun setCustomJavaHome(path: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_JAVA_HOME] = path }
     }
 
     fun markSetupCompletedSync() {

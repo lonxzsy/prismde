@@ -1,5 +1,6 @@
 package com.prismde.feature_build.engine
 
+import android.content.Context
 import com.prismde.core.model.AndroidAbi
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.Diagnostic
@@ -30,7 +31,8 @@ class BuildProcessRunner {
     suspend fun runBuild(
         project: Project,
         ndk: NdkVersion?,
-        config: BuildConfiguration
+        config: BuildConfiguration,
+        context: Context? = null
     ): Boolean = withContext(Dispatchers.IO) {
         val detectedType = if (config.projectType == ProjectType.AUTO_DETECT) {
             ProjectDetector.detect(project.rootDir)
@@ -41,12 +43,34 @@ class BuildProcessRunner {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
         if (detectedType == ProjectType.GRADLE) {
+            val javaAvailable = ProjectDetector.isJavaAvailable(project.rootDir) || config.javaHome.isNotBlank()
+            if (!javaAvailable && (project.hasJniDir || project.hasAndroidMk) && ndk != null && ndk.isInstalled) {
+                _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System (NDK Native Module) ==="))
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "ℹ Java/JDK не установлен для Gradle. В проекте найден нативный C/C++ модуль (${project.jniDir.name})." else "ℹ Java/JDK is not installed for Gradle. Found native C/C++ module (${project.jniDir.name})."))
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск сборки нативной библиотеки .so через Android NDK..." else "Starting native .so library build with Android NDK..."))
+
+                ndk.ensurePermissions()
+                val libsDir = File(project.rootDir, "libs/${config.selectedAbi.abiString}")
+                libsDir.mkdirs()
+                val artifactFile = buildPureJniSo(project, ndk, config, libsDir, context)
+                val success = artifactFile != null && artifactFile.exists()
+                val exitCode = if (success) 0 else 1
+                if (success) {
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "✔ Сборка нативной библиотеки успешно завершена! Создан файл: ${artifactFile.absolutePath}" else "✔ Native library build completed successfully! Generated file: ${artifactFile.absolutePath}"))
+                } else {
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки. Проверьте карточки ошибок выше." else "✖ Build failed. Check the error diagnostics above.", isError = true))
+                }
+                _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+                return@withContext success
+            }
+
             _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System (Gradle) ==="))
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Тип проекта: GRADLE (Android / Java)" else "Project type: GRADLE (Android / Java)"))
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Задачи (Tasks): ${config.gradleTasks} ${config.gradleCustomFlags}" else "Tasks: ${config.gradleTasks} ${config.gradleCustomFlags}"))
 
-            val artifactFile = buildGradle(project, config, ndk)
+            val artifactFile = buildGradle(project, config, ndk, context)
             val success = artifactFile != null && artifactFile.exists()
             val exitCode = if (success) 0 else 1
             if (success) {
@@ -64,7 +88,7 @@ class BuildProcessRunner {
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Тип проекта: MAVEN (pom.xml)" else "Project type: MAVEN (pom.xml)"))
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Цели (Goals): ${config.mavenGoals} ${config.mavenCustomFlags}" else "Goals: ${config.mavenGoals} ${config.mavenCustomFlags}"))
 
-            val artifactFile = buildMaven(project, config)
+            val artifactFile = buildMaven(project, config, context)
             val success = artifactFile != null && artifactFile.exists()
             val exitCode = if (success) 0 else 1
             if (success) {
@@ -96,16 +120,16 @@ class BuildProcessRunner {
 
         val artifactFile = when (detectedType) {
             ProjectType.PURE_JNI_SO -> {
-                buildPureJniSo(project, ndk, config, libsDir)
+                buildPureJniSo(project, ndk, config, libsDir, context)
             }
             ProjectType.CMAKE -> {
-                buildCMake(project, ndk, config)
+                buildCMake(project, ndk, config, context)
             }
             ProjectType.SINGLE_FILE_EXECUTABLE -> {
-                buildSingleExecutable(project, ndk, config)
+                buildSingleExecutable(project, ndk, config, context)
             }
             else -> {
-                buildPureJniSo(project, ndk, config, libsDir)
+                buildPureJniSo(project, ndk, config, libsDir, context)
             }
         }
 
@@ -125,9 +149,18 @@ class BuildProcessRunner {
         project: Project,
         ndk: NdkVersion,
         config: BuildConfiguration,
-        libsDir: File
+        libsDir: File,
+        context: Context? = null
     ): File? {
-        val soName = "lib${project.name}.so"
+        val androidMkFile = when {
+            File(project.jniDir, "Android.mk").exists() -> File(project.jniDir, "Android.mk")
+            File(project.rootDir, "Android.mk").exists() -> File(project.rootDir, "Android.mk")
+            File(project.rootDir, "app/src/main/jni/Android.mk").exists() -> File(project.rootDir, "app/src/main/jni/Android.mk")
+            else -> File(project.jniDir, "Android.mk")
+        }
+        val customModule = parseLocalModule(androidMkFile)
+        val soBaseName = customModule ?: project.name
+        val soName = if (soBaseName.startsWith("lib")) "$soBaseName.so" else "lib$soBaseName.so"
         val targetSo = File(libsDir, soName)
 
         val jniDir = if (project.hasJniDir) project.jniDir else project.rootDir
@@ -148,12 +181,6 @@ class BuildProcessRunner {
         if (project.hasAndroidMk && ndkBuildScript != null && ndkBuildScript.exists()) {
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется ndk-build с файлом Android.mk..." else "Using ndk-build with Android.mk..."))
             ndkBuildScript.setExecutable(true, false)
-            val androidMkFile = when {
-                File(project.jniDir, "Android.mk").exists() -> File(project.jniDir, "Android.mk")
-                File(project.rootDir, "Android.mk").exists() -> File(project.rootDir, "Android.mk")
-                File(project.rootDir, "app/src/main/jni/Android.mk").exists() -> File(project.rootDir, "app/src/main/jni/Android.mk")
-                else -> File(project.jniDir, "Android.mk")
-            }
             val appMkFile = when {
                 File(project.jniDir, "Application.mk").exists() -> File(project.jniDir, "Application.mk")
                 File(project.rootDir, "Application.mk").exists() -> File(project.rootDir, "Application.mk")
@@ -175,7 +202,7 @@ class BuildProcessRunner {
             if (appMkFile != null) {
                 command.add("NDK_APPLICATION_MK=${appMkFile.absolutePath}")
             }
-            executeProcess(command, mkDir, ndkBuildScript.parentFile)
+            executeProcess(command, mkDir, ndkBuildScript.parentFile, ndk, config, context)
             val candidateSos = listOf(
                 targetSo,
                 File(mkDir, "libs/${config.selectedAbi.abiString}/$soName"),
@@ -226,14 +253,15 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Выполнение команды Clang++:" else "Executing Clang++ command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, project.rootDir, compilerFile.parentFile)
+        val success = executeProcess(command, project.rootDir, compilerFile.parentFile, ndk, config, context)
         return if (success && targetSo.exists()) targetSo else null
     }
 
     private suspend fun buildCMake(
         project: Project,
         ndk: NdkVersion,
-        config: BuildConfiguration
+        config: BuildConfiguration,
+        context: Context? = null
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
         val buildDir = File(project.rootDir, "build/${config.selectedAbi.abiString}")
@@ -252,11 +280,11 @@ class BuildProcessRunner {
         }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Генерация проекта CMake..." else "Configuring CMake project..."))
-        if (!executeProcess(cmakeCommand, project.rootDir)) return null
+        if (!executeProcess(cmakeCommand, project.rootDir, null, ndk, config, context)) return null
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Сборка через Ninja..." else "Building with Ninja..."))
         val ninjaCommand = listOf("ninja", "-C", buildDir.absolutePath)
-        if (!executeProcess(ninjaCommand, project.rootDir)) return null
+        if (!executeProcess(ninjaCommand, project.rootDir, null, ndk, config, context)) return null
 
         return buildDir.walkTopDown().firstOrNull { it.isFile && (it.extension == "so" || it.canExecute()) }
     }
@@ -264,7 +292,8 @@ class BuildProcessRunner {
     private suspend fun buildSingleExecutable(
         project: Project,
         ndk: NdkVersion,
-        config: BuildConfiguration
+        config: BuildConfiguration,
+        context: Context? = null
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
         val binDir = File(project.rootDir, "bin/${config.selectedAbi.abiString}")
@@ -313,19 +342,23 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Выполнение команды Clang++:" else "Executing Clang++ command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, project.rootDir, compilerFile.parentFile)
+        val success = executeProcess(command, project.rootDir, compilerFile.parentFile, ndk, config, context)
         return if (success && targetExe.exists()) targetExe else null
     }
 
     private suspend fun buildMaven(
         project: Project,
-        config: BuildConfiguration
+        config: BuildConfiguration,
+        context: Context? = null
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
         // 1. Check for Maven wrapper (mvnw) in project root
         val mvnwFile = File(project.rootDir, "mvnw")
         val mvnwCmd = File(project.rootDir, "mvnw.cmd")
+
+        // 2. Check for internally installed Maven in PrismDE tools
+        val internalMvn = if (context != null) BuildToolInstaller.getMavenExecutable(context) else null
 
         val (executableCmd, workingDir, extraBinDir) = when {
             mvnwFile.exists() -> {
@@ -336,6 +369,10 @@ class BuildProcessRunner {
             mvnwCmd.exists() && System.getProperty("os.name")?.lowercase()?.contains("windows") == true -> {
                 _events.emit(BuildOutputEvent.LogLine("Using Maven Wrapper (mvnw.cmd)..."))
                 Triple(listOf("cmd.exe", "/c", mvnwCmd.absolutePath), project.rootDir, null)
+            }
+            internalMvn != null && internalMvn.exists() -> {
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется встроенный Apache Maven: ${internalMvn.absolutePath}" else "Using internal Apache Maven: ${internalMvn.absolutePath}"))
+                Triple(listOf("/system/bin/sh", internalMvn.absolutePath), project.rootDir, internalMvn.parentFile)
             }
             else -> {
                 // Search installed mvn binaries in common Termux / system paths
@@ -351,11 +388,43 @@ class BuildProcessRunner {
                     try { found.setExecutable(true, false) } catch (_: Throwable) {}
                     _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется установленный Maven: ${found.absolutePath}" else "Using installed Maven: ${found.absolutePath}"))
                     Triple(listOf("/system/bin/sh", found.absolutePath), project.rootDir, found.parentFile)
+                } else if (context != null) {
+                    // Auto-install Maven!
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "ℹ Maven не найден. Запуск автоматической установки Apache Maven ${BuildToolInstaller.MAVEN_VERSION} (~9 МБ)..." else "ℹ Maven not found. Starting automatic installation of Apache Maven ${BuildToolInstaller.MAVEN_VERSION} (~9 MB)..."))
+                    val installed = BuildToolInstaller.installMaven(context) { status, pct ->
+                        if (pct == 10f || pct == 75f || pct == 100f) {
+                            _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                        }
+                    }
+                    val newlyInstalledMvn = BuildToolInstaller.getMavenExecutable(context)
+                    if (installed && newlyInstalledMvn != null) {
+                        _events.emit(BuildOutputEvent.LogLine(if (isRu) "✔ Apache Maven успешно установлен: ${newlyInstalledMvn.absolutePath}" else "✔ Apache Maven installed successfully: ${newlyInstalledMvn.absolutePath}"))
+                        Triple(listOf("/system/bin/sh", newlyInstalledMvn.absolutePath), project.rootDir, newlyInstalledMvn.parentFile)
+                    } else {
+                        _events.emit(BuildOutputEvent.LogLine(if (isRu) "Поиск mvn в системном PATH..." else "Searching for mvn in system PATH..."))
+                        Triple(listOf("mvn"), project.rootDir, null)
+                    }
                 } else {
                     _events.emit(BuildOutputEvent.LogLine(if (isRu) "Поиск mvn в системном PATH..." else "Searching for mvn in system PATH..."))
                     Triple(listOf("mvn"), project.rootDir, null)
                 }
             }
+        }
+
+        // Check JDK availability before execution
+        val javaAvail = ProjectDetector.isJavaAvailable(project.rootDir) || config.javaHome.isNotBlank() ||
+            BuildToolInstaller.detectJavaEnvironment(context, project.rootDir).isAvailable
+        if (!javaAvail) {
+            _events.emit(BuildOutputEvent.LogLine(
+                if (isRu) "⚠ Внимание: JDK (Java) не найден. Для сборки Maven требуется Java JDK."
+                else "⚠ Warning: JDK (Java) not found. Maven build requires a Java JDK.",
+                isError = true
+            ))
+            _events.emit(BuildOutputEvent.LogLine(
+                if (isRu) "💡 Установите OpenJDK в Termux (${BuildToolInstaller.TERMUX_INSTALL_CMD}) или укажите JAVA_HOME в параметрах сборки."
+                else "💡 Install OpenJDK in Termux (${BuildToolInstaller.TERMUX_INSTALL_CMD}) or specify JAVA_HOME in build settings.",
+                isError = true
+            ))
         }
 
         val goals = config.mavenGoals.split(" ").filter { it.isNotBlank() }.ifEmpty { listOf("package") }
@@ -374,7 +443,7 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Maven:" else "Executing Maven command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, workingDir, extraBinDir)
+        val success = executeProcess(command, workingDir, extraBinDir, null, config, context)
 
         // Find resulting artifact in target/ directory (.jar, .aar, .war, .apk)
         val targetDir = File(project.rootDir, "target")
@@ -422,7 +491,8 @@ class BuildProcessRunner {
     private suspend fun buildGradle(
         project: Project,
         config: BuildConfiguration,
-        ndk: NdkVersion?
+        ndk: NdkVersion?,
+        context: Context? = null
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
@@ -477,7 +547,7 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, workingDir, extraBinDir, ndk)
+        val success = executeProcess(command, workingDir, extraBinDir, ndk, config, context)
 
         // Search for generated APK, AAR, or JAR in build outputs
         val artifacts = project.rootDir.walkTopDown().maxDepth(6).filter { file ->
@@ -508,11 +578,31 @@ class BuildProcessRunner {
             ?: artifacts.maxByOrNull { it.lastModified() }
     }
 
+    private fun parseLocalModule(file: File): String? {
+        if (!file.exists()) return null
+        return try {
+            for (line in file.readLines()) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith("LOCAL_MODULE") && (trimmed.contains(":=") || trimmed.contains("="))) {
+                    val raw = trimmed.substringAfter("=").trim()
+                    if (raw.isNotBlank() && !raw.startsWith("libcurl") && !raw.startsWith("libssl") && !raw.startsWith("libcrypto")) {
+                        return raw
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private suspend fun executeProcess(
         command: List<String>,
         workingDir: File,
         extraBinDir: File? = null,
-        ndk: NdkVersion? = null
+        ndk: NdkVersion? = null,
+        config: BuildConfiguration? = null,
+        context: Context? = null
     ): Boolean {
         return try {
             val processBuilder = ProcessBuilder(command)
@@ -526,23 +616,35 @@ class BuildProcessRunner {
             if (extraBinDir != null && extraBinDir.exists()) {
                 pathEntries.add(extraBinDir.absolutePath)
             }
+            if (context != null) {
+                for (binDir in BuildToolInstaller.getToolsBinDirs(context)) {
+                    if (binDir.exists() && !pathEntries.contains(binDir.absolutePath)) {
+                        pathEntries.add(binDir.absolutePath)
+                    }
+                }
+            }
             if (File(termuxBin).exists()) {
                 pathEntries.add(termuxBin)
             }
-            if (pathEntries.isNotEmpty()) {
-                env["PATH"] = pathEntries.joinToString(":") + ":$existingPath"
+
+            // Auto-detect or use configured JAVA_HOME
+            val configuredJava = if (config?.javaHome?.isNotBlank() == true) File(config.javaHome) else null
+            val effectiveJavaHome = if (configuredJava != null && configuredJava.exists()) {
+                configuredJava
+            } else {
+                ProjectDetector.findJavaHome(workingDir)
+                    ?: BuildToolInstaller.detectJavaEnvironment(context, workingDir).javaHome
+            }
+            if (effectiveJavaHome != null && effectiveJavaHome.exists()) {
+                env["JAVA_HOME"] = effectiveJavaHome.absolutePath
+                val jvmBin = File(effectiveJavaHome, "bin")
+                if (jvmBin.exists()) {
+                    pathEntries.add(0, jvmBin.absolutePath)
+                }
             }
 
-            // Auto-detect JAVA_HOME if not already provided
-            if (env["JAVA_HOME"].isNullOrBlank()) {
-                val jvmCandidates = listOf(
-                    File("/data/data/com.termux/files/usr/lib/jvm/openjdk-17"),
-                    File("/data/data/com.termux/files/usr/lib/jvm/default-jvm"),
-                    File("/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk")
-                )
-                jvmCandidates.firstOrNull { it.exists() }?.let {
-                    env["JAVA_HOME"] = it.absolutePath
-                }
+            if (pathEntries.isNotEmpty()) {
+                env["PATH"] = pathEntries.joinToString(":") + ":$existingPath"
             }
 
             // Auto-detect ANDROID_HOME / ANDROID_SDK_ROOT

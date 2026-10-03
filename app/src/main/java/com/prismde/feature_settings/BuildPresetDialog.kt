@@ -52,6 +52,7 @@ fun BuildPresetDialog(
     var mavenCustomFlags by remember { mutableStateOf(initialConfig.mavenCustomFlags) }
     var gradleTasks by remember { mutableStateOf(initialConfig.gradleTasks) }
     var gradleCustomFlags by remember { mutableStateOf(initialConfig.gradleCustomFlags) }
+    var javaHome by remember { mutableStateOf(initialConfig.javaHome) }
 
     val scrollState = rememberScrollState()
 
@@ -203,6 +204,18 @@ fun BuildPresetDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Java Home
+                OutlinedTextField(
+                    value = javaHome,
+                    onValueChange = { javaHome = it },
+                    label = { Text(if (isRu) "Путь к JDK / JAVA_HOME (опционально)" else "JDK / JAVA_HOME path (optional)") },
+                    placeholder = { Text("/data/data/com.termux/files/usr/lib/jvm/openjdk-17") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
@@ -221,7 +234,8 @@ fun BuildPresetDialog(
                             mavenGoals = mavenGoals,
                             mavenCustomFlags = mavenCustomFlags,
                             gradleTasks = gradleTasks,
-                            gradleCustomFlags = gradleCustomFlags
+                            gradleCustomFlags = gradleCustomFlags,
+                            javaHome = javaHome
                         )
                     )
                 },

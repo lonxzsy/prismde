@@ -129,4 +129,16 @@ class ClangDiagnosticParserTest {
         assertEquals(DiagnosticSeverity.ERROR, diag?.severity)
         assertEquals("resource not found", diag?.rawMessage)
     }
+
+    @Test
+    fun testParseJavaHomeNotSetError() {
+        val line = "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH."
+        val diag = parser.parseLine(line)
+        assertNotNull(diag)
+        assertEquals("gradlew", diag?.filePath)
+        assertEquals(DiagnosticSeverity.ERROR, diag?.severity)
+        assertTrue(diag?.rawMessage?.contains("JAVA_HOME is not set") == true)
+        assertNotNull(diag?.offlineHint)
+    }
 }
+
