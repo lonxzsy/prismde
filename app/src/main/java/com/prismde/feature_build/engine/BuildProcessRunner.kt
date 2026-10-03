@@ -663,7 +663,7 @@ class BuildProcessRunner {
 
             // Ensure NDK has source.properties and permissions!
             effectiveNdk?.let {
-                it.ensureSourceProperties()
+                it.ensureSourceProperties(context = context)
                 it.ensurePermissions(context)
             }
 

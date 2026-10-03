@@ -562,24 +562,40 @@ object BuildToolInstaller {
         val effectiveRevision = projectRequestedNdkVersion ?: "26.2.11394342"
 
         var hasSdkNdk = false
-        // Ensure source.properties and meta/abis.json exist in ndkDir and parent folders
+        // Ensure source.properties, meta/abis.json, and sysroot STL exist in ndkDir and parent folders
         if (ndkDir != null && ndkDir.exists()) {
             NdkVersion.ensureNdkMetadata(ndkDir, effectiveRevision, context)
             NdkVersion.ensureNdkPermissions(ndkDir, context)
+            NdkVersion.ensureNdkStlLibraries(ndkDir, context)
 
             // Also provision $sdkDir/ndk/$effectiveRevision and fallback symlinks for AGP NDK resolution
             val sdkNdkRevisions = listOf(effectiveRevision, "25.1.8937393")
             for (rev in sdkNdkRevisions) {
                 try {
                     val sdkNdkDir = File(sdkDir, "ndk/$rev")
-                    if (!sdkNdkDir.exists()) {
+                    if (sdkNdkDir.exists()) {
+                        try {
+                            val canonSdk = sdkNdkDir.canonicalFile
+                            val canonNdk = ndkDir.canonicalFile
+                            if (canonSdk.absolutePath != canonNdk.absolutePath) {
+                                try { sdkNdkDir.delete() } catch (_: Throwable) {}
+                                try { android.system.Os.remove(sdkNdkDir.absolutePath) } catch (_: Throwable) {}
+                                try { android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath) } catch (_: Throwable) {}
+                            }
+                        } catch (_: Throwable) {}
+                    } else {
                         sdkNdkDir.parentFile?.mkdirs()
                         try {
                             android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath)
                         } catch (_: Throwable) {}
                     }
-                    if (rev == effectiveRevision && sdkNdkDir.exists()) {
-                        hasSdkNdk = true
+                    if (sdkNdkDir.exists()) {
+                        NdkVersion.ensureNdkMetadata(sdkNdkDir, rev, context)
+                        NdkVersion.ensureNdkPermissions(sdkNdkDir, context)
+                        NdkVersion.ensureNdkStlLibraries(sdkNdkDir, context)
+                        if (rev == effectiveRevision) {
+                            hasSdkNdk = true
+                        }
                     }
                 } catch (_: Throwable) {}
             }
