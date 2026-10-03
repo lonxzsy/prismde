@@ -921,13 +921,20 @@ object BuildToolInstaller {
         }
     }
 
-    fun isAndroidPlatformInstalled(context: Context, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT): Boolean {
-        val sdkDir = findExistingSdk(context)
+    fun isPlatformReady(sdkDir: File, apiLevel: Int): Boolean {
         val platformsDir = File(sdkDir, "platforms")
         normalizeSdkPlatform(platformsDir, apiLevel)
-        val platformDir = File(platformsDir, "android-$apiLevel")
-        val androidJar = File(platformDir, "android.jar")
-        return androidJar.exists() && androidJar.length() > 0L
+        val jar = File(platformsDir, "android-$apiLevel/android.jar")
+        val props = File(platformsDir, "android-$apiLevel/source.properties")
+        if (!jar.exists() || jar.length() < 100_000L || !props.exists()) return false
+        val text = try { props.readText() } catch (_: Throwable) { return false }
+        if (text.contains("ExtensionLevel", ignoreCase = true)) return false
+        if (!text.contains("AndroidVersion.ApiLevel=$apiLevel")) return false
+        return true
+    }
+
+    fun isAndroidPlatformInstalled(context: Context, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT): Boolean {
+        return isPlatformReady(getAndroidSdkDir(context), apiLevel)
     }
 
     fun isAndroidBuildToolsInstalled(context: Context, version: String = ANDROID_BUILD_TOOLS_VERSION_DEFAULT): Boolean {
@@ -1016,6 +1023,21 @@ object BuildToolInstaller {
                 if (candidate != null) {
                     if (targetPlatformDir.exists()) targetPlatformDir.deleteRecursively()
                     candidate.renameTo(targetPlatformDir)
+                }
+            }
+
+            if (!targetPlatformDir.exists() || File(targetPlatformDir, "android.jar").length() < 100_000L) {
+                val nested = platformsDir.walkTopDown().maxDepth(4).filter {
+                    it.isFile && it.name == "android.jar" && it.length() > 100_000L
+                }.maxByOrNull { it.length() }
+                val parent = nested?.parentFile
+                if (parent != null && parent != targetPlatformDir) {
+                    if (targetPlatformDir.exists()) targetPlatformDir.deleteRecursively()
+                    val renamed = parent.renameTo(targetPlatformDir)
+                    if (!renamed) {
+                        parent.copyRecursively(targetPlatformDir, overwrite = true)
+                        parent.deleteRecursively()
+                    }
                 }
             }
 

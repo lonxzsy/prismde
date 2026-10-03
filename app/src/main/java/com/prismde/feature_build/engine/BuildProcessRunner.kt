@@ -672,7 +672,9 @@ class BuildProcessRunner {
 
             val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
             val platformsDir = File(sdkDir, "platforms")
-            BuildToolInstaller.purgeBrokenPlatform(platformsDir, requiredApi)
+            if (!BuildToolInstaller.isPlatformReady(sdkDir, requiredApi)) {
+                BuildToolInstaller.purgeBrokenPlatform(platformsDir, requiredApi)
+            }
             BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
 
             BuildToolInstaller.ensureProjectAbiFilters(
@@ -681,7 +683,7 @@ class BuildProcessRunner {
                 effectiveNdk?.getPkgRevision() ?: "26.2.11394342"
             )
 
-            if (!BuildToolInstaller.isAndroidPlatformInstalled(context, requiredApi)) {
+            if (!BuildToolInstaller.isPlatformReady(sdkDir, requiredApi)) {
                 _events.emit(BuildOutputEvent.LogLine(
                     if (isRu) "ℹ Android SDK Platform $requiredApi (android.jar) не найден. Автоматическая загрузка (~58 МБ)..."
                     else "ℹ Android SDK Platform $requiredApi (android.jar) not found. Automatically downloading (~58 MB)..."
@@ -704,6 +706,13 @@ class BuildProcessRunner {
             } else {
                 BuildToolInstaller.normalizeSdkPlatform(platformsDir, requiredApi)
             }
+            val readyJar = File(platformsDir, "android-$requiredApi/android.jar")
+            _events.emit(BuildOutputEvent.LogLine(
+                if (BuildToolInstaller.isPlatformReady(sdkDir, requiredApi))
+                    "SDK platform android-$requiredApi ready (${readyJar.length() / 1024} KB)"
+                else
+                    "SDK platform android-$requiredApi is NOT usable (jar=${readyJar.length()} bytes)"
+            ))
 
             // Auto-install Android Build-Tools 34.0.0 if missing!
             if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, "34.0.0")) {
