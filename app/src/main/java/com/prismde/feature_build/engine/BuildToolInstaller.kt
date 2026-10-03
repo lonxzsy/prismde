@@ -428,6 +428,7 @@ object BuildToolInstaller {
                 sb.appendLine("org.gradle.parallel=false")
                 sb.appendLine("org.gradle.vfs.watch=false")
                 sb.appendLine("org.gradle.console=plain")
+                sb.appendLine("android.suppressUnsupportedCompileSdk=34,35")
                 if (!javaHome.isNullOrBlank()) {
                     sb.appendLine("org.gradle.java.home=${javaHome.replace("\\", "/")}")
                 }
@@ -449,6 +450,10 @@ object BuildToolInstaller {
                 }
                 if (!propsText.contains("org.gradle.console")) {
                     propsText += "\norg.gradle.console=plain\n"
+                    modified = true
+                }
+                if (!propsText.contains("android.suppressUnsupportedCompileSdk")) {
+                    propsText += "\nandroid.suppressUnsupportedCompileSdk=34,35\n"
                     modified = true
                 }
                 if (!propsText.contains("org.gradle.java.home") && !javaHome.isNullOrBlank()) {
@@ -738,9 +743,109 @@ object BuildToolInstaller {
         }
     }
 
+    fun normalizeSdkPlatform(platformsDir: File, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT) {
+        if (!platformsDir.exists()) return
+        val targetPlatformDir = File(platformsDir, "android-$apiLevel")
+
+        // 1. Resolve diverted directories created by AGP or extraction (e.g. android-34-2, android-34-ext7, android-34-1)
+        val altDirs = platformsDir.listFiles { f ->
+            f.isDirectory && f != targetPlatformDir && (f.name.startsWith("android-$apiLevel-") || f.name.contains("android-$apiLevel"))
+        }?.sortedByDescending { it.lastModified() } ?: emptyList()
+
+        for (alt in altDirs) {
+            val altJar = File(alt, "android.jar")
+            val targetJar = File(targetPlatformDir, "android.jar")
+            if (altJar.exists() && (!targetJar.exists() || targetJar.length() < 1000L)) {
+                try {
+                    if (targetPlatformDir.exists()) targetPlatformDir.deleteRecursively()
+                    val renamed = alt.renameTo(targetPlatformDir)
+                    if (!renamed) {
+                        alt.copyRecursively(targetPlatformDir, overwrite = true)
+                        alt.deleteRecursively()
+                    }
+                } catch (_: Throwable) {
+                    try {
+                        alt.copyRecursively(targetPlatformDir, overwrite = true)
+                        alt.deleteRecursively()
+                    } catch (_: Throwable) {}
+                }
+            } else if (alt.exists() && targetJar.exists() && targetJar.length() > 1000L) {
+                try {
+                    alt.copyRecursively(targetPlatformDir, overwrite = false)
+                    alt.deleteRecursively()
+                } catch (_: Throwable) {}
+            }
+        }
+
+        if (targetPlatformDir.exists()) {
+            // 2. Ensure source.properties exists and strips any AndroidVersion.ExtensionLevel to match target hash 'android-34'
+            val propFile = File(targetPlatformDir, "source.properties")
+            val currentProps = if (propFile.exists()) {
+                try { propFile.readLines() } catch (_: Throwable) { emptyList() }
+            } else emptyList()
+
+            val sanitizedLines = currentProps.filterNot { it.contains("ExtensionLevel", ignoreCase = true) }.toMutableList()
+            if (!sanitizedLines.any { it.startsWith("AndroidVersion.ApiLevel") }) {
+                sanitizedLines.add("AndroidVersion.ApiLevel=$apiLevel")
+            }
+            if (!sanitizedLines.any { it.startsWith("Pkg.Desc") }) {
+                sanitizedLines.add("Pkg.Desc=Android SDK Platform $apiLevel")
+            }
+            if (!sanitizedLines.any { it.startsWith("Pkg.Revision") }) {
+                sanitizedLines.add("Pkg.Revision=3")
+            }
+            if (!sanitizedLines.any { it.startsWith("Platform.Version") }) {
+                sanitizedLines.add("Platform.Version=14")
+            }
+            if (!sanitizedLines.any { it.startsWith("Layoutlib.Api") }) {
+                sanitizedLines.add("Layoutlib.Api=15")
+            }
+            try {
+                propFile.writeText(sanitizedLines.joinToString("\n") + "\n")
+                propFile.setReadable(true, false)
+            } catch (_: Throwable) {}
+
+            // 3. Ensure package.xml exists so AGP SDK Manager recognizes package as installed
+            val packageXml = File(targetPlatformDir, "package.xml")
+            if (!packageXml.exists() || packageXml.length() == 0L) {
+                try {
+                    packageXml.writeText(
+                        """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns8="http://schemas.android.com/sdk/android/repo/repository2/02">
+    <localPackage path="platforms;android-$apiLevel" obsolete="false">
+        <type-details xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="ns8:platformDetailsType">
+            <api-level>$apiLevel</api-level>
+            <codename></codename>
+            <layoutlib api="15"/>
+        </type-details>
+        <revision>
+            <major>3</major>
+        </revision>
+        <display-name>Android SDK Platform $apiLevel</display-name>
+    </localPackage>
+</ns2:repository>
+""".trimIndent()
+                    )
+                    packageXml.setReadable(true, false)
+                } catch (_: Throwable) {}
+            }
+
+            // 4. Ensure android.jar has readable permissions
+            val androidJar = File(targetPlatformDir, "android.jar")
+            if (androidJar.exists()) {
+                try {
+                    androidJar.setReadable(true, false)
+                    try { android.system.Os.chmod(androidJar.absolutePath, 420) } catch (_: Throwable) {} // 0644
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
     fun isAndroidPlatformInstalled(context: Context, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT): Boolean {
         val sdkDir = findExistingSdk(context)
-        val platformDir = File(sdkDir, "platforms/android-$apiLevel")
+        val platformsDir = File(sdkDir, "platforms")
+        normalizeSdkPlatform(platformsDir, apiLevel)
+        val platformDir = File(platformsDir, "android-$apiLevel")
         val androidJar = File(platformDir, "android.jar")
         return androidJar.exists() && androidJar.length() > 0L
     }
@@ -773,14 +878,6 @@ object BuildToolInstaller {
 
             var downloadSuccess = false
             val urls = mutableListOf<String>()
-            if (apiLevel == 34) {
-                urls.add("https://dl.google.com/android/repository/platform-34-ext7_r03.zip")
-                urls.add("https://dl.google.com/android/repository/platform-34-ext7_r02.zip")
-                urls.add("https://dl.google.com/android/repository/platform-34-ext7_r01.zip")
-            } else if (apiLevel == 35) {
-                urls.add("https://dl.google.com/android/repository/platform-35-ext13_r02.zip")
-                urls.add("https://dl.google.com/android/repository/platform-35-ext13_r01.zip")
-            }
             for (rev in listOf("03", "02", "01")) {
                 urls.add("https://dl.google.com/android/repository/platform-${apiLevel}_r$rev.zip")
                 urls.add("https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r$rev.zip")
@@ -842,16 +939,11 @@ object BuildToolInstaller {
                 }
             }
 
+            normalizeSdkPlatform(platformsDir, apiLevel)
+
             val installedJar = File(targetPlatformDir, "android.jar")
             val success = installedJar.exists() && installedJar.length() > 0L
             if (success) {
-                val propFile = File(targetPlatformDir, "source.properties")
-                if (!propFile.exists() || propFile.length() == 0L) {
-                    try {
-                        propFile.writeText("Pkg.Desc = Android SDK Platform $apiLevel\nPkg.Revision = 3\nAndroidVersion.ApiLevel = $apiLevel\nLayoutlib.Api = 15\n")
-                        propFile.setReadable(true, false)
-                    } catch (_: Throwable) {}
-                }
                 onProgress(
                     if (isRu) "✔ Android SDK Platform $apiLevel успешно установлена!"
                     else "✔ Android SDK Platform $apiLevel installed successfully!",

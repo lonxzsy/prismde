@@ -230,4 +230,28 @@ class NdkSourcePropertiesAndGradleTest {
         val content = buildGradle.readText()
         assertTrue("ndkVersion '26.2.11394342' must be injected into android { }", content.contains("ndkVersion '26.2.11394342'"))
     }
+
+    @Test
+    fun testNormalizeSdkPlatformResolvesDivertedFoldersAndStripsExtensionLevel() {
+        val sdkDir = tempFolder.newFolder("normalize_platform_test")
+        val platformsDir = File(sdkDir, "platforms").also { it.mkdirs() }
+        val divertedDir = File(platformsDir, "android-34-2").also { it.mkdirs() }
+        File(divertedDir, "android.jar").writeBytes(ByteArray(2048) { 1 })
+        File(divertedDir, "source.properties").writeText("Pkg.Desc=Android SDK Platform 34-ext7\nAndroidVersion.ApiLevel=34\nAndroidVersion.ExtensionLevel=7\n")
+
+        BuildToolInstaller.normalizeSdkPlatform(platformsDir, 34)
+
+        val targetDir = File(platformsDir, "android-34")
+        assertTrue("platforms/android-34 must exist after normalization", targetDir.exists())
+        assertTrue("android.jar must exist in android-34", File(targetDir, "android.jar").exists())
+
+        val propText = File(targetDir, "source.properties").readText()
+        assertTrue("source.properties must have AndroidVersion.ApiLevel=34", propText.contains("AndroidVersion.ApiLevel=34"))
+        assertTrue("ExtensionLevel must be stripped to prevent android-34-ext7 hash mismatch", !propText.contains("ExtensionLevel"))
+
+        val packageXml = File(targetDir, "package.xml")
+        assertTrue("package.xml must exist for AGP package detection", packageXml.exists())
+        assertTrue("package.xml must define platforms;android-34", packageXml.readText().contains("path=\"platforms;android-34\""))
+        assertTrue("Diverted android-34-2 folder must be removed", !divertedDir.exists())
+    }
 }

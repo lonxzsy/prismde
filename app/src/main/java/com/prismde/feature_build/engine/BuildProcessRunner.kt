@@ -812,6 +812,9 @@ class BuildProcessRunner {
         if (!command.any { it.startsWith("-Pandroid.ndkVersion") }) {
             command.add("-Pandroid.ndkVersion=$ndkRev")
         }
+        if (!command.any { it.startsWith("-Pandroid.suppressUnsupportedCompileSdk") }) {
+            command.add("-Pandroid.suppressUnsupportedCompileSdk=34")
+        }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
