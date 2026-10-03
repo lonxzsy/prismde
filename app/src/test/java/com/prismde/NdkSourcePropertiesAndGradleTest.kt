@@ -100,10 +100,18 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("meta/abis.json must exist in NDK folder to prevent AGP Unsupported ABI fallback", abisJson.exists())
         val text = abisJson.readText()
         assertTrue("abis.json must define arm64-v8a", text.contains("\"arm64-v8a\""))
+        assertTrue("abis.json must define armeabi-v7a", text.contains("\"armeabi-v7a\""))
+        assertTrue("abis.json must define x86", text.contains("\"x86\""))
+        assertTrue("abis.json must define x86_64", text.contains("\"x86_64\""))
         assertTrue("abis.json must NOT define obsolete armeabi", !text.contains("\"armeabi\":"))
 
         val platformsJson = File(aideFolder, "meta/platforms.json")
         assertTrue("meta/platforms.json must exist", platformsJson.exists())
+        val platformsText = platformsJson.readText()
+        assertTrue("platforms.json must support min 16", platformsText.contains("\"min\": 16"))
+
+        val platformsDir = File(aideFolder, "platforms/android-24/arch-arm64/usr/lib")
+        assertTrue("platforms/android-24/arch-arm64/usr/lib must exist", platformsDir.exists())
     }
 
     @Test

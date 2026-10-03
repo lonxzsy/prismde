@@ -189,6 +189,15 @@ data class NdkVersion(
 
     companion object {
         const val NDK_ABIS_JSON = """{
+  "armeabi-v7a": {
+    "bitness": 32,
+    "default": true,
+    "deprecated": false,
+    "proc": "armv7-a",
+    "arch": "arm",
+    "triple": "arm-linux-androideabi",
+    "llvm_triple": "armv7-none-linux-androideabi"
+  },
   "arm64-v8a": {
     "bitness": 64,
     "default": true,
@@ -197,11 +206,29 @@ data class NdkVersion(
     "arch": "arm64",
     "triple": "aarch64-linux-android",
     "llvm_triple": "aarch64-none-linux-android"
+  },
+  "x86": {
+    "bitness": 32,
+    "default": true,
+    "deprecated": false,
+    "proc": "i686",
+    "arch": "x86",
+    "triple": "i686-linux-android",
+    "llvm_triple": "i686-none-linux-android"
+  },
+  "x86_64": {
+    "bitness": 64,
+    "default": true,
+    "deprecated": false,
+    "proc": "x86_64",
+    "arch": "x86_64",
+    "triple": "x86_64-linux-android",
+    "llvm_triple": "x86_64-none-linux-android"
   }
 }"""
 
         const val NDK_PLATFORMS_JSON = """{
-  "min": 21,
+  "min": 16,
   "max": 34,
   "aliases": {
     "20": 19,
@@ -268,15 +295,25 @@ data class NdkVersion(
                 try {
                     val metaDir = File(dir, "meta").also { it.mkdirs() }
                     val abisJson = File(metaDir, "abis.json")
+                    val currentAbis = if (abisJson.exists()) {
+                        try { abisJson.readText() } catch (_: Throwable) { "" }
+                    } else ""
                     val needsRewrite = !abisJson.exists() || abisJson.length() == 0L ||
-                            abisJson.readText().contains("\"proc\": \"armv7-a\"") ||
-                            !abisJson.readText().contains("\"arm64-v8a\"")
+                            !currentAbis.contains("\"arm64-v8a\"") ||
+                            !currentAbis.contains("\"armeabi-v7a\"") ||
+                            !currentAbis.contains("\"x86\"") ||
+                            !currentAbis.contains("\"x86_64\"")
                     if (needsRewrite) {
                         abisJson.writeText(NDK_ABIS_JSON)
                         abisJson.setReadable(true, false)
                     }
                     val platformsJson = File(metaDir, "platforms.json")
-                    if (!platformsJson.exists() || platformsJson.length() == 0L) {
+                    val currentPlatforms = if (platformsJson.exists()) {
+                        try { platformsJson.readText() } catch (_: Throwable) { "" }
+                    } else ""
+                    val needsPlatformsRewrite = !platformsJson.exists() || platformsJson.length() == 0L ||
+                            !currentPlatforms.contains("\"min\": 16")
+                    if (needsPlatformsRewrite) {
                         platformsJson.writeText(NDK_PLATFORMS_JSON)
                         platformsJson.setReadable(true, false)
                     }
@@ -288,6 +325,9 @@ data class NdkVersion(
 
             // Ensure STL shared and static libraries exist for all target triples
             ensureNdkStlLibraries(ndkDir, context)
+
+            // Ensure platforms directory and sysroot API level subdirectories exist for AGP
+            ensureNdkPlatforms(ndkDir)
         }
 
         fun findLibcxxShared(ndkDir: File, context: android.content.Context? = null): File? {
@@ -484,6 +524,31 @@ data class NdkVersion(
                                 abiA.setReadable(true, false)
                             } catch (_: Throwable) {}
                         }
+
+                        // Ensure essential system shared library stubs (libc.so, libm.so, libdl.so, liblog.so, libandroid.so, libz.so)
+                        val essentialSos = listOf("libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so", "libz.so")
+                        val is64Bit = triple.contains("64")
+                        val minElfBytes = if (is64Bit) {
+                            byteArrayOf(0x7F, 0x45, 0x4C, 0x46, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0xB7.toByte(), 0)
+                        } else {
+                            byteArrayOf(0x7F, 0x45, 0x4C, 0x46, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0x28.toByte(), 0)
+                        }
+                        for (soName in essentialSos) {
+                            val soFile = File(tripleDir, soName)
+                            if (!soFile.exists() || soFile.length() == 0L) {
+                                val sysCandidate = if (is64Bit) File("/system/lib64/$soName") else File("/system/lib/$soName")
+                                if (sysCandidate.exists() && sysCandidate.isFile && sysCandidate.length() > 1000L) {
+                                    try {
+                                        sysCandidate.copyTo(soFile, overwrite = true)
+                                        soFile.setReadable(true, false)
+                                    } catch (_: Throwable) {
+                                        try { soFile.writeBytes(minElfBytes); soFile.setReadable(true, false) } catch (_: Throwable) {}
+                                    }
+                                } else {
+                                    try { soFile.writeBytes(minElfBytes); soFile.setReadable(true, false) } catch (_: Throwable) {}
+                                }
+                            }
+                        }
                     }
 
                     // Headers
@@ -513,6 +578,93 @@ data class NdkVersion(
                                     android.system.Os.symlink(srcInc.absolutePath, cppV1.absolutePath)
                                 } catch (_: Throwable) {
                                     try { srcInc.copyRecursively(cppV1, overwrite = true) } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        fun ensureNdkPlatforms(ndkDir: File) {
+            val targetDirs = listOf(
+                ndkDir,
+                File(ndkDir, "android-ndk-aide"),
+                ndkDir.parentFile
+            ).filterNotNull().filter { it.exists() && it.isDirectory }
+
+            val apiLevels = listOf(21, 24, 34)
+            val abiToTriple = mapOf(
+                "arm64" to "aarch64-linux-android",
+                "arm" to "arm-linux-androideabi",
+                "x86" to "i686-linux-android",
+                "x86_64" to "x86_64-linux-android"
+            )
+
+            for (dir in targetDirs) {
+                // 1. Ensure <dir>/platforms/android-<api>/arch-<abi>/usr/lib
+                val platformsDir = File(dir, "platforms").also { it.mkdirs() }
+                for (api in apiLevels) {
+                    val platformApiDir = File(platformsDir, "android-$api").also { it.mkdirs() }
+                    for ((arch, triple) in abiToTriple) {
+                        val archDir = File(platformApiDir, "arch-$arch")
+                        val archUsrLib = File(archDir, "usr/lib").also { it.mkdirs() }
+                        val archUsrInc = File(archDir, "usr/include").also { it.mkdirs() }
+
+                        // Locate triple dir in sysroot
+                        val sysrootTripleDir = listOf(
+                            File(dir, "toolchains/llvm/prebuilt/linux-arm64/sysroot/usr/lib/$triple"),
+                            File(dir, "toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$triple"),
+                            File(dir, "sysroot/usr/lib/$triple")
+                        ).firstOrNull { it.exists() && it.isDirectory }
+
+                        if (sysrootTripleDir != null) {
+                            sysrootTripleDir.listFiles()?.filter { it.isFile }?.forEach { f ->
+                                val target = File(archUsrLib, f.name)
+                                if (!target.exists()) {
+                                    try {
+                                        android.system.Os.symlink(f.absolutePath, target.absolutePath)
+                                    } catch (_: Throwable) {
+                                        try { f.copyTo(target, overwrite = false) } catch (_: Throwable) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Ensure sysroot/usr/lib/<triple>/<api> subdirectories exist with .so stubs
+                val sysroots = listOf(
+                    File(dir, "toolchains/llvm/prebuilt/linux-arm64/sysroot"),
+                    File(dir, "toolchains/llvm/prebuilt/linux-x86_64/sysroot"),
+                    File(dir, "sysroot")
+                ).filter { it.exists() && it.isDirectory }
+
+                for (sysroot in sysroots) {
+                    val usrLib = File(sysroot, "usr/lib")
+                    if (!usrLib.exists()) continue
+
+                    for ((_, triple) in abiToTriple) {
+                        val tripleDir = File(usrLib, triple)
+                        if (!tripleDir.exists()) continue
+
+                        for (api in apiLevels) {
+                            val apiSubDir = File(tripleDir, "$api")
+                            if (!apiSubDir.exists()) {
+                                try {
+                                    apiSubDir.mkdirs()
+                                } catch (_: Throwable) {}
+                            }
+                            if (apiSubDir.exists() && apiSubDir.isDirectory) {
+                                tripleDir.listFiles()?.filter { it.isFile && (it.name.endsWith(".so") || it.name.endsWith(".a")) }?.forEach { soFile ->
+                                    val dst = File(apiSubDir, soFile.name)
+                                    if (!dst.exists()) {
+                                        try {
+                                            android.system.Os.symlink(soFile.absolutePath, dst.absolutePath)
+                                        } catch (_: Throwable) {
+                                            try { soFile.copyTo(dst, overwrite = false) } catch (_: Throwable) {}
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -696,6 +848,39 @@ data class NdkVersion(
                             }
                         }
                         applyChmod755(target)
+                    }
+
+                    // Ensure target-prefixed compiler aliases (e.g. aarch64-linux-android24-clang -> clang)
+                    val targetPrefixes = listOf(
+                        "aarch64-linux-android",
+                        "armv7a-linux-androideabi",
+                        "i686-linux-android",
+                        "x86_64-linux-android"
+                    )
+                    val apiSuffixes = listOf("", "21", "24", "26", "30", "34")
+                    for (prefix in targetPrefixes) {
+                        for (api in apiSuffixes) {
+                            val aliasName = "$prefix$api-clang"
+                            val aliasFile = File(binDir, aliasName)
+                            if (!aliasFile.exists()) {
+                                try {
+                                    android.system.Os.symlink("clang", aliasFile.absolutePath)
+                                } catch (_: Throwable) {
+                                    try { clangExe.copyTo(aliasFile, overwrite = false) } catch (_: Throwable) {}
+                                }
+                                applyChmod755(aliasFile)
+                            }
+                            val aliasPlusName = "$prefix$api-clang++"
+                            val aliasPlusFile = File(binDir, aliasPlusName)
+                            if (!aliasPlusFile.exists()) {
+                                try {
+                                    android.system.Os.symlink("clang++", aliasPlusFile.absolutePath)
+                                } catch (_: Throwable) {
+                                    try { clangPlusExe.copyTo(aliasPlusFile, overwrite = false) } catch (_: Throwable) {}
+                                }
+                                applyChmod755(aliasPlusFile)
+                            }
+                        }
                     }
                 }
 

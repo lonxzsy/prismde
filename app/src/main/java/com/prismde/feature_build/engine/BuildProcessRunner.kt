@@ -795,6 +795,9 @@ class BuildProcessRunner {
         if (!command.contains("--no-daemon") && !command.contains("--daemon")) {
             command.add("--no-daemon")
         }
+        if (!command.contains("--stacktrace")) {
+            command.add("--stacktrace")
+        }
         // Force plain console output to eliminate interactive animation / carriage return spam
         if (!command.contains("--console")) {
             command.add("--console=plain")
