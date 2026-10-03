@@ -250,8 +250,7 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("ExtensionLevel must be stripped to prevent android-34-ext7 hash mismatch", !propText.contains("ExtensionLevel"))
 
         val packageXml = File(targetDir, "package.xml")
-        assertTrue("package.xml must exist for AGP package detection", packageXml.exists())
-        assertTrue("package.xml must define platforms;android-34", packageXml.readText().contains("path=\"platforms;android-34\""))
+        assertTrue("package.xml from ext platform must be removed so hash stays android-34", !packageXml.exists())
         assertTrue("Diverted android-34-2 folder must be removed", !divertedDir.exists())
     }
 }
