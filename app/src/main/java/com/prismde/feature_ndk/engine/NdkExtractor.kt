@@ -60,10 +60,12 @@ class NdkExtractor {
                     extractZip(archiveFile, targetDir, onProgress)
                 }
                 ArchiveFormat.UNKNOWN -> {
-                    throw IllegalArgumentException("Неизвестный или неподдерживаемый формат архива: ${archiveFile.name}")
+                    val isRu = java.util.Locale.getDefault().language == "ru"
+                    throw IllegalArgumentException(if (isRu) "Неизвестный или неподдерживаемый формат архива: ${archiveFile.name}" else "Unknown or unsupported archive format: ${archiveFile.name}")
                 }
             }
-            onProgress("Настройка прав доступа к файлам компилятора...")
+            val isRu = java.util.Locale.getDefault().language == "ru"
+            onProgress(if (isRu) "Настройка прав доступа к файлам компилятора..." else "Configuring compiler toolchain permissions...")
             com.prismde.core.model.NdkVersion.ensureNdkPermissions(targetDir)
             true
         } catch (e: Exception) {
@@ -124,7 +126,8 @@ class NdkExtractor {
 
                 // Prevent Zip Slip / directory traversal attack
                 if (!outFile.canonicalPath.startsWith(targetDir.canonicalPath)) {
-                    throw SecurityException("Обнаружена попытка выхода за пределы каталога: ${entry.name}")
+                    val isRu = java.util.Locale.getDefault().language == "ru"
+                    throw SecurityException(if (isRu) "Обнаружена попытка выхода за пределы каталога: ${entry.name}" else "Path traversal attack detected: ${entry.name}")
                 }
 
                 if (entry.isDirectory) {
@@ -163,7 +166,8 @@ class NdkExtractor {
 
                 count++
                 if (count % 150 == 0) {
-                    onProgress("Распаковка: извлечено $count файлов...")
+                    val isRu = java.util.Locale.getDefault().language == "ru"
+                    onProgress(if (isRu) "Распаковка: извлечено $count файлов..." else "Unpacking: $count files extracted...")
                 }
 
                 entry = tar.nextEntry
@@ -207,7 +211,8 @@ class NdkExtractor {
                 val outFile = File(targetDir, entry.name)
 
                 if (!outFile.canonicalPath.startsWith(targetDir.canonicalPath)) {
-                    throw SecurityException("Обнаружена попытка выхода за пределы каталога: ${entry.name}")
+                    val isRu = java.util.Locale.getDefault().language == "ru"
+                    throw SecurityException(if (isRu) "Обнаружена попытка выхода за пределы каталога: ${entry.name}" else "Path traversal attack detected: ${entry.name}")
                 }
 
                 if (entry.isDirectory) {
@@ -227,7 +232,8 @@ class NdkExtractor {
 
                 count++
                 if (count % 150 == 0) {
-                    onProgress("Распаковка: извлечено $count файлов...")
+                    val isRu = java.util.Locale.getDefault().language == "ru"
+                    onProgress(if (isRu) "Распаковка: извлечено $count файлов..." else "Unpacking: $count files extracted...")
                 }
 
                 zipIn.closeEntry()

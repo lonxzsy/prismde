@@ -46,11 +46,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.prismde.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,10 +67,11 @@ fun DonationModalSheet(
     val cardNumber = "2200701900077402"
     val formattedCardNumber = "2200 7019 0007 7402"
     val bankName = "Тинькофф Банк (Т-Банк)"
+    val copiedMsg = stringResource(R.string.copied)
 
     fun copyToClipboard(text: String, label: String) {
         clipboardManager.setText(AnnotatedString(text))
-        Toast.makeText(context, "$label скопировано в буфер обмена", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "$label: $copiedMsg", Toast.LENGTH_SHORT).show()
     }
 
     ModalBottomSheet(
@@ -105,7 +108,7 @@ fun DonationModalSheet(
             Spacer(Modifier.height(14.dp))
 
             Text(
-                text = "Поддержать проект",
+                text = stringResource(R.string.donation_title),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
@@ -114,7 +117,7 @@ fun DonationModalSheet(
             Spacer(Modifier.height(6.dp))
 
             Text(
-                text = "PrismDE развивается силами энтузиастов. Если вам нравится приложение, вы можете отправить донат автору на развитие и добавление новых возможностей!",
+                text = stringResource(R.string.donation_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -149,7 +152,7 @@ fun DonationModalSheet(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Отправлять на Тинькофф Банк и только на него",
+                            text = stringResource(R.string.tinkoff_bank_only),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFFD84315)
@@ -161,10 +164,11 @@ fun DonationModalSheet(
             Spacer(Modifier.height(14.dp))
 
             // Requisite 1: Phone number (SBP)
+            val phoneLabel = stringResource(R.string.phone_number_label)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { copyToClipboard(phoneNumber, "Номер телефона") },
+                    .clickable { copyToClipboard(phoneNumber, phoneLabel) },
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -195,7 +199,7 @@ fun DonationModalSheet(
                         Spacer(Modifier.width(14.dp))
                         Column {
                             Text(
-                                text = "Номер телефона (СБП)",
+                                text = phoneLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -208,11 +212,11 @@ fun DonationModalSheet(
                     }
 
                     IconButton(
-                        onClick = { copyToClipboard(phoneNumber, "Номер телефона") }
+                        onClick = { copyToClipboard(phoneNumber, phoneLabel) }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.ContentCopy,
-                            contentDescription = "Скопировать номер",
+                            contentDescription = stringResource(R.string.copy),
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -222,10 +226,11 @@ fun DonationModalSheet(
             Spacer(Modifier.height(10.dp))
 
             // Requisite 2: Card Number
+            val cardLabel = stringResource(R.string.card_number_label)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { copyToClipboard(cardNumber, "Номер карты") },
+                    .clickable { copyToClipboard(cardNumber, cardLabel) },
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -256,7 +261,7 @@ fun DonationModalSheet(
                         Spacer(Modifier.width(14.dp))
                         Column {
                             Text(
-                                text = "Номер карты (МИР)",
+                                text = cardLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -270,11 +275,11 @@ fun DonationModalSheet(
                     }
 
                     IconButton(
-                        onClick = { copyToClipboard(cardNumber, "Номер карты") }
+                        onClick = { copyToClipboard(cardNumber, cardLabel) }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.ContentCopy,
-                            contentDescription = "Скопировать карту",
+                            contentDescription = stringResource(R.string.copy),
                             tint = MaterialTheme.colorScheme.tertiary
                         )
                     }
@@ -303,7 +308,7 @@ fun DonationModalSheet(
                     )
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        text = "После оплаты, отправьте скриншот вашей оплаты автору",
+                        text = stringResource(R.string.donation_screenshot_note),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface
@@ -314,6 +319,7 @@ fun DonationModalSheet(
             Spacer(Modifier.height(20.dp))
 
             // Action Buttons
+            val copyAllLabel = stringResource(R.string.copy_details)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -321,19 +327,19 @@ fun DonationModalSheet(
                 OutlinedButton(
                     onClick = {
                         val fullInfo = """
-                            Реквизиты для поддержки PrismDE:
-                            Банк: $bankName (только на него)
-                            Телефон: $phoneNumber
-                            Карта: $cardNumber
+                            PrismDE:
+                            Bank: $bankName
+                            Phone: $phoneNumber
+                            Card: $cardNumber
                         """.trimIndent()
-                        copyToClipboard(fullInfo, "Все реквизиты")
+                        copyToClipboard(fullInfo, copyAllLabel)
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Скопировать всё")
+                    Text(copyAllLabel)
                 }
 
                 Button(
@@ -341,7 +347,7 @@ fun DonationModalSheet(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text("Понятно", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.donation_done), fontWeight = FontWeight.Bold)
                 }
             }
         }

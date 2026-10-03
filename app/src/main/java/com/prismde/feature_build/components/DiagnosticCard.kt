@@ -42,7 +42,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import com.prismde.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -217,7 +219,7 @@ fun DiagnosticCard(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Как исправить (оффлайн):",
+                            text = stringResource(R.string.how_to_fix_offline),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = titleColor
@@ -241,7 +243,7 @@ fun DiagnosticCard(
             if (showRaw) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Код ошибки: ${diagnostic.rawMessage}",
+                    text = stringResource(R.string.error_code_raw, diagnostic.rawMessage),
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                     color = textColor.copy(alpha = 0.75f)
                 )
@@ -269,7 +271,7 @@ fun DiagnosticCard(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "К строке ${diagnostic.line}:${diagnostic.column}",
+                        text = stringResource(R.string.jump_to_line, diagnostic.line, diagnostic.column),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -298,7 +300,7 @@ fun DiagnosticCard(
                     }
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "AI разбор",
+                        text = stringResource(R.string.ai_analysis),
                         style = MaterialTheme.typography.labelMedium,
                         color = titleColor
                     )
@@ -318,7 +320,7 @@ fun DiagnosticCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Вставить: \"${diagnostic.suggestedFix}\"")
+                    Text(stringResource(R.string.insert_fix, diagnostic.suggestedFix))
                 }
             }
 
@@ -344,7 +346,7 @@ fun DiagnosticCard(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Разбор AI ассистента:",
+                            text = stringResource(R.string.ai_assistant_analysis),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = titleColor
@@ -379,7 +381,7 @@ fun DiagnosticCard(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "Применить исправление в код",
+                            text = stringResource(R.string.apply_fix_to_code),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold
                         )

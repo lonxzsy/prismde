@@ -53,10 +53,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.prismde.R
 import com.prismde.core.datastore.SettingsRepository
 import com.prismde.core.model.DefaultNdkCatalog
 import com.prismde.core.theme.DiagnosticSuccess
@@ -172,11 +174,11 @@ fun SetupWizardScreen(
                         onClick = { currentStep-- },
                         shape = RoundedCornerShape(14.dp)
                     ) {
-                        Text("Назад")
+                        Text(stringResource(R.string.wizard_back))
                     }
                 } else if (currentStep == 0) {
                     TextButton(onClick = { currentStep = 1 }) {
-                        Text("Пропустить")
+                        Text(stringResource(R.string.wizard_skip))
                     }
                 } else {
                     OutlinedButton(
@@ -190,7 +192,7 @@ fun SetupWizardScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Поддержать")
+                        Text(stringResource(R.string.wizard_support))
                     }
                 }
 
@@ -209,9 +211,9 @@ fun SetupWizardScreen(
                 ) {
                     Text(
                         text = when (currentStep) {
-                            0 -> "Далее"
-                            1 -> if (isInstalled) "Далее" else "Продолжить"
-                            else -> "Перейти к коду"
+                            0 -> stringResource(R.string.wizard_next)
+                            1 -> if (isInstalled) stringResource(R.string.wizard_next) else stringResource(R.string.wizard_continue)
+                            else -> stringResource(R.string.wizard_get_started)
                         },
                         fontWeight = FontWeight.Bold
                     )
@@ -251,14 +253,14 @@ private fun StepWelcome(
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "Добро пожаловать в PrismDE",
+            text = stringResource(R.string.wizard_welcome_title),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Нативная среда для разработки и компиляции C/C++ проектов с NDK прямо на вашем Android-устройстве.",
+            text = stringResource(R.string.wizard_welcome_desc),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -287,7 +289,7 @@ private fun StepWelcome(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = if (hasStorage) "Доступ к файлам разрешён" else "Разрешение на доступ к файлам",
+                        text = if (hasStorage) stringResource(R.string.wizard_storage_granted) else stringResource(R.string.wizard_storage_required),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -295,9 +297,9 @@ private fun StepWelcome(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = if (hasStorage)
-                        "PrismDE имеет полный доступ для открытия, редактирования и сборки проектов во внутренней памяти."
+                        stringResource(R.string.wizard_storage_desc_granted)
                     else
-                        "Для открытия и компиляции C/C++ проектов в папках устройства (Download, Documents) предоставьте разрешение на доступ к файлам.",
+                        stringResource(R.string.wizard_storage_desc_needed),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -310,7 +312,7 @@ private fun StepWelcome(
                     ) {
                         Icon(Icons.Rounded.Memory, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Предоставить доступ к файлам")
+                        Text(stringResource(R.string.grant_storage_permission))
                     }
                 }
             }
@@ -330,14 +332,18 @@ private fun StepWelcome(
                 ) {
                     Icon(Icons.Rounded.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(10.dp))
-                    Text("Тема интерфейса:", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.interface_theme), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("system" to "Авто", "light" to "Светлая", "dark" to "Тёмная").forEach { (mode, label) ->
+                    listOf(
+                        "system" to stringResource(R.string.theme_system),
+                        "light" to stringResource(R.string.theme_light),
+                        "dark" to stringResource(R.string.theme_dark)
+                    ).forEach { (mode, label) ->
                         val isSelected = darkMode == mode
                         Button(
                             onClick = { onThemeChange(mode) },
@@ -364,7 +370,7 @@ private fun StepWelcome(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Material You", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                        Text("Динамические цвета системы", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.monet_dynamic_colors), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = dynamicColor, onCheckedChange = onDynamicColorChange)
                 }
@@ -403,14 +409,14 @@ private fun StepNdkDownload(
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = if (isInstalled) "NDK готов к работе!" else "Установка Android NDK",
+            text = if (isInstalled) stringResource(R.string.wizard_ndk_ready) else stringResource(R.string.wizard_ndk_install_title),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Для сборки нативных C/C++ проектов и создания .so библиотек PrismDE устанавливает тулчейн Clang/LLVM из официального релиза.",
+            text = stringResource(R.string.wizard_ndk_install_desc),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -435,7 +441,7 @@ private fun StepNdkDownload(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Размер архива: ${targetNdk.archiveSizeBytes / (1024 * 1024)} МБ (AArch64)",
+                            text = stringResource(R.string.wizard_archive_size, (targetNdk.archiveSizeBytes / (1024 * 1024)).toInt()),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -460,12 +466,12 @@ private fun StepNdkDownload(
                     Spacer(Modifier.height(6.dp))
                     Row {
                         Text(
-                            text = "${downloadPercent.toInt()}% загружено",
+                            text = stringResource(R.string.ndk_downloaded_percent, downloadPercent.toInt()),
                             style = MaterialTheme.typography.labelSmall
                         )
                         Spacer(Modifier.weight(1f))
                         Text(
-                            text = "${downloadSpeed / (1024 * 1024)} МБ/с",
+                            text = stringResource(R.string.ndk_speed_mbs, (downloadSpeed / (1024 * 1024)).toInt()),
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -490,7 +496,7 @@ private fun StepNdkDownload(
                     ) {
                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Начать загрузку NDK")
+                        Text(stringResource(R.string.download_ndk_button))
                     }
                 }
             }
@@ -515,14 +521,14 @@ private fun StepFinished(
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "Настройка завершена!",
+            text = stringResource(R.string.wizard_setup_done),
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Для вас уже подготовлен тестовый JNI-проект с нативной библиотекой. Нажмите кнопку ниже, чтобы открыть редактор кода и собрать ваш первый .so файл.",
+            text = stringResource(R.string.wizard_setup_done_desc),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -562,12 +568,12 @@ private fun StepFinished(
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Поддержать развитие проекта",
+                        text = stringResource(R.string.wizard_support_dev),
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = "Отправить донат автору на поддержку мобильной IDE",
+                        text = stringResource(R.string.wizard_support_dev_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -589,7 +595,7 @@ private fun StepFinished(
                 modifier = Modifier.size(18.dp)
             )
             Spacer(Modifier.width(8.dp))
-            Text("Поддержать проект (Донат)", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.wizard_donate_action), fontWeight = FontWeight.SemiBold)
         }
     }
 }

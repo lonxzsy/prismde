@@ -16,6 +16,8 @@ class PrismApplication : Application() {
             sampleDir.mkdirs()
             val jniDir = File(sampleDir, "jni").also { it.mkdirs() }
 
+            val isRu = java.util.Locale.getDefault().language == "ru"
+            val helloMsg = if (isRu) "Привет из нативной библиотеки PrismDE (.so)!" else "Hello from PrismDE native library (.so)!"
             val cppFile = File(jniDir, "native-lib.cpp")
             cppFile.writeText(
                 """
@@ -26,7 +28,7 @@ class PrismApplication : Application() {
                 Java_com_example_app_MainActivity_stringFromJNI(
                         JNIEnv* env,
                         jobject /* this */) {
-                    std::string hello = "Привет из нативной библиотеки PrismDE (.so)!";
+                    std::string hello = "$helloMsg";
                     return env->NewStringUTF(hello.c_str());
                 }
                 """.trimIndent()

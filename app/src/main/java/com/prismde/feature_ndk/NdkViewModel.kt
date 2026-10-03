@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import com.prismde.R
 import java.io.File
 
 data class NdkUiState(
@@ -71,7 +72,7 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.downloadingTag != null) return
         if (ndk.isInstalled && !forceReinstall) {
             _uiState.value = _uiState.value.copy(
-                statusMessage = "Тулчейн «${ndk.displayName}» уже установлен и готов к использованию."
+                statusMessage = context.getString(R.string.ndk_already_installed, ndk.displayName)
             )
             return
         }
@@ -79,7 +80,7 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             downloadingTag = ndk.versionTag,
             downloadPercent = 0f,
-            statusMessage = "Подготовка к скачиванию..."
+            statusMessage = context.getString(R.string.ndk_preparing_download)
         )
 
         viewModelScope.launch {
@@ -101,13 +102,13 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.value = _uiState.value.copy(
                             downloadPercent = percent,
                             downloadSpeed = speed,
-                            statusMessage = "Скачивание: ${current / (1024 * 1024)} из ${total / (1024 * 1024)} МБ"
+                            statusMessage = context.getString(R.string.ndk_downloading_progress, current / (1024 * 1024), total / (1024 * 1024))
                         )
                     }
                 )
 
                 // Extract
-                _uiState.value = _uiState.value.copy(statusMessage = "Распаковка NDK архива...")
+                _uiState.value = _uiState.value.copy(statusMessage = context.getString(R.string.ndk_unpacking))
                 val success = extractor.extract(archiveFile, targetDir) { msg ->
                     _uiState.value = _uiState.value.copy(statusMessage = msg)
                 }
@@ -118,21 +119,21 @@ class NdkViewModel(application: Application) : AndroidViewModel(application) {
                     refreshVersions()
                     _uiState.value = _uiState.value.copy(
                         downloadingTag = null,
-                        statusMessage = "NDK ${ndk.versionTag} успешно установлен и активирован!"
+                        statusMessage = context.getString(R.string.ndk_installed_success, ndk.versionTag)
                     )
                 } else {
                     archiveFile.delete()
                     targetDir.deleteRecursively()
                     _uiState.value = _uiState.value.copy(
                         downloadingTag = null,
-                        statusMessage = "Ошибка при распаковке архива. Пожалуйста, попробуйте снова."
+                        statusMessage = context.getString(R.string.ndk_unpack_error)
                     )
                 }
             } catch (e: Exception) {
                 archiveFile.delete()
                 _uiState.value = _uiState.value.copy(
                     downloadingTag = null,
-                    statusMessage = "Ошибка загрузки: ${e.message}"
+                    statusMessage = context.getString(R.string.ndk_download_error, e.message ?: "")
                 )
             }
         }

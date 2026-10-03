@@ -80,9 +80,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.core.datastore.SettingsRepository
 import com.prismde.feature_build.engine.AntigravityAuthManager
 import kotlinx.coroutines.launch
@@ -98,6 +100,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val authManager = remember { AntigravityAuthManager() }
+    val isRu = remember { java.util.Locale.getDefault().language == "ru" }
 
     val darkMode by settingsRepository.darkModeFlow.collectAsState(initial = "system")
     val dynamicColor by settingsRepository.dynamicColorFlow.collectAsState(initial = true)
@@ -178,7 +181,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(16.dp))
 
         // SECTION: Appearance
-        SettingsSectionHeader(title = "Внешний вид и стиль", icon = Icons.Rounded.Palette)
+        SettingsSectionHeader(title = stringResource(R.string.settings_appearance), icon = Icons.Rounded.Palette)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -190,8 +193,8 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Динамические цвета (Material You)", style = MaterialTheme.typography.bodyLarge)
-                        Text("Адаптация палитры под обои системы", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (isRu) "Динамические цвета (Material You)" else "Dynamic Colors (Material You)", style = MaterialTheme.typography.bodyLarge)
+                        Text(if (isRu) "Адаптация палитры под обои системы" else "Adaptive color palette based on system wallpaper", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = dynamicColor,
@@ -205,9 +208,10 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val currentThemeLabel = if (darkMode == "dark") stringResource(R.string.theme_dark) else if (darkMode == "light") stringResource(R.string.theme_light) else stringResource(R.string.theme_system)
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Тема оформления", style = MaterialTheme.typography.bodyLarge)
-                        Text("Текущая: ${if (darkMode == "dark") "Тёмная" else if (darkMode == "light") "Светлая" else "Системная"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.settings_theme_mode), style = MaterialTheme.typography.bodyLarge)
+                        Text(if (isRu) "Текущая: $currentThemeLabel" else "Current: $currentThemeLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Button(
                         onClick = {
@@ -220,7 +224,7 @@ fun SettingsScreen(
                         },
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text(if (darkMode == "dark") "Тёмная" else if (darkMode == "light") "Светлая" else "Авто")
+                        Text(currentThemeLabel)
                     }
                 }
             }
@@ -229,14 +233,14 @@ fun SettingsScreen(
         Spacer(Modifier.height(20.dp))
 
         // SECTION: Code Editor
-        SettingsSectionHeader(title = "Редактор кода", icon = Icons.Rounded.Code)
+        SettingsSectionHeader(title = stringResource(R.string.settings_editor_section), icon = Icons.Rounded.Code)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Размер шрифта: ${fontSize.toInt()} sp", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.font_size_label, fontSize.toInt()), style = MaterialTheme.typography.bodyMedium)
                 Slider(
                     value = fontSize,
                     onValueChange = { coroutineScope.launch { settingsRepository.setEditorFontSize(it) } },
@@ -251,8 +255,8 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Перенос длинных строк", style = MaterialTheme.typography.bodyLarge)
-                        Text("Автоматический перенос строк без горизонтального скролла", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.word_wrap), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.word_wrap_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = wordWrap,
@@ -281,8 +285,8 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Менеджер версий NDK", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                    Text("Активная версия: $activeNdk", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.manage_toolchains), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.active_toolchain, activeNdk), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
                 Icon(Icons.AutoMirrored.Rounded.NavigateNext, contentDescription = null)
             }
@@ -291,7 +295,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(20.dp))
 
         // SECTION: AI Assistant & Models
-        SettingsSectionHeader(title = "AI Ассистент и Модели", icon = Icons.Rounded.AutoAwesome)
+        SettingsSectionHeader(title = stringResource(R.string.settings_ai_section), icon = Icons.Rounded.AutoAwesome)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -301,12 +305,12 @@ fun SettingsScreen(
 
                 // Dedicated Active Service Selector
                 Text(
-                    text = "Используемый AI сервис:",
+                    text = stringResource(R.string.ai_service_provider),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Выберите активную службу для анализа ошибок и генерации кода:",
+                    text = stringResource(R.string.ai_choose_active),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -393,7 +397,7 @@ fun SettingsScreen(
                                     modifier = Modifier.padding(start = 8.dp)
                                 ) {
                                     Text(
-                                        text = "Рекомендуется",
+                                        text = if (isRu) "Рекомендуется" else "Recommended",
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
@@ -410,15 +414,15 @@ fun SettingsScreen(
                         Text(
                             text = if (aiProvider == "antigravity") {
                                 if (antigravityAccessToken.isNotBlank()) {
-                                    "Аккаунт: ${antigravityUserEmail.ifBlank { "Google" }} • Модель: $antigravityModel"
+                                    stringResource(R.string.ai_status_antigravity_connected, antigravityUserEmail.ifBlank { "Google" }, antigravityModel)
                                 } else {
-                                    "Не авторизован • Нажмите «Войти в Google» ниже"
+                                    stringResource(R.string.ai_status_antigravity_not)
                                 }
                             } else {
                                 if (geminiKey.isNotBlank()) {
-                                    "API-ключ сохранен • Модель: $geminiModel"
+                                    stringResource(R.string.ai_status_gemini_key_set, geminiModel)
                                 } else {
-                                    "API-ключ не задан • Введите ключ ниже"
+                                    stringResource(R.string.ai_status_gemini_key_not)
                                 }
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -439,13 +443,13 @@ fun SettingsScreen(
 
                     if (!isAuthenticated) {
                         Text(
-                            text = "Подключение к Google Antigravity",
+                            text = stringResource(R.string.antigravity_connect_title),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "Интеграция с Google Antigravity открывает доступ к передовым моделям генерации кода Gemini 3 и Claude с автоматической квотой.",
+                            text = stringResource(R.string.antigravity_connect_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -463,13 +467,13 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Rounded.OpenInBrowser, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("1. Войти в Google (Открыть браузер)")
+                            Text(stringResource(R.string.antigravity_step_1))
                         }
 
                         Spacer(Modifier.height(12.dp))
 
                         Text(
-                            text = "2. Скопируйте код или ссылку из адресной строки браузера и вставьте сюда:",
+                            text = stringResource(R.string.antigravity_step_2),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -489,7 +493,7 @@ fun SettingsScreen(
                                         authCodeInput = clip
                                     }
                                 }) {
-                                    Icon(Icons.Rounded.ContentPaste, contentDescription = "Вставить")
+                                    Icon(Icons.Rounded.ContentPaste, contentDescription = stringResource(R.string.paste_button))
                                 }
                             }
                         )
@@ -539,7 +543,7 @@ fun SettingsScreen(
                                         settingsRepository.setAiProvider("antigravity")
                                         authCodeInput = ""
                                     } else {
-                                        authErrorMessage = tokenRes.exceptionOrNull()?.message ?: "Не удалось авторизоваться"
+                                        authErrorMessage = tokenRes.exceptionOrNull()?.message ?: context.getString(R.string.failed_to_authorize)
                                     }
                                     isAuthenticating = false
                                 }
@@ -551,11 +555,11 @@ fun SettingsScreen(
                             if (isAuthenticating) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                                 Spacer(Modifier.width(8.dp))
-                                Text("Авторизация...")
+                                Text(stringResource(R.string.authorizing))
                             } else {
                                 Icon(Icons.Rounded.CheckCircle, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
-                                Text("3. Подключить Antigravity и активировать")
+                                Text(stringResource(R.string.antigravity_step_3))
                             }
                         }
                     } else {
@@ -607,7 +611,7 @@ fun SettingsScreen(
                                             )
                                             Spacer(Modifier.width(4.dp))
                                             Text(
-                                                text = "Подключен",
+                                                text = stringResource(R.string.ai_connected),
                                                 color = Color(0xFF2E7D32),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold
@@ -628,7 +632,7 @@ fun SettingsScreen(
                                     ) {
                                         quotaGroups.forEach { group ->
                                             val isGeminiGroup = group.groupName.contains("Gemini", ignoreCase = true)
-                                            val groupTitle = if (isGeminiGroup) "Модели Gemini" else "Модели Claude и GPT"
+                                            val groupTitle = if (isGeminiGroup) stringResource(R.string.quota_gemini_group) else stringResource(R.string.quota_claude_group)
                                             val groupIcon = if (isGeminiGroup) Icons.Rounded.AutoAwesome else Icons.Rounded.SmartToy
 
                                             Surface(
@@ -666,8 +670,8 @@ fun SettingsScreen(
                                                         }
 
                                                         val bucketTitle = when (bucket.window) {
-                                                            "5h" -> "Лимит на 5 часов"
-                                                            "weekly" -> "Недельный лимит"
+                                                            "5h" -> stringResource(R.string.quota_5h)
+                                                            "weekly" -> stringResource(R.string.quota_weekly)
                                                             else -> bucket.displayName
                                                         }
 
@@ -714,7 +718,7 @@ fun SettingsScreen(
                                                                 )
                                                                 Spacer(Modifier.width(4.dp))
                                                                 Text(
-                                                                    text = "Сброс: ${AntigravityAuthManager.formatResetTime(bucket.resetTime)}",
+                                                                    text = stringResource(R.string.quota_reset_label, AntigravityAuthManager.formatResetTime(bucket.resetTime)),
                                                                     style = MaterialTheme.typography.labelSmall,
                                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                                 )
@@ -734,7 +738,7 @@ fun SettingsScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Остаток квоты токенов:", style = MaterialTheme.typography.bodyMedium)
+                                        Text(stringResource(R.string.quota_remains_approx), style = MaterialTheme.typography.bodyMedium)
                                         Text(
                                             text = "$quotaPercentInt%",
                                             style = MaterialTheme.typography.titleMedium,
@@ -764,7 +768,7 @@ fun SettingsScreen(
                                             )
                                             Spacer(Modifier.width(4.dp))
                                             Text(
-                                                text = "Сброс квоты: ${AntigravityAuthManager.formatResetTime(antigravityQuotaResetTime)}",
+                                                text = stringResource(R.string.quota_reset_label, AntigravityAuthManager.formatResetTime(antigravityQuotaResetTime)),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -820,7 +824,7 @@ fun SettingsScreen(
                                         } else {
                                             Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(Modifier.width(4.dp))
-                                            Text("Обновить квоту", style = MaterialTheme.typography.labelMedium)
+                                            Text(stringResource(R.string.refresh_quota), style = MaterialTheme.typography.labelMedium)
                                         }
                                     }
 
@@ -835,7 +839,7 @@ fun SettingsScreen(
                                     ) {
                                         Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Выйти", style = MaterialTheme.typography.labelMedium)
+                                        Text(stringResource(R.string.disconnect), style = MaterialTheme.typography.labelMedium)
                                     }
                                 }
                             }
@@ -844,7 +848,7 @@ fun SettingsScreen(
                         Spacer(Modifier.height(14.dp))
 
                         // Antigravity Model Picker
-                        Text("Модель генерации кода Antigravity", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.antigravity_model_choice), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(6.dp))
 
                         var showAgyMenu by remember { mutableStateOf(false) }
@@ -871,7 +875,7 @@ fun SettingsScreen(
                                         if (!selectedModelObj?.description.isNullOrBlank()) {
                                             Text(text = selectedModelObj!!.description!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                                         }
-                                        Text(text = "Идентификатор: $antigravityModel", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(text = stringResource(R.string.current_model_label, antigravityModel), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
                                 }
@@ -916,7 +920,7 @@ fun SettingsScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Использует персональный API ключ от Google AI Studio (aistudio.google.com).",
+                        text = stringResource(R.string.gemini_studio_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -935,7 +939,7 @@ fun SettingsScreen(
 
                     Spacer(Modifier.height(14.dp))
 
-                    Text("Модель Gemini", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.gemini_model_choice), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
 
                     var showGeminiMenu by remember { mutableStateOf(false) }
@@ -958,7 +962,7 @@ fun SettingsScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     val currentTitle = AntigravityAuthManager.DEFAULT_GEMINI_API_MODELS.find { it.first == geminiModel }?.second ?: geminiModel
                                     Text(text = currentTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                    Text(text = "Идентификатор: $geminiModel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(text = stringResource(R.string.current_model_label, geminiModel), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
                             }
@@ -998,7 +1002,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(20.dp))
 
         // SECTION: App Update
-        SettingsSectionHeader(title = "Обновления приложения", icon = Icons.Rounded.SystemUpdate)
+        SettingsSectionHeader(title = stringResource(R.string.settings_updates_section), icon = Icons.Rounded.SystemUpdate)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -1012,13 +1016,13 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("PrismDE v1.0.0", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                    Text("Репозиторий: github.com/lonxzsy/prismde", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.repository_info), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Button(
                     onClick = onCheckUpdates,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Проверить")
+                    Text(stringResource(R.string.check_updates))
                 }
             }
         }
@@ -1026,7 +1030,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(20.dp))
 
         // SECTION: Support / Donation
-        SettingsSectionHeader(title = "Поддержка проекта", icon = Icons.Rounded.Favorite)
+        SettingsSectionHeader(title = stringResource(R.string.settings_support_section), icon = Icons.Rounded.Favorite)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -1053,8 +1057,8 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Донат на развитие PrismDE", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                        Text("Поддержите автора проекта донатом на кофе или развитие IDE", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.donate_title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.donate_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -1067,7 +1071,7 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Color(0xFFE91E63), modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Реквизиты для доната")
+                    Text(stringResource(R.string.open_donation_details))
                 }
             }
         }

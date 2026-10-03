@@ -25,8 +25,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.core.model.AndroidAbi
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.CppStandard
@@ -52,7 +54,7 @@ fun BuildPresetDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Параметры сборки NDK", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.build_preset_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         },
         text = {
             Column(
@@ -61,7 +63,7 @@ fun BuildPresetDialog(
                     .verticalScroll(scrollState)
             ) {
                 // ABI Selection
-                Text("Целевая архитектура (ABI):", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.target_abi), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 AndroidAbi.values().forEach { abi ->
                     Row(
                         modifier = Modifier
@@ -79,12 +81,12 @@ fun BuildPresetDialog(
                 Spacer(Modifier.height(10.dp))
 
                 // Project Type
-                Text("Режим сборки:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.project_type_build_system), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 listOf(
-                    ProjectType.AUTO_DETECT to "Автоопределение",
-                    ProjectType.PURE_JNI_SO to "Только .so библиотека (JNI)",
-                    ProjectType.CMAKE to "CMake / Ninja",
-                    ProjectType.SINGLE_FILE_EXECUTABLE to "Исполняемый бинарник"
+                    ProjectType.AUTO_DETECT to stringResource(R.string.type_auto_detect),
+                    ProjectType.PURE_JNI_SO to stringResource(R.string.type_jni_so),
+                    ProjectType.CMAKE to stringResource(R.string.type_cmake),
+                    ProjectType.SINGLE_FILE_EXECUTABLE to stringResource(R.string.type_single_file)
                 ).forEach { (type, label) ->
                     Row(
                         modifier = Modifier
@@ -102,7 +104,7 @@ fun BuildPresetDialog(
                 Spacer(Modifier.height(10.dp))
 
                 // C++ Standard
-                Text("Стандарт C++:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.cpp_standard), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 CppStandard.values().forEach { std ->
                     Row(
                         modifier = Modifier
@@ -119,11 +121,13 @@ fun BuildPresetDialog(
 
                 Spacer(Modifier.height(10.dp))
 
+                val isRu = java.util.Locale.getDefault().language == "ru"
+
                 // Min API Level
                 OutlinedTextField(
                     value = minApiStr,
                     onValueChange = { minApiStr = it },
-                    label = { Text("Минимальный Android API") },
+                    label = { Text(if (isRu) "Минимальный Android API" else "Minimum Android API Level") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -134,7 +138,7 @@ fun BuildPresetDialog(
                 OutlinedTextField(
                     value = customCFlags,
                     onValueChange = { customCFlags = it },
-                    label = { Text("Флаги компилятора (CFlags)") },
+                    label = { Text(if (isRu) "Флаги компилятора (CFlags)" else "Compiler Flags (CFlags)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -145,7 +149,7 @@ fun BuildPresetDialog(
                 OutlinedTextField(
                     value = customLdFlags,
                     onValueChange = { customLdFlags = it },
-                    label = { Text("Флаги линковщика (LDFlags)") },
+                    label = { Text(if (isRu) "Флаги линковщика (LDFlags)" else "Linker Flags (LDFlags)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -169,12 +173,12 @@ fun BuildPresetDialog(
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Сохранить")
+                Text(stringResource(R.string.save))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Отмена")
+                Text(stringResource(R.string.cancel))
             }
         },
         shape = RoundedCornerShape(24.dp)

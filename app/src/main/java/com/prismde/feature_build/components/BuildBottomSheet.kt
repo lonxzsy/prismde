@@ -36,8 +36,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.core.model.Diagnostic
 import com.prismde.core.theme.DiagnosticError
 import com.prismde.core.theme.DiagnosticSuccess
@@ -89,7 +91,7 @@ fun BuildBottomSheet(
                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = "Выполняется сборка NDK...",
+                        text = stringResource(R.string.build_in_progress),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -102,7 +104,7 @@ fun BuildBottomSheet(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = "Сборка успешна!",
+                        text = stringResource(R.string.build_successful),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = DiagnosticSuccess
@@ -116,7 +118,7 @@ fun BuildBottomSheet(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = "Ошибки сборки (${diagnostics.size})",
+                        text = stringResource(R.string.build_errors_count, diagnostics.size),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = DiagnosticError
@@ -125,7 +127,7 @@ fun BuildBottomSheet(
 
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Rounded.Close, contentDescription = "Закрыть")
+                    Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.close))
                 }
             }
 
@@ -134,12 +136,12 @@ fun BuildBottomSheet(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Ошибки (${diagnostics.size})") }
+                    text = { Text(stringResource(R.string.tab_errors, diagnostics.size)) }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Вывод сборки (${logs.size})") }
+                    text = { Text(stringResource(R.string.tab_build_output, logs.size)) }
                 )
             }
 
@@ -156,7 +158,7 @@ fun BuildBottomSheet(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (isBuilding) "Анализ вывода компилятора..." else "Ошибок не обнаружено!",
+                                text = if (isBuilding) stringResource(R.string.analyzing_output) else stringResource(R.string.no_errors_found),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

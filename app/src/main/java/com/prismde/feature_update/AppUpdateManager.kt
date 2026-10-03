@@ -66,7 +66,7 @@ class AppUpdateManager(
                                 AppReleaseInfo(
                                     tagName = tagName,
                                     versionName = remoteVersion,
-                                    releaseNotes = json.optString("body", "Новая версия доступна для установки."),
+                                    releaseNotes = json.optString("body", if (java.util.Locale.getDefault().language == "ru") "Новая версия доступна для установки." else "New version is available for installation."),
                                     apkDownloadUrl = asset.getString("browser_download_url"),
                                     apkSizeBytes = asset.optLong("size", 0L),
                                     publishedAt = json.optString("published_at", "")

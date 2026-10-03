@@ -26,19 +26,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 
-enum class FileTemplateType(val displayName: String, val extension: String, val defaultContent: String) {
-    CPP_SOURCE("C++ Исходный файл (.cpp)", "cpp", """
+enum class FileTemplateType(
+    val labelRes: Int?,
+    val displayName: String,
+    val extension: String,
+    val defaultContent: String
+) {
+    CPP_SOURCE(R.string.template_cpp_source, "C++ Source File (.cpp)", "cpp", """
         #include <iostream>
 
         int main() {
-            std::cout << "Привет из PrismDE NDK!" << std::endl;
+            std::cout << "Hello from PrismDE NDK!" << std::endl;
             return 0;
         }
     """.trimIndent()),
 
-    JNI_CPP("JNI C++ Модуль для Android", "cpp", """
+    JNI_CPP(R.string.template_jni_cpp, "JNI C++ for Android", "cpp", """
         #include <jni.h>
         #include <android/log.h>
 
@@ -47,21 +54,21 @@ enum class FileTemplateType(val displayName: String, val extension: String, val 
 
         extern "C" JNIEXPORT jstring JNICALL
         Java_com_example_app_MainActivity_stringFromJNI(JNIEnv* env, jobject /* this */) {
-            LOGI("JNI функция вызвана из Android приложения");
-            return env->NewStringUTF("Привет из скомпилированной .so библиотеки PrismDE!");
+            LOGI("JNI function called from Android");
+            return env->NewStringUTF("Hello from PrismDE native .so library!");
         }
     """.trimIndent()),
 
-    C_SOURCE("C Исходный файл (.c)", "c", """
+    C_SOURCE(R.string.template_c_source, "C Source File (.c)", "c", """
         #include <stdio.h>
 
         int main(void) {
-            printf("Привет из C в PrismDE!\n");
+            printf("Hello from C in PrismDE!\n");
             return 0;
         }
     """.trimIndent()),
 
-    HEADER("Заголовочный файл (.h)", "h", """
+    HEADER(R.string.template_header, "Header File (.h)", "h", """
         #pragma once
 
         #ifdef __cplusplus
@@ -75,7 +82,7 @@ enum class FileTemplateType(val displayName: String, val extension: String, val 
         #endif
     """.trimIndent()),
 
-    ANDROID_MK("Android.mk (Сборка ndk-build)", "mk", """
+    ANDROID_MK(R.string.template_android_mk, "Android.mk (ndk-build)", "mk", """
         LOCAL_PATH := $(call my-dir)
 
         include $(CLEAR_VARS)
@@ -85,13 +92,13 @@ enum class FileTemplateType(val displayName: String, val extension: String, val 
         include $(BUILD_SHARED_LIBRARY)
     """.trimIndent()),
 
-    APPLICATION_MK("Application.mk", "mk", """
+    APPLICATION_MK(null, "Application.mk", "mk", """
         APP_ABI := arm64-v8a armeabi-v7a x86_64
         APP_PLATFORM := android-24
         APP_STL := c++_shared
     """.trimIndent()),
 
-    CMAKE("CMakeLists.txt", "txt", """
+    CMAKE(null, "CMakeLists.txt", "txt", """
         cmake_minimum_required(VERSION 3.22.1)
         project("native-lib")
 
@@ -103,7 +110,7 @@ enum class FileTemplateType(val displayName: String, val extension: String, val 
         target_link_libraries(${'$'}{PROJECT_NAME} ${'$'}{log-lib})
     """.trimIndent()),
 
-    DIRECTORY("Новая папка", "", "")
+    DIRECTORY(R.string.template_folder, "New Folder", "", "")
 }
 
 @Composable
@@ -124,7 +131,7 @@ fun CreateFileDialog(
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Создать элемент")
+                Text(stringResource(R.string.create_file_folder_title))
             }
         },
         text = {
@@ -132,13 +139,13 @@ fun CreateFileDialog(
                 OutlinedTextField(
                     value = fileName,
                     onValueChange = { fileName = it },
-                    label = { Text("Имя файла / папки") },
+                    label = { Text(stringResource(R.string.file_folder_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(Modifier.height(12.dp))
-                Text("Шаблон:", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(R.string.file_type_label), style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(4.dp))
 
                 FileTemplateType.values().forEach { template ->
@@ -166,7 +173,10 @@ fun CreateFileDialog(
                             onClick = { selectedTemplate = template }
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text(text = template.displayName, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = template.labelRes?.let { stringResource(it) } ?: template.displayName,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
             }
@@ -180,12 +190,12 @@ fun CreateFileDialog(
                     }
                 }
             ) {
-                Text("Создать")
+                Text(stringResource(R.string.create))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Отмена")
+                Text(stringResource(R.string.cancel))
             }
         },
         shape = RoundedCornerShape(24.dp)

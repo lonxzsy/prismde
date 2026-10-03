@@ -35,7 +35,8 @@ class GeminiExplainer(
         sourceCodeContext: String,
         config: AiConfig
     ): Result<String> {
-        val prompt = """
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val prompt = if (isRu) """
             Ты эксперт по C/C++ и Android NDK. Разбери ошибку компилятора:
 
             Файл: ${diagnostic.filePath} (строка ${diagnostic.line}, колонка ${diagnostic.column})
@@ -53,6 +54,24 @@ class GeminiExplainer(
             
             1. **Причина:** (1-2 ёмких предложения, что конкретно не так на строке ${diagnostic.line}).
             2. **Как исправить:** (конкретное указание и краткий пример исправленного кода).
+        """.trimIndent() else """
+            You are a C/C++ and Android NDK expert. Analyze this compiler error:
+
+            File: ${diagnostic.filePath} (line ${diagnostic.line}, column ${diagnostic.column})
+            Error: ${diagnostic.rawMessage}
+
+            Source code:
+            ```cpp
+            $sourceCodeContext
+            ```
+
+            REQUIREMENTS FOR RESPONSE (NO FLUFF):
+            - No greetings, polite intros, or preamble. Get straight to the point.
+            - Do NOT use emojis.
+            - Provide ONLY two brief and specific sections:
+            
+            1. **Cause:** (1-2 concise sentences explaining what is wrong on line ${diagnostic.line}).
+            2. **How to fix:** (concrete action and short corrected code snippet).
         """.trimIndent()
 
         val rawResult = executeAiPrompt(prompt, config)
@@ -63,9 +82,11 @@ class GeminiExplainer(
                 config.model.trim().ifBlank { "gemini-2.5-flash" }
             }
             val header = if (config.provider == "antigravity") {
-                "> **Сервис:** Google Antigravity • **Модель:** `$modelName`\n\n"
+                if (isRu) "> **Сервис:** Google Antigravity • **Модель:** `$modelName`\n\n"
+                else "> **Service:** Google Antigravity • **Model:** `$modelName`\n\n"
             } else {
-                "> **Сервис:** Google AI Studio • **Модель:** `$modelName`\n\n"
+                if (isRu) "> **Сервис:** Google AI Studio • **Модель:** `$modelName`\n\n"
+                else "> **Service:** Google AI Studio • **Model:** `$modelName`\n\n"
             }
             header + text
         }
@@ -87,7 +108,8 @@ class GeminiExplainer(
         sourceCodeContext: String,
         config: AiConfig
     ): Result<String> {
-        val prompt = """
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val prompt = if (isRu) """
             Ты инструмент автоматического исправления кода в мобильной IDE PrismDE.
             Твоя задача — исправить ошибку компилятора в C/C++ файле.
             
@@ -104,6 +126,23 @@ class GeminiExplainer(
             1. Верни ТОЛЬКО исправленный фрагмент кода, заменяющий ошибочную строку или проблемный блок.
             2. НЕ ПИШИ никаких объяснений, приветствий, текста до или после кода.
             3. Если код оборачивается в блок, используй только сам код. Никаких лишних комментариев.
+        """.trimIndent() else """
+            You are an automated code fixing tool in the mobile IDE PrismDE.
+            Your task is to fix a compiler error in this C/C++ file.
+            
+            File: ${diagnostic.filePath}
+            Error line: ${diagnostic.line}, Column: ${diagnostic.column}
+            Compiler message: ${diagnostic.rawMessage}
+            
+            Code context:
+            ```cpp
+            $sourceCodeContext
+            ```
+            
+            STRICT RULES:
+            1. Return ONLY the replacement code snippet fixing the error line or block.
+            2. DO NOT include explanations, greetings, or text before/after the code.
+            3. No unnecessary comments. Return raw code only.
         """.trimIndent()
 
         val rawResult = executeAiPrompt(prompt, config)
@@ -139,11 +178,15 @@ class GeminiExplainer(
         }
 
         val mediaType = "application/json".toMediaType()
+        val isRu = java.util.Locale.getDefault().language == "ru"
 
         if (config.provider == "antigravity") {
             if (config.antigravityAccessToken.isBlank()) {
                 return@withContext Result.failure(
-                    IllegalArgumentException("Выбран сервис Google Antigravity, но аккаунт не подключен. Откройте Настройки -> секцию Google Antigravity и выполните вход.")
+                    IllegalArgumentException(
+                        if (isRu) "Выбран сервис Google Antigravity, но аккаунт не подключен. Откройте Настройки -> секцию Google Antigravity и выполните вход."
+                        else "Google Antigravity is selected, but account is not connected. Open Settings -> Google Antigravity and sign in."
+                    )
                 )
             }
             return@withContext executeAntigravityRequest(prompt, jsonBody, mediaType, config)
@@ -153,7 +196,10 @@ class GeminiExplainer(
         val cleanKey = config.apiKey.trim()
         if (cleanKey.isBlank()) {
             return@withContext Result.failure(
-                IllegalArgumentException("Выбран сервис Google AI Studio, но Gemini API ключ не введен. Перейдите в Настройки и укажите API ключ.")
+                IllegalArgumentException(
+                    if (isRu) "Выбран сервис Google AI Studio, но Gemini API ключ не введен. Перейдите в Настройки и укажите API ключ."
+                    else "Google AI Studio is selected, but Gemini API key is missing. Go to Settings and provide an API key."
+                )
             )
         }
 
@@ -188,9 +234,9 @@ class GeminiExplainer(
                                 return@use Result.success(fullText.toString())
                             }
                         }
-                        return@use Result.failure(Exception("Пустой ответ от модели ($targetModel)."))
+                        return@use Result.failure(Exception(if (isRu) "Пустой ответ от модели ($targetModel)." else "Empty response from model ($targetModel)."))
                     } else {
-                        return@use Result.failure(Exception("Пустой ответ от модели ($targetModel)."))
+                        return@use Result.failure(Exception(if (isRu) "Пустой ответ от модели ($targetModel)." else "Empty response from model ($targetModel)."))
                     }
                 }
 
@@ -206,7 +252,7 @@ class GeminiExplainer(
 
             return@withContext callResult
         } catch (e: Exception) {
-            return@withContext Result.failure(Exception("Ошибка сети при обращении к $targetModel: ${e.message}"))
+            return@withContext Result.failure(Exception(if (isRu) "Ошибка сети при обращении к $targetModel: ${e.message}" else "Network error reaching $targetModel: ${e.message}"))
         }
     }
 
@@ -220,6 +266,7 @@ class GeminiExplainer(
         val token = config.antigravityAccessToken
         val rawModel = config.model.trim().ifBlank { "gemini-3.8-flash" }
         val selectedModel = mapAntigravityRuntimeModel(rawModel)
+        val isRu = java.util.Locale.getDefault().language == "ru"
 
         val project = antigravityAuthManager.loadCodeAssist(token)
 
@@ -231,7 +278,7 @@ class GeminiExplainer(
             })
         }
 
-        var lastErrorMsg = "Неизвестная ошибка Antigravity"
+        var lastErrorMsg = if (isRu) "Неизвестная ошибка Antigravity" else "Unknown Antigravity error"
         var needsTokenRefresh = false
 
         // Target native Antigravity SSE consumer endpoint
@@ -251,7 +298,7 @@ class GeminiExplainer(
             val callResult = client.newCall(request).execute().use { response ->
                 if (response.code == 401 || response.code == 403) {
                     needsTokenRefresh = true
-                    lastErrorMsg = "Сессия истекла (HTTP ${response.code})"
+                    lastErrorMsg = if (isRu) "Сессия истекла (HTTP ${response.code})" else "Session expired (HTTP ${response.code})"
                     return@use null
                 }
                 if (response.isSuccessful) {
@@ -289,12 +336,13 @@ class GeminiExplainer(
                     if (fullText.isNotBlank()) {
                         return@use Result.success(fullText.toString())
                     } else {
-                        lastErrorMsg = "Пустой ответ от Antigravity ($selectedModel)"
+                        lastErrorMsg = if (isRu) "Пустой ответ от Antigravity ($selectedModel)" else "Empty response from Antigravity ($selectedModel)"
                     }
                 } else {
                     val err = response.body?.string() ?: ""
                     lastErrorMsg = if (response.code == 429) {
-                        "Сервер Google временно перегружен запросами (HTTP 429). Подождите 10-15 секунд или выберите более быструю модель (например Claude Sonnet 4.6 или Gemini 2.5 Flash)."
+                        if (isRu) "Сервер Google временно перегружен запросами (HTTP 429). Подождите 10-15 секунд или выберите более быструю модель (например Claude Sonnet 4.6 или Gemini 2.5 Flash)."
+                        else "Google servers are temporarily rate-limited (HTTP 429). Wait 10-15 seconds or switch to a faster model (e.g. Claude Sonnet 4.6 or Gemini 2.5 Flash)."
                     } else {
                         "Antigravity ($selectedModel, HTTP ${response.code}): $err"
                     }
@@ -304,9 +352,10 @@ class GeminiExplainer(
             if (callResult != null) return callResult
         } catch (e: Exception) {
             lastErrorMsg = if (e is java.net.SocketTimeoutException) {
-                "Время ожидания ответа от модели $selectedModel истекло (таймаут). Попробуйте более легкую или быструю модель (например Claude Sonnet 4.6 или Gemini 2.5 Flash)."
+                if (isRu) "Время ожидания ответа от модели $selectedModel истекло (таймаут). Попробуйте более легкую или быструю модель (например Claude Sonnet 4.6 или Gemini 2.5 Flash)."
+                else "Request timed out waiting for $selectedModel. Try a faster model (e.g. Claude Sonnet 4.6 or Gemini 2.5 Flash)."
             } else {
-                "Сетевая ошибка ($selectedModel): ${e.message}"
+                if (isRu) "Сетевая ошибка ($selectedModel): ${e.message}" else "Network error ($selectedModel): ${e.message}"
             }
         }
 
@@ -319,7 +368,7 @@ class GeminiExplainer(
             }
         }
 
-        return Result.failure(Exception("Не удалось получить ответ от Google Antigravity ($selectedModel). $lastErrorMsg"))
+        return Result.failure(Exception(if (isRu) "Не удалось получить ответ от Google Antigravity ($selectedModel). $lastErrorMsg" else "Failed to get response from Google Antigravity ($selectedModel). $lastErrorMsg"))
     }
 
     private fun stripMarkdownCodeBlocks(rawText: String): String {

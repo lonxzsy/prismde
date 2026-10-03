@@ -114,7 +114,8 @@ class BuildViewModel : ViewModel() {
             updatedLoading[diagnostic.id] = false
 
             val updatedExplanations = _uiState.value.aiExplanations.toMutableMap()
-            updatedExplanations[diagnostic.id] = result.getOrElse { "Ошибка AI: ${it.message}" }
+            val isRu = java.util.Locale.getDefault().language == "ru"
+            updatedExplanations[diagnostic.id] = result.getOrElse { if (isRu) "Ошибка AI: ${it.message}" else "AI error: ${it.message}" }
 
             _uiState.value = _uiState.value.copy(
                 aiLoadingMap = updatedLoading,

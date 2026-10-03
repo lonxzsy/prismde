@@ -15,6 +15,7 @@ object NdkValidator {
     )
 
     fun validate(ndkDir: File): ValidationResult {
+        val isRu = java.util.Locale.getDefault().language == "ru"
         if (!ndkDir.exists() || !ndkDir.isDirectory) {
             return ValidationResult(
                 isValid = false,
@@ -23,7 +24,7 @@ object NdkValidator {
                 foundSysroot = false,
                 foundCMakeToolchain = false,
                 foundNdkBuild = false,
-                message = "Директория NDK не найдена: ${ndkDir.absolutePath}"
+                message = if (isRu) "Директория NDK не найдена: ${ndkDir.absolutePath}" else "NDK directory not found: ${ndkDir.absolutePath}"
             )
         }
 
@@ -63,8 +64,8 @@ object NdkValidator {
         val isValid = hasClang || hasNdkBuild || hasSysroot || hasCMakeToolchain
 
         val message = when {
-            isValid -> "NDK тулчейн успешно проверен и готов к сборке"
-            else -> "В директории отсутствуют ключевые компоненты компилятора NDK"
+            isValid -> if (isRu) "NDK тулчейн успешно проверен и готов к сборке" else "NDK toolchain verified and ready for build"
+            else -> if (isRu) "В директории отсутствуют ключевые компоненты компилятора NDK" else "Key NDK compiler components missing in directory"
         }
 
         return ValidationResult(

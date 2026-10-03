@@ -32,7 +32,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
+import com.prismde.R
 import com.prismde.core.theme.DiagnosticSuccess
 import java.io.File
 
@@ -55,13 +57,13 @@ fun ExportSoDialog(
                     modifier = Modifier.size(28.dp)
                 )
                 Spacer(Modifier.width(10.dp))
-                Text("Библиотека собрана!")
+                Text(stringResource(R.string.library_built))
             }
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Нативная библиотека .so успешно создана и готова к внедрению в Android-приложения через JNI.",
+                    text = stringResource(R.string.library_built_desc),
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -74,16 +76,16 @@ fun ExportSoDialog(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "Файл: ${soFile.name}",
+                            text = stringResource(R.string.file_label, soFile.name),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Размер: ${soFile.length() / 1024} КБ",
+                            text = stringResource(R.string.size_kb, soFile.length() / 1024),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = "Архитектура: ${soFile.parentFile?.name ?: "arm64-v8a"}",
+                            text = stringResource(R.string.architecture_label, soFile.parentFile?.name ?: "arm64-v8a"),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(Modifier.height(6.dp))
@@ -105,7 +107,7 @@ fun ExportSoDialog(
             ) {
                 Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Поделиться .so")
+                Text(stringResource(R.string.share_so))
             }
         },
         dismissButton = {
@@ -116,7 +118,7 @@ fun ExportSoDialog(
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Скопировать путь")
+                Text(stringResource(R.string.copy_path))
             }
         },
         shape = RoundedCornerShape(24.dp)
@@ -131,7 +133,7 @@ private fun shareSoFile(context: Context, file: File) {
             putExtra(Intent.EXTRA_STREAM, uri)
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
-        context.startActivity(Intent.createChooser(shareIntent, "Поделиться .so библиотекой"))
+        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_so_chooser)))
     } catch (e: Exception) {
         e.printStackTrace()
     }

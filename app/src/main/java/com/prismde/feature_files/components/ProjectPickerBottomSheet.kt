@@ -50,9 +50,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.prismde.R
 import com.prismde.core.model.Project
 import com.prismde.core.model.ProjectType
 import com.prismde.core.theme.DiagnosticSuccess
@@ -92,7 +94,7 @@ fun ProjectPickerBottomSheet(
                     onSelectProject(imported)
                     onDismiss()
                 } else {
-                    Toast.makeText(context, "Не удалось импортировать папку", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.cannot_scan_storage), Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -111,7 +113,7 @@ fun ProjectPickerBottomSheet(
         ) {
             // Header
             Text(
-                text = "Выбор проекта",
+                text = stringResource(R.string.project_picker_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -129,7 +131,7 @@ fun ProjectPickerBottomSheet(
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Создать")
+                    Text(stringResource(R.string.create))
                 }
 
                 OutlinedButton(
@@ -139,7 +141,7 @@ fun ProjectPickerBottomSheet(
                 ) {
                     Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Из памяти")
+                    Text(stringResource(R.string.project_picker_open_folder))
                 }
             }
 
@@ -151,7 +153,7 @@ fun ProjectPickerBottomSheet(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Text(
-                        text = "Импорт проекта из выбранной папки...",
+                        text = stringResource(R.string.project_picker_scanning),
                         modifier = Modifier.padding(16.dp),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -177,12 +179,12 @@ fun ProjectPickerBottomSheet(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Проекты пока не созданы",
+                            text = stringResource(R.string.project_picker_empty),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "Создайте новый проект по шаблону или выберите папку на устройстве.",
+                            text = stringResource(R.string.project_picker_empty_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -233,10 +235,10 @@ fun ProjectPickerBottomSheet(
                                     )
                                     Text(
                                         text = when (project.detectedType) {
-                                            ProjectType.PURE_JNI_SO -> "JNI .so библиотека (Android.mk)"
-                                            ProjectType.CMAKE -> "CMake / C++ проект"
-                                            ProjectType.SINGLE_FILE_EXECUTABLE -> "C++ Исполняемый файл"
-                                            ProjectType.AUTO_DETECT -> "Автоопределение"
+                                            ProjectType.PURE_JNI_SO -> stringResource(R.string.type_jni_so)
+                                            ProjectType.CMAKE -> stringResource(R.string.type_cmake)
+                                            ProjectType.SINGLE_FILE_EXECUTABLE -> stringResource(R.string.type_single_file)
+                                            ProjectType.AUTO_DETECT -> stringResource(R.string.type_auto_detect)
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -248,7 +250,7 @@ fun ProjectPickerBottomSheet(
                                 ) {
                                     Icon(
                                         Icons.Rounded.Delete,
-                                        contentDescription = "Удалить",
+                                        contentDescription = stringResource(R.string.delete),
                                         tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -284,11 +286,11 @@ fun ProjectPickerBottomSheet(
         }
         AlertDialog(
             onDismissRequest = { projectToDelete = null },
-            title = { Text(if (isInternal) "Удалить проект?" else "Убрать проект?") },
+            title = { Text(if (isInternal) stringResource(R.string.delete_project_title_internal) else stringResource(R.string.delete_project_title_external)) },
             text = {
                 Text(
-                    if (isInternal) "Вы уверены, что хотите удалить проект «${target.name}» со всеми файлами?"
-                    else "Убрать проект «${target.name}» из списка проектов? Файлы на устройстве удалены не будут."
+                    if (isInternal) stringResource(R.string.delete_project_desc_internal, target.name)
+                    else stringResource(R.string.delete_project_desc_external, target.name)
                 )
             },
             confirmButton = {
@@ -305,12 +307,12 @@ fun ProjectPickerBottomSheet(
                         containerColor = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text(if (isInternal) "Удалить" else "Убрать")
+                    Text(if (isInternal) stringResource(R.string.delete) else stringResource(R.string.remove_from_list))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { projectToDelete = null }) {
-                    Text("Отмена")
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )
@@ -327,13 +329,13 @@ fun CreateProjectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новый NDK проект", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.create_ndk_project_title), fontWeight = FontWeight.Bold) },
         text = {
             Column {
                 OutlinedTextField(
                     value = projectName,
                     onValueChange = { projectName = it },
-                    label = { Text("Имя проекта") },
+                    label = { Text(stringResource(R.string.project_name_label)) },
                     placeholder = { Text("my_native_app") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
@@ -343,7 +345,7 @@ fun CreateProjectDialog(
                 Spacer(Modifier.height(16.dp))
 
                 Text(
-                    text = "Тип проекта и система сборки:",
+                    text = stringResource(R.string.project_type_build_system),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -353,18 +355,18 @@ fun CreateProjectDialog(
                 val templates = listOf(
                     Triple(
                         ProjectType.PURE_JNI_SO,
-                        "JNI Shared Library (.so)",
-                        "Сборка .so библиотек с Android.mk и Application.mk для интеграции в Android"
+                        stringResource(R.string.type_jni_so),
+                        stringResource(R.string.template_jni_desc)
                     ),
                     Triple(
                         ProjectType.CMAKE,
-                        "CMake / C++ проект",
-                        "Современный тулчейн CMakeLists.txt и Ninja для гибкой сборки"
+                        stringResource(R.string.type_cmake),
+                        stringResource(R.string.template_cmake_desc)
                     ),
                     Triple(
                         ProjectType.SINGLE_FILE_EXECUTABLE,
-                        "Исполняемый C++ бинарник",
-                        "Простой консольный проект (main.cpp) для нативного запуска"
+                        stringResource(R.string.type_single_file),
+                        stringResource(R.string.template_exec_desc)
                     )
                 )
 
@@ -399,12 +401,12 @@ fun CreateProjectDialog(
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Создать")
+                Text(stringResource(R.string.create))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Отмена")
+                Text(stringResource(R.string.cancel))
             }
         }
     )

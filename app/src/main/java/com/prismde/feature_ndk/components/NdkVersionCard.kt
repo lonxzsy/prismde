@@ -28,8 +28,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.theme.DiagnosticSuccess
 
@@ -77,7 +79,7 @@ fun NdkVersionCard(
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     ) {
                         Text(
-                            text = "Недоступно",
+                            text = stringResource(R.string.ndk_status_available),
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
@@ -88,7 +90,7 @@ fun NdkVersionCard(
                         contentColor = DiagnosticSuccess
                     ) {
                         Text(
-                            text = "Установлено",
+                            text = stringResource(R.string.ndk_status_installed),
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
@@ -99,7 +101,7 @@ fun NdkVersionCard(
                         contentColor = MaterialTheme.colorScheme.onSurface
                     ) {
                         Text(
-                            text = "${ndk.archiveSizeBytes / (1024 * 1024)} МБ",
+                            text = stringResource(R.string.ndk_size_mb, ndk.archiveSizeBytes / (1024 * 1024)),
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
@@ -119,12 +121,12 @@ fun NdkVersionCard(
                     Spacer(Modifier.height(4.dp))
                     Row {
                         Text(
-                            text = "${downloadPercent.toInt()}% скачано",
+                            text = stringResource(R.string.ndk_downloaded_percent, downloadPercent.toInt()),
                             style = MaterialTheme.typography.labelSmall
                         )
                         Spacer(Modifier.weight(1f))
                         Text(
-                            text = "${downloadSpeed / (1024 * 1024)} МБ/с",
+                            text = stringResource(R.string.ndk_speed_mbs, downloadSpeed / (1024 * 1024)),
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -149,7 +151,7 @@ fun NdkVersionCard(
                     ) {
                         Icon(Icons.Rounded.Block, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Недоступно в этом релизе")
+                        Text(stringResource(R.string.ndk_available_next_release))
                     }
                 } else if (ndk.isInstalled) {
                     if (isActive) {
@@ -162,7 +164,7 @@ fun NdkVersionCard(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "Активный NDK",
+                                text = stringResource(R.string.active_toolchain, "").trim().removeSuffix(":"),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = DiagnosticSuccess
@@ -175,7 +177,7 @@ fun NdkVersionCard(
                         ) {
                             Icon(Icons.Rounded.RadioButtonUnchecked, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Выбрать для сборки")
+                            Text(stringResource(R.string.ndk_set_active_btn))
                         }
                     }
                 } else {
@@ -186,7 +188,7 @@ fun NdkVersionCard(
                     ) {
                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(if (isDownloading) "Загрузка..." else "Скачать тулчейн")
+                        Text(if (isDownloading) stringResource(R.string.ndk_downloading_btn) else stringResource(R.string.ndk_download_btn))
                     }
                 }
             }

@@ -300,47 +300,51 @@ object DefaultNdkCatalog {
     const val R26_LIGHT_SIZE_BYTES = 105_975_765L
     const val R26_LIGHT_SHA256 = "bb839e34dcb0ab025e51457ef14a15ae4355feaca55079901ab0ddb020286d21"
 
-    val AVAILABLE_VERSIONS = listOf(
-        NdkVersion(
-            versionTag = "r26c",
-            displayName = "Android NDK r26c (Полный тулчейн - Релиз v1.0.1)",
-            llvmVersion = "LLVM / Clang 17 (~385 МБ)",
-            downloadUrl = R26_ASSET_URL,
-            archiveSizeBytes = R26_SIZE_BYTES,
-            isAvailable = true
-        ),
-        NdkVersion(
-            versionTag = "r26c_light",
-            displayName = "Android NDK r26c Light (Компактный - Релиз v1.0.0)",
-            llvmVersion = "LLVM / Clang 17 (~100 МБ)",
-            downloadUrl = R26_LIGHT_URL,
-            archiveSizeBytes = R26_LIGHT_SIZE_BYTES,
-            sha256Checksum = R26_LIGHT_SHA256,
-            isAvailable = true
-        ),
-        NdkVersion(
-            versionTag = "r27",
-            displayName = "Android NDK r27 (Latest)",
-            llvmVersion = "Clang 18.0.1",
-            downloadUrl = "",
-            archiveSizeBytes = 430_000_000L,
-            isAvailable = false // Grayed out in UI
-        ),
-        NdkVersion(
-            versionTag = "r25c",
-            displayName = "Android NDK r25c (LTS)",
-            llvmVersion = "Clang 14.0.7",
-            downloadUrl = "",
-            archiveSizeBytes = 350_000_000L,
-            isAvailable = false // Grayed out in UI
-        ),
-        NdkVersion(
-            versionTag = "r23c",
-            displayName = "Android NDK r23c (Legacy)",
-            llvmVersion = "Clang 12.0.8",
-            downloadUrl = "",
-            archiveSizeBytes = 310_000_000L,
-            isAvailable = false // Grayed out in UI
-        )
-    )
+    val AVAILABLE_VERSIONS: List<NdkVersion>
+        get() {
+            val isRu = java.util.Locale.getDefault().language == "ru"
+            return listOf(
+                NdkVersion(
+                    versionTag = "r26c",
+                    displayName = if (isRu) "Android NDK r26c (Полный тулчейн - Релиз v1.0.1)" else "Android NDK r26c (Full Toolchain - Release v1.0.1)",
+                    llvmVersion = if (isRu) "LLVM / Clang 17 (~385 МБ)" else "LLVM / Clang 17 (~385 MB)",
+                    downloadUrl = R26_ASSET_URL,
+                    archiveSizeBytes = R26_SIZE_BYTES,
+                    isAvailable = true
+                ),
+                NdkVersion(
+                    versionTag = "r26c_light",
+                    displayName = if (isRu) "Android NDK r26c Light (Компактный - Релиз v1.0.0)" else "Android NDK r26c Light (Compact - Release v1.0.0)",
+                    llvmVersion = if (isRu) "LLVM / Clang 17 (~100 МБ)" else "LLVM / Clang 17 (~100 MB)",
+                    downloadUrl = R26_LIGHT_URL,
+                    archiveSizeBytes = R26_LIGHT_SIZE_BYTES,
+                    sha256Checksum = R26_LIGHT_SHA256,
+                    isAvailable = true
+                ),
+                NdkVersion(
+                    versionTag = "r27",
+                    displayName = "Android NDK r27 (Latest)",
+                    llvmVersion = "Clang 18.0.1",
+                    downloadUrl = "",
+                    archiveSizeBytes = 430_000_000L,
+                    isAvailable = false // Grayed out in UI
+                ),
+                NdkVersion(
+                    versionTag = "r25c",
+                    displayName = "Android NDK r25c (LTS)",
+                    llvmVersion = "Clang 14.0.7",
+                    downloadUrl = "",
+                    archiveSizeBytes = 350_000_000L,
+                    isAvailable = false // Grayed out in UI
+                ),
+                NdkVersion(
+                    versionTag = "r23c",
+                    displayName = "Android NDK r23c (Legacy)",
+                    llvmVersion = "Clang 12.0.8",
+                    downloadUrl = "",
+                    archiveSizeBytes = 310_000_000L,
+                    isAvailable = false // Grayed out in UI
+                )
+            )
+        }
 }

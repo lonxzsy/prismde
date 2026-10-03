@@ -96,62 +96,70 @@ class AntigravityAuthManager(
                 "https://www.googleapis.com/auth/cclog " +
                 "https://www.googleapis.com/auth/experimentsandconfigs"
 
-        val DEFAULT_ANTIGRAVITY_MODELS = listOf(
-            // Screenshot 1: Gemini 3 series
-            AntigravityModel(
-                id = "gemini-3.8-flash",
-                displayName = "Gemini 3.8 Flash",
-                remainingFraction = 1.0f,
-                description = "Базовая быстрая модель по умолчанию; обслуживает фоновые субагенты."
-            ),
-            AntigravityModel(
-                id = "gemini-3.7-flash",
-                displayName = "Gemini 3.7 Flash",
-                remainingFraction = 1.0f,
-                description = "Сбалансированный агент для быстрых правок и рефакторинга."
-            ),
-            AntigravityModel(
-                id = "gemini-3.6-flash",
-                displayName = "Gemini 3.6 Flash",
-                remainingFraction = 1.0f,
-                description = "Предыдущая ревизия линейки Flash."
-            ),
-            AntigravityModel(
-                id = "gemini-3.1-pro",
-                displayName = "Gemini 3.1 Pro",
-                remainingFraction = 1.0f,
-                description = "Флагманский агент для глубокого планирования архитектуры ( /plan )."
-            ),
+        val DEFAULT_ANTIGRAVITY_MODELS: List<AntigravityModel>
+            get() {
+                val isRu = java.util.Locale.getDefault().language == "ru"
+                return listOf(
+                    // Screenshot 1: Gemini 3 series
+                    AntigravityModel(
+                        id = "gemini-3.8-flash",
+                        displayName = "Gemini 3.8 Flash",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Базовая быстрая модель по умолчанию; обслуживает фоновые субагенты." else "Default fast model; powers background subagents."
+                    ),
+                    AntigravityModel(
+                        id = "gemini-3.7-flash",
+                        displayName = "Gemini 3.7 Flash",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Сбалансированный агент для быстрых правок и рефакторинга." else "Balanced agent for quick edits and refactoring."
+                    ),
+                    AntigravityModel(
+                        id = "gemini-3.6-flash",
+                        displayName = "Gemini 3.6 Flash",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Предыдущая ревизия линейки Flash." else "Previous revision of the Flash series."
+                    ),
+                    AntigravityModel(
+                        id = "gemini-3.1-pro",
+                        displayName = "Gemini 3.1 Pro",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Флагманский агент для глубокого планирования архитектуры ( /plan )." else "Flagship agent for deep architecture planning ( /plan )."
+                    ),
 
-            // Screenshot 2: Claude & GPT
-            AntigravityModel(
-                id = "claude-sonnet-4.6",
-                displayName = "Claude Sonnet 4.6 (Thinking)",
-                remainingFraction = 1.0f,
-                description = "Написание и пошаговая реализация кода."
-            ),
-            AntigravityModel(
-                id = "claude-opus-4.6",
-                displayName = "Claude Opus 4.6 (Thinking)",
-                remainingFraction = 1.0f,
-                description = "Архитектурный аудит и валидация логики сложных систем."
-            ),
-            AntigravityModel(
-                id = "gpt-oss-120b",
-                displayName = "GPT-OSS 120B",
-                remainingFraction = 1.0f,
-                description = "Локально-ориентированная открытая модель рассуждений."
-            )
-        )
+                    // Screenshot 2: Claude & GPT
+                    AntigravityModel(
+                        id = "claude-sonnet-4.6",
+                        displayName = "Claude Sonnet 4.6 (Thinking)",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Написание и пошаговая реализация кода." else "Code generation and step-by-step implementation."
+                    ),
+                    AntigravityModel(
+                        id = "claude-opus-4.6",
+                        displayName = "Claude Opus 4.6 (Thinking)",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Архитектурный аудит и валидация логики сложных систем." else "Architectural audit and logic validation of complex systems."
+                    ),
+                    AntigravityModel(
+                        id = "gpt-oss-120b",
+                        displayName = "GPT-OSS 120B",
+                        remainingFraction = 1.0f,
+                        description = if (isRu) "Локально-ориентированная открытая модель рассуждений." else "Locally-oriented open reasoning model."
+                    )
+                )
+            }
 
-        val DEFAULT_GEMINI_API_MODELS = listOf(
-            "gemini-2.5-flash" to "Gemini 2.5 Flash (Рекомендуемая, быстрая)",
-            "gemini-2.5-pro" to "Gemini 2.5 Pro (Глубокий анализ кода)",
-            "gemini-2.0-flash" to "Gemini 2.0 Flash (Высокая скорость)",
-            "gemini-2.0-flash-lite" to "Gemini 2.0 Flash Lite (Легковесная)",
-            "gemini-1.5-pro" to "Gemini 1.5 Pro (Большой контекст)",
-            "gemini-1.5-flash" to "Gemini 1.5 Flash (Базовая легковесная)"
-        )
+        val DEFAULT_GEMINI_API_MODELS: List<Pair<String, String>>
+            get() {
+                val isRu = java.util.Locale.getDefault().language == "ru"
+                return listOf(
+                    "gemini-2.5-flash" to if (isRu) "Gemini 2.5 Flash (Рекомендуемая, быстрая)" else "Gemini 2.5 Flash (Recommended, fast)",
+                    "gemini-2.5-pro" to if (isRu) "Gemini 2.5 Pro (Глубокий анализ кода)" else "Gemini 2.5 Pro (Deep reasoning)",
+                    "gemini-2.0-flash" to if (isRu) "Gemini 2.0 Flash (Высокая скорость)" else "Gemini 2.0 Flash (High speed)",
+                    "gemini-2.0-flash-lite" to if (isRu) "Gemini 2.0 Flash Lite (Легковесная)" else "Gemini 2.0 Flash Lite (Lightweight)",
+                    "gemini-1.5-pro" to if (isRu) "Gemini 1.5 Pro (Большой контекст)" else "Gemini 1.5 Pro (Large context)",
+                    "gemini-1.5-flash" to if (isRu) "Gemini 1.5 Flash (Базовая легковесная)" else "Gemini 1.5 Flash (Basic lightweight)"
+                )
+            }
 
         fun isAllowedAntigravityModel(key: String, displayName: String): Boolean {
             val k = key.lowercase()
@@ -184,28 +192,30 @@ class AntigravityAuthManager(
 
                 val zone = java.time.ZoneId.systemDefault()
                 val zonedDateTime = instant.atZone(zone)
+                val isRu = java.util.Locale.getDefault().language == "ru"
+                val locale = if (isRu) java.util.Locale("ru") else java.util.Locale.US
                 val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
-                val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm", java.util.Locale("ru"))
+                val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm", locale)
 
                 val timeStr = zonedDateTime.format(timeFormatter)
                 val dateTimeStr = zonedDateTime.format(dateFormatter)
 
                 if (totalSeconds <= 0) {
-                    "сейчас (в $timeStr)"
+                    if (isRu) "сейчас (в $timeStr)" else "now (at $timeStr)"
                 } else {
                     val days = duration.toDays()
                     val hours = (duration.toHours() % 24)
                     val mins = (duration.toMinutes() % 60).coerceAtLeast(1)
 
                     val relative = when {
-                        days > 0 -> "через $days дн $hours ч"
-                        hours > 0 -> "через $hours ч $mins мин"
-                        else -> "через $mins мин"
+                        days > 0 -> if (isRu) "через $days дн $hours ч" else "in ${days}d ${hours}h"
+                        hours > 0 -> if (isRu) "через $hours ч $mins мин" else "in ${hours}h ${mins}m"
+                        else -> if (isRu) "через $mins мин" else "in ${mins}m"
                     }
                     if (days > 0) {
                         "$dateTimeStr ($relative)"
                     } else {
-                        "в $timeStr ($relative)"
+                        if (isRu) "в $timeStr ($relative)" else "at $timeStr ($relative)"
                     }
                 }
             } catch (_: Exception) {
@@ -294,8 +304,9 @@ class AntigravityAuthManager(
      */
     suspend fun exchangeCodeForTokens(rawCodeInput: String): Result<AntigravityTokenInfo> = withContext(Dispatchers.IO) {
         val cleanCode = extractAuthCode(rawCodeInput)
+        val isRu = java.util.Locale.getDefault().language == "ru"
         if (cleanCode.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("Код авторизации пуст"))
+            return@withContext Result.failure(IllegalArgumentException(if (isRu) "Код авторизации пуст" else "Authorization code is empty"))
         }
 
         val body = FormBody.Builder()
@@ -324,11 +335,11 @@ class AntigravityAuthManager(
                     val errorMsg = try {
                         JSONObject(responseStr).optString("error_description", responseStr)
                     } catch (_: Exception) { responseStr }
-                    Result.failure(Exception("Ошибка OAuth token ($errorMsg)"))
+                    Result.failure(Exception(if (isRu) "Ошибка OAuth token ($errorMsg)" else "OAuth token error ($errorMsg)"))
                 }
             }
         } catch (e: Exception) {
-            Result.failure(Exception("Сетевая ошибка при обмене кода: ${e.message}"))
+            Result.failure(Exception(if (isRu) "Сетевая ошибка при обмене кода: ${e.message}" else "Network error during code exchange: ${e.message}"))
         }
     }
 
@@ -336,8 +347,9 @@ class AntigravityAuthManager(
      * Refreshes access token using refresh_token.
      */
     suspend fun refreshAccessToken(refreshToken: String): Result<String> = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
         if (refreshToken.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("Отсутствует refresh_token"))
+            return@withContext Result.failure(IllegalArgumentException(if (isRu) "Отсутствует refresh_token" else "Missing refresh_token"))
         }
 
         val body = FormBody.Builder()
@@ -360,11 +372,11 @@ class AntigravityAuthManager(
                     val newAccessToken = json.getString("access_token")
                     Result.success(newAccessToken)
                 } else {
-                    Result.failure(Exception("Не удалось обновить токен: $responseStr"))
+                    Result.failure(Exception(if (isRu) "Не удалось обновить токен: $responseStr" else "Failed to refresh token: $responseStr"))
                 }
             }
         } catch (e: Exception) {
-            Result.failure(Exception("Ошибка сети при обновлении токена: ${e.message}"))
+            Result.failure(Exception(if (isRu) "Ошибка сети при обновлении токена: ${e.message}" else "Network error while refreshing token: ${e.message}"))
         }
     }
 
@@ -372,6 +384,7 @@ class AntigravityAuthManager(
      * Fetches user email and profile info from Google OAuth API.
      */
     suspend fun fetchUserInfo(accessToken: String): Result<AntigravityUserInfo> = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
         val request = Request.Builder()
             .url("https://www.googleapis.com/oauth2/v2/userinfo")
             .header("Authorization", "Bearer $accessToken")
@@ -387,11 +400,11 @@ class AntigravityAuthManager(
                     val picture = json.optString("picture").takeIf { it.isNotBlank() }
                     Result.success(AntigravityUserInfo(email, name, picture))
                 } else {
-                    Result.failure(Exception("Не удалось получить профиль: $responseStr"))
+                    Result.failure(Exception(if (isRu) "Не удалось получить профиль: $responseStr" else "Failed to fetch user profile: $responseStr"))
                 }
             }
         } catch (e: Exception) {
-            Result.failure(Exception("Ошибка сети при запросе профиля: ${e.message}"))
+            Result.failure(Exception(if (isRu) "Ошибка сети при запросе профиля: ${e.message}" else "Network error while fetching profile: ${e.message}"))
         }
     }
 

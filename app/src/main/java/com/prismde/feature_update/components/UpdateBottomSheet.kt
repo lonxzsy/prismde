@@ -27,8 +27,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.feature_update.AppReleaseInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,7 +66,7 @@ fun UpdateBottomSheet(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Доступно обновление PrismDE",
+                    text = stringResource(R.string.update_available),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -75,14 +77,14 @@ fun UpdateBottomSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Badge(containerColor = MaterialTheme.colorScheme.primaryContainer) {
                     Text(
-                        text = "Версия ${releaseInfo.versionName}",
+                        text = stringResource(R.string.version_label, releaseInfo.versionName),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Размер: ${releaseInfo.apkSizeBytes / (1024 * 1024)} МБ",
+                    text = stringResource(R.string.update_size, (releaseInfo.apkSizeBytes / (1024 * 1024)).toInt()),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -90,14 +92,14 @@ fun UpdateBottomSheet(
 
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "Список изменений:",
+                text = stringResource(R.string.changelog_title),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(4.dp))
 
             Text(
-                text = releaseInfo.releaseNotes.ifBlank { "Улучшения производительности и исправления ошибок." },
+                text = releaseInfo.releaseNotes.ifBlank { "Performance improvements and bug fixes." },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -110,7 +112,7 @@ fun UpdateBottomSheet(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Загрузка обновления: ${downloadPercent.toInt()}%",
+                        text = stringResource(R.string.downloading_update_percent, downloadPercent.toInt()),
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -124,7 +126,7 @@ fun UpdateBottomSheet(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Позже")
+                    Text(stringResource(R.string.cancel))
                 }
                 Spacer(Modifier.width(10.dp))
                 Button(
@@ -135,7 +137,7 @@ fun UpdateBottomSheet(
                 ) {
                     Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (isDownloading) "Загрузка..." else "Обновить")
+                    Text(if (isDownloading) stringResource(R.string.ndk_downloading_btn) else stringResource(R.string.update_button))
                 }
             }
 

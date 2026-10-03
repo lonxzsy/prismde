@@ -41,7 +41,8 @@ class EditorViewModel : ViewModel() {
         val content = fileContentCache[file] ?: try {
             if (file.exists()) file.readText() else ""
         } catch (e: Exception) {
-            "// Ошибка чтения файла: ${e.message}"
+            val isRu = java.util.Locale.getDefault().language == "ru"
+            if (isRu) "// Ошибка чтения файла: ${e.message}" else "// Error reading file: ${e.message}"
         }
         fileContentCache[file] = content
         if (!fileSavedContent.containsKey(file)) {

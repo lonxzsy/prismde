@@ -33,8 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.feature_ndk.components.NdkVersionCard
 
 @Composable
@@ -76,12 +78,12 @@ fun NdkScreen(
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "Менеджер версий NDK",
+                            text = stringResource(R.string.ndk_versions_title),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Выбирайте и автоматически загружайте тулчейны NDK для сборки нативных C/C++ проектов.",
+                            text = stringResource(R.string.ndk_versions_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -121,13 +123,13 @@ fun NdkScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Пользовательский URL для скачивания NDK",
+                        text = stringResource(R.string.custom_ndk_url),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Вставьте прямую ссылку на архив NDK из GitHub Releases или своего сервера.",
+                        text = stringResource(R.string.custom_ndk_url_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

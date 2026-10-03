@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.lifecycleScope
 import com.prismde.core.datastore.SettingsRepository
 import com.prismde.core.model.DefaultNdkCatalog
@@ -170,26 +171,26 @@ class MainActivity : ComponentActivity() {
                                 NavigationBarItem(
                                     selected = currentTab == 0,
                                     onClick = { currentTab = 0 },
-                                    icon = { Icon(Icons.Rounded.Code, contentDescription = "Редактор") },
-                                    label = { Text("Редактор") }
+                                    icon = { Icon(Icons.Rounded.Code, contentDescription = stringResource(R.string.editor)) },
+                                    label = { Text(stringResource(R.string.editor)) }
                                 )
                                 NavigationBarItem(
                                     selected = currentTab == 1,
                                     onClick = { currentTab = 1 },
-                                    icon = { Icon(Icons.Rounded.Folder, contentDescription = "Файлы") },
-                                    label = { Text("Файлы") }
+                                    icon = { Icon(Icons.Rounded.Folder, contentDescription = stringResource(R.string.files)) },
+                                    label = { Text(stringResource(R.string.files)) }
                                 )
                                 NavigationBarItem(
                                     selected = currentTab == 2,
                                     onClick = { currentTab = 2 },
-                                    icon = { Icon(Icons.Rounded.Memory, contentDescription = "NDK") },
-                                    label = { Text("NDK") }
+                                    icon = { Icon(Icons.Rounded.Memory, contentDescription = stringResource(R.string.ndk_tab)) },
+                                    label = { Text(stringResource(R.string.ndk_tab)) }
                                 )
                                 NavigationBarItem(
                                     selected = currentTab == 3,
                                     onClick = { currentTab = 3 },
-                                    icon = { Icon(Icons.Rounded.Settings, contentDescription = "Настройки") },
-                                    label = { Text("Настройки") }
+                                    icon = { Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.settings)) },
+                                    label = { Text(stringResource(R.string.settings)) }
                                 )
                             }
                         }

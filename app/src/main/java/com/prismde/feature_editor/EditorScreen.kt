@@ -49,9 +49,12 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
@@ -87,6 +90,7 @@ fun EditorScreen(
     var showPresetDialog by remember { mutableStateOf(false) }
     var showProjectPicker by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
     var aiApplyingMessage by remember { mutableStateOf<String?>(null) }
     var pendingAiDiff by remember { mutableStateOf<PendingAiDiff?>(null) }
     var diffRedRange by remember { mutableStateOf<IntRange?>(null) }
@@ -171,7 +175,7 @@ fun EditorScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = editorState.currentProject?.name ?: "Выберите проект",
+                        text = editorState.currentProject?.name ?: stringResource(R.string.select_project),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -189,7 +193,7 @@ fun EditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Top Bar "Собрать" Button
+                    // Top Bar Build Button
                     Button(
                         onClick = {
                             val project = editorState.currentProject
@@ -214,19 +218,19 @@ fun EditorScreen(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "Сборка...",
+                                text = stringResource(R.string.building_ellipsis),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
                         } else {
                             Icon(
                                 imageVector = Icons.Rounded.PlayArrow,
-                                contentDescription = "Собрать",
+                                contentDescription = stringResource(R.string.build_button),
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                text = "Собрать",
+                                text = stringResource(R.string.build_button),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -238,7 +242,7 @@ fun EditorScreen(
                     ) {
                         Icon(
                             Icons.Rounded.Tune,
-                            contentDescription = "Параметры сборки",
+                            contentDescription = stringResource(R.string.build_params),
                             modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -267,7 +271,7 @@ fun EditorScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Выберите файл из вкладки «Файлы» для редактирования",
+                            text = stringResource(R.string.editor_empty_prompt),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -394,7 +398,7 @@ fun EditorScreen(
                 val targetLine = (diagnostic.line - 1).coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
 
                 val serviceLabel = if (aiConfig.provider == "antigravity") "Antigravity (${aiConfig.model})" else "Gemini API (${aiConfig.model})"
-                aiApplyingMessage = "AI ($serviceLabel) генерирует исправление..."
+                aiApplyingMessage = context.getString(R.string.ai_generating_fix, serviceLabel)
 
                 val allLines = originalText.lines()
                 val contextSnippet = if (allLines.size <= 300) {
@@ -408,8 +412,8 @@ fun EditorScreen(
                 val replacementCode = fixResult.getOrNull()
 
                 if (replacementCode.isNullOrBlank()) {
-                    val error = fixResult.exceptionOrNull()?.message ?: "Не удалось сгенерировать код исправления"
-                    aiApplyingMessage = "Ошибка: $error"
+                    val error = fixResult.exceptionOrNull()?.message ?: context.getString(R.string.ai_failed_to_generate)
+                    aiApplyingMessage = context.getString(R.string.ai_error_prefix, error)
                     kotlinx.coroutines.delay(3500)
                     aiApplyingMessage = null
                     return@launch
@@ -419,7 +423,7 @@ fun EditorScreen(
                 val plan = AiDiffMatcher.computePlan(originalText, targetLine, replacementCode)
 
                 // 2. Stylish scanning animation: sweep down from plan.scanStartLine to plan.startLine
-                aiApplyingMessage = "AI анализирует контекст строки..."
+                aiApplyingMessage = context.getString(R.string.ai_analyzing_context)
                 val scanStart = plan.scanStartLine.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
                 val scanEnd = plan.startLine.coerceIn(scanStart, (editor.lineCount - 1).coerceAtLeast(0))
 
@@ -433,7 +437,7 @@ fun EditorScreen(
                     }
                 }
 
-                aiApplyingMessage = "AI применяет изменения..."
+                aiApplyingMessage = context.getString(R.string.ai_applying_changes)
                 kotlinx.coroutines.delay(100)
 
                 // 3. Highlight the exact slice that will be removed with glowing red!
@@ -451,7 +455,7 @@ fun EditorScreen(
                 editor.jumpToLine(safeStart)
                 editor.ensureSelectionVisible()
 
-                aiApplyingMessage = "Удаление заменяемого кода..."
+                aiApplyingMessage = context.getString(R.string.ai_deleting_old_code)
                 kotlinx.coroutines.delay(450)
 
                 // Clear the red range and delete the slice to replace
@@ -503,7 +507,7 @@ fun EditorScreen(
 
                 editorViewModel.updateContent(editor.text.toString())
 
-                aiApplyingMessage = "Изменения внесены. Проверьте и примите или отклоните."
+                aiApplyingMessage = context.getString(R.string.ai_changes_applied)
                 kotlinx.coroutines.delay(3000)
                 aiApplyingMessage = null
             }
@@ -600,14 +604,14 @@ private fun JumpDiagnosticBanner(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Строка ${jumpTarget.line}, символ ${jumpTarget.column}: ${jumpTarget.humanTitle}",
+                    text = stringResource(R.string.line_symbol_info, jumpTarget.line, jumpTarget.column, jumpTarget.humanTitle),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.width(8.dp))
                 Icon(
                     imageVector = Icons.Rounded.Close,
-                    contentDescription = "Закрыть",
+                    contentDescription = stringResource(R.string.close),
                     modifier = Modifier
                         .size(16.dp)
                         .clip(RoundedCornerShape(8.dp))

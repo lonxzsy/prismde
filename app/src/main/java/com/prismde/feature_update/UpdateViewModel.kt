@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import com.prismde.R
 import java.io.File
 
 data class UpdateUiState(
@@ -30,7 +31,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     fun checkForUpdates(manual: Boolean = false) {
         _uiState.value = _uiState.value.copy(
             isChecking = true,
-            statusMessage = if (manual) "Проверка наличия обновлений..." else null
+            statusMessage = if (manual) context.getString(R.string.update_checking) else null
         )
 
         viewModelScope.launch {
@@ -39,12 +40,12 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.value = _uiState.value.copy(
                     isChecking = false,
                     releaseInfo = info,
-                    statusMessage = if (info == null && manual) "У вас установлена последняя версия!" else null
+                    statusMessage = if (info == null && manual) context.getString(R.string.update_latest_version) else null
                 )
             }.onFailure { err ->
                 _uiState.value = _uiState.value.copy(
                     isChecking = false,
-                    statusMessage = if (manual) "Ошибка проверки: ${err.message}" else null
+                    statusMessage = if (manual) context.getString(R.string.update_check_error, err.message ?: "") else null
                 )
             }
         }
@@ -64,7 +65,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
             if (success) {
                 updateManager.launchApkInstaller(apkFile)
             } else {
-                _uiState.value = _uiState.value.copy(statusMessage = "Ошибка загрузки APK.")
+                _uiState.value = _uiState.value.copy(statusMessage = context.getString(R.string.update_download_error))
             }
         }
     }

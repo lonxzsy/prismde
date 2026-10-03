@@ -39,10 +39,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.prismde.R
 import com.prismde.core.model.Project
 import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import java.io.File
@@ -69,7 +71,7 @@ fun FileTreeScreen(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ) {
-                    Icon(Icons.Rounded.Add, contentDescription = "Создать файл")
+                    Icon(Icons.Rounded.Add, contentDescription = stringResource(R.string.new_file))
                 }
             }
         }
@@ -94,13 +96,13 @@ fun FileTreeScreen(
                         )
                         Spacer(Modifier.height(16.dp))
                         Text(
-                            text = "Нет активного проекта",
+                            text = stringResource(R.string.no_active_project),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Выберите существующий проект или создайте новый проект из шаблона.",
+                            text = stringResource(R.string.no_active_project_desc),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -111,7 +113,7 @@ fun FileTreeScreen(
                         ) {
                             Icon(Icons.Rounded.FolderSpecial, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Выбрать или создать проект")
+                            Text(stringResource(R.string.open_or_create_project))
                         }
                     }
                 }
@@ -162,11 +164,11 @@ fun FileTreeScreen(
                         ) {
                             Icon(Icons.Rounded.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Проекты")
+                            Text(stringResource(R.string.project_folder))
                         }
 
                         IconButton(onClick = { refreshKey++ }) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "Обновить дерево")
+                            Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.refresh_tree))
                         }
                     }
                 }
