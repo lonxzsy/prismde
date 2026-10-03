@@ -670,6 +670,9 @@ class BuildProcessRunner {
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir())
 
+            // Ensure project build scripts do not reference unsupported ABIs (e.g. armeabi)
+            BuildToolInstaller.ensureProjectAbiFilters(project.rootDir, config.selectedAbi.abiString)
+
             // Auto-install Android SDK Platform 34 (android.jar) if missing!
             if (!BuildToolInstaller.isAndroidPlatformInstalled(context, 34)) {
                 _events.emit(BuildOutputEvent.LogLine(
@@ -791,6 +794,12 @@ class BuildProcessRunner {
         // Force plain console output to eliminate interactive animation / carriage return spam
         if (!command.contains("--console")) {
             command.add("--console=plain")
+        }
+
+        // Inject target ABI so AGP only configures and compiles for the device architecture (e.g. arm64-v8a)
+        val targetAbi = config.selectedAbi.abiString
+        if (targetAbi.isNotBlank() && !command.any { it.startsWith("-Pandroid.injected.build.abi") }) {
+            command.add("-Pandroid.injected.build.abi=$targetAbi")
         }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))

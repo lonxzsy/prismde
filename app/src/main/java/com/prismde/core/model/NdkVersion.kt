@@ -179,7 +179,7 @@ data class NdkVersion(
         targets.add(File("/data/data/com.prismde/files/ndk/$versionTag/android-ndk-aide"))
 
         for (target in targets.distinct()) {
-            ensureNdkSourceProperties(target, rev)
+            ensureNdkMetadata(target, rev)
         }
     }
 
@@ -188,6 +188,72 @@ data class NdkVersion(
     }
 
     companion object {
+        const val NDK_ABIS_JSON = """{
+  "armeabi-v7a": {
+    "bitness": 32,
+    "default": true,
+    "deprecated": false,
+    "proc": "armv7-a",
+    "arch": "arm",
+    "triple": "arm-linux-androideabi",
+    "llvm_triple": "armv7-none-linux-androideabi"
+  },
+  "arm64-v8a": {
+    "bitness": 64,
+    "default": true,
+    "deprecated": false,
+    "proc": "aarch64",
+    "arch": "arm64",
+    "triple": "aarch64-linux-android",
+    "llvm_triple": "aarch64-none-linux-android"
+  },
+  "x86": {
+    "bitness": 32,
+    "default": true,
+    "deprecated": false,
+    "proc": "i686",
+    "arch": "x86",
+    "triple": "i686-linux-android",
+    "llvm_triple": "i686-none-linux-android"
+  },
+  "x86_64": {
+    "bitness": 64,
+    "default": true,
+    "deprecated": false,
+    "proc": "x86_64",
+    "arch": "x86_64",
+    "triple": "x86_64-linux-android",
+    "llvm_triple": "x86_64-none-linux-android"
+  }
+}"""
+
+        const val NDK_PLATFORMS_JSON = """{
+  "min": 21,
+  "max": 34,
+  "aliases": {
+    "20": 19,
+    "25": 24,
+    "J": 16,
+    "J-MR1": 17,
+    "J-MR2": 18,
+    "K": 19,
+    "L": 21,
+    "L-MR1": 22,
+    "M": 23,
+    "N": 24,
+    "N-MR1": 24,
+    "O": 26,
+    "O-MR1": 27,
+    "P": 28,
+    "Q": 29,
+    "R": 30,
+    "S": 31,
+    "Sv2": 32,
+    "Tiramisu": 33,
+    "UpsideDownCake": 34
+  }
+}"""
+
         fun ensureNdkSourceProperties(ndkDir: File, revision: String = "26.2.11394342") {
             if (!ndkDir.exists() || !ndkDir.isDirectory) return
 
@@ -210,10 +276,38 @@ data class NdkVersion(
             }
         }
 
+        fun ensureNdkMetadata(ndkDir: File, revision: String = "26.2.11394342") {
+            if (!ndkDir.exists() || !ndkDir.isDirectory) return
+
+            ensureNdkSourceProperties(ndkDir, revision)
+
+            val targetDirs = listOf(
+                ndkDir,
+                File(ndkDir, "android-ndk-aide"),
+                ndkDir.parentFile
+            ).filterNotNull().filter { it.exists() && it.isDirectory }
+
+            for (dir in targetDirs) {
+                try {
+                    val metaDir = File(dir, "meta").also { it.mkdirs() }
+                    val abisJson = File(metaDir, "abis.json")
+                    if (!abisJson.exists() || abisJson.length() == 0L) {
+                        abisJson.writeText(NDK_ABIS_JSON)
+                        abisJson.setReadable(true, false)
+                    }
+                    val platformsJson = File(metaDir, "platforms.json")
+                    if (!platformsJson.exists() || platformsJson.length() == 0L) {
+                        platformsJson.writeText(NDK_PLATFORMS_JSON)
+                        platformsJson.setReadable(true, false)
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+
         fun ensureNdkPermissions(ndkDir: File) {
             if (!ndkDir.exists()) return
 
-            ensureNdkSourceProperties(ndkDir)
+            ensureNdkMetadata(ndkDir)
 
             fun applyChmod755(target: File) {
                 try {

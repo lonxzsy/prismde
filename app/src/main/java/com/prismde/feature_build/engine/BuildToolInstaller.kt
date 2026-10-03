@@ -556,9 +556,9 @@ object BuildToolInstaller {
 
         val effectiveRevision = projectRequestedNdkVersion ?: "26.2.11394342"
 
-        // Ensure source.properties exists in ndkDir and parent folders
+        // Ensure source.properties and meta/abis.json exist in ndkDir and parent folders
         if (ndkDir != null && ndkDir.exists()) {
-            NdkVersion.ensureNdkSourceProperties(ndkDir, effectiveRevision)
+            NdkVersion.ensureNdkMetadata(ndkDir, effectiveRevision)
             NdkVersion.ensureNdkPermissions(ndkDir)
 
             // Also provision $sdkDir/ndk/$effectiveRevision symlink for AGP NDK resolution
@@ -620,6 +620,79 @@ object BuildToolInstaller {
                 }
                 localProps.writeText(lines.joinToString("\n"))
             } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * Ensures project build scripts and Application.mk files do not attempt to build
+     * deprecated/removed ABIs like 'armeabi', and enforces the target ABI filter.
+     */
+    fun ensureProjectAbiFilters(projectRootDir: File, selectedAbi: String = "arm64-v8a") {
+        // 1. Sanitize app/build.gradle and build.gradle
+        val buildGradleFiles = listOf(
+            File(projectRootDir, "app/build.gradle"),
+            File(projectRootDir, "build.gradle"),
+            File(projectRootDir, "app/build.gradle.kts"),
+            File(projectRootDir, "build.gradle.kts")
+        )
+        for (bg in buildGradleFiles) {
+            if (bg.exists() && bg.isFile) {
+                try {
+                    var txt = bg.readText()
+                    var modified = false
+
+                    // Remove unsupported legacy 'armeabi' ABI if present
+                    if (txt.contains("'armeabi'") && !txt.contains("'armeabi-v7a'")) {
+                        txt = txt.replace("'armeabi'", "'$selectedAbi'")
+                        modified = true
+                    } else if (txt.contains("\"armeabi\"") && !txt.contains("\"armeabi-v7a\"")) {
+                        txt = txt.replace("\"armeabi\"", "\"$selectedAbi\"")
+                        modified = true
+                    } else if (txt.contains("'armeabi',") || txt.contains(", 'armeabi'")) {
+                        txt = txt.replace("'armeabi',", "").replace(", 'armeabi'", "")
+                        modified = true
+                    }
+
+                    // If externalNativeBuild is used, ensure defaultConfig has ndk { abiFilters ... }
+                    if (txt.contains("externalNativeBuild") && !txt.contains("ndk {") && txt.contains("defaultConfig {")) {
+                        txt = txt.replace(
+                            "defaultConfig {",
+                            "defaultConfig {\n        ndk {\n            abiFilters '$selectedAbi'\n        }"
+                        )
+                        modified = true
+                    }
+
+                    if (modified) {
+                        bg.writeText(txt)
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+
+        // 2. Sanitize Application.mk
+        val appMkCandidates = listOf(
+            File(projectRootDir, "app/src/main/jni/Application.mk"),
+            File(projectRootDir, "src/main/jni/Application.mk"),
+            File(projectRootDir, "jni/Application.mk")
+        )
+        for (appMk in appMkCandidates) {
+            if (appMk.exists() && appMk.isFile) {
+                try {
+                    var txt = appMk.readText()
+                    var modified = false
+                    if (txt.contains("APP_ABI := all")) {
+                        txt = txt.replace("APP_ABI := all", "APP_ABI := $selectedAbi")
+                        modified = true
+                    }
+                    if (txt.contains("armeabi ") || txt.endsWith("armeabi")) {
+                        txt = txt.replace(Regex("""\barmeabi\b(?!\-v7a)"""), selectedAbi)
+                        modified = true
+                    }
+                    if (modified) {
+                        appMk.writeText(txt)
+                    }
+                } catch (_: Throwable) {}
+            }
         }
     }
 

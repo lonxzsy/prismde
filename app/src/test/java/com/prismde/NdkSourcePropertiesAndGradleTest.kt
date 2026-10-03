@@ -88,4 +88,64 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("Shebang must be normalized to /system/bin/sh for Android compatibility", content.startsWith("#!/system/bin/sh"))
         assertTrue("Line endings must not contain CRLF", !content.contains("\r\n"))
     }
+
+    @Test
+    fun testEnsureNdkMetadataCreatesAbisJson() {
+        val root = tempFolder.newFolder("ndk_metadata_test")
+        val aideFolder = File(root, "android-ndk-aide").also { it.mkdirs() }
+
+        NdkVersion.ensureNdkMetadata(aideFolder, "26.2.11394342")
+
+        val abisJson = File(aideFolder, "meta/abis.json")
+        assertTrue("meta/abis.json must exist in NDK folder to prevent AGP Unsupported ABI fallback", abisJson.exists())
+        val text = abisJson.readText()
+        assertTrue("abis.json must define arm64-v8a", text.contains("\"arm64-v8a\""))
+        assertTrue("abis.json must NOT define obsolete armeabi", !text.contains("\"armeabi\":"))
+
+        val platformsJson = File(aideFolder, "meta/platforms.json")
+        assertTrue("meta/platforms.json must exist", platformsJson.exists())
+    }
+
+    @Test
+    fun testEnsureProjectAbiFiltersSanitizesBuildGradleAndApplicationMk() {
+        val projectDir = tempFolder.newFolder("abi_filters_test")
+        val appDir = File(projectDir, "app").also { it.mkdirs() }
+        val jniDir = File(appDir, "src/main/jni").also { it.mkdirs() }
+
+        val buildGradle = File(appDir, "build.gradle").also {
+            it.writeText(
+                """
+                android {
+                    defaultConfig {
+                        applicationId "com.example.test"
+                        externalNativeBuild {
+                            ndkBuild {
+                                abiFilters 'armeabi'
+                            }
+                        }
+                    }
+                    externalNativeBuild {
+                        ndkBuild {
+                            path "src/main/jni/Android.mk"
+                        }
+                    }
+                }
+                """.trimIndent()
+            )
+        }
+
+        val appMk = File(jniDir, "Application.mk").also {
+            it.writeText("APP_ABI := armeabi arm64-v8a\n")
+        }
+
+        BuildToolInstaller.ensureProjectAbiFilters(projectDir, "arm64-v8a")
+
+        val bgText = buildGradle.readText()
+        assertTrue("Must inject ndk { abiFilters 'arm64-v8a' }", bgText.contains("abiFilters 'arm64-v8a'"))
+        assertTrue("Must not contain standalone 'armeabi'", !bgText.contains("'armeabi'"))
+
+        val mkText = appMk.readText()
+        assertTrue("Application.mk must have arm64-v8a", mkText.contains("arm64-v8a"))
+        assertTrue("Application.mk must not contain standalone armeabi", !mkText.contains("armeabi "))
+    }
 }
