@@ -79,7 +79,7 @@ class BuildViewModel : ViewModel() {
                             isBuilding = false,
                             buildSuccess = event.success,
                             artifactFile = event.artifactFile,
-                            showExportDialog = event.success && event.artifactFile != null && event.artifactFile.name.endsWith(".so")
+                            showExportDialog = event.success && event.artifactFile != null
                         )
                     }
                 }

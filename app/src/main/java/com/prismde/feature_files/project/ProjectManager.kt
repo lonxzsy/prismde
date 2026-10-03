@@ -195,6 +195,156 @@ object ProjectManager {
                 )
             }
 
+            ProjectType.GRADLE -> {
+                File(projectDir, "settings.gradle").writeText(
+                    """
+                    rootProject.name = '$finalName'
+                    include ':app'
+                    """.trimIndent()
+                )
+
+                File(projectDir, "build.gradle").writeText(
+                    """
+                    buildscript {
+                        repositories {
+                            google()
+                            mavenCentral()
+                        }
+                        dependencies {
+                            classpath 'com.android.tools.build:gradle:8.1.0'
+                        }
+                    }
+
+                    allprojects {
+                        repositories {
+                            google()
+                            mavenCentral()
+                        }
+                    }
+                    """.trimIndent()
+                )
+
+                val appDir = File(projectDir, "app").also { it.mkdirs() }
+                File(appDir, "build.gradle").writeText(
+                    """
+                    plugins {
+                        id 'com.android.application'
+                    }
+
+                    android {
+                        namespace 'com.example.$finalName'
+                        compileSdk 34
+
+                        defaultConfig {
+                            applicationId "com.example.$finalName"
+                            minSdk 24
+                            targetSdk 34
+                            versionCode 1
+                            versionName "1.0"
+
+                            externalNativeBuild {
+                                ndkBuild {
+                                    abiFilters 'arm64-v8a'
+                                }
+                            }
+                        }
+
+                        externalNativeBuild {
+                            ndkBuild {
+                                path "src/main/jni/Android.mk"
+                            }
+                        }
+                    }
+
+                    dependencies {
+                        implementation 'androidx.appcompat:appcompat:1.6.1'
+                    }
+                    """.trimIndent()
+                )
+
+                val srcMain = File(appDir, "src/main").also { it.mkdirs() }
+                File(srcMain, "AndroidManifest.xml").writeText(
+                    """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+                        <application
+                            android:allowBackup="true"
+                            android:label="$finalName"
+                            android:supportsRtl="true">
+                            <activity
+                                android:name=".MainActivity"
+                                android:exported="true">
+                                <intent-filter>
+                                    <action android:name="android.intent.action.MAIN" />
+                                    <category android:name="android.intent.category.LAUNCHER" />
+                                </intent-filter>
+                            </activity>
+                        </application>
+                    </manifest>
+                    """.trimIndent()
+                )
+
+                val javaDir = File(srcMain, "java/com/example/$finalName").also { it.mkdirs() }
+                File(javaDir, "MainActivity.java").writeText(
+                    """
+                    package com.example.$finalName;
+
+                    import android.os.Bundle;
+                    import androidx.appcompat.app.AppCompatActivity;
+
+                    public class MainActivity extends AppCompatActivity {
+                        static {
+                            System.loadLibrary("native-lib");
+                        }
+
+                        public native String stringFromJNI();
+
+                        @Override
+                        protected void onCreate(Bundle savedInstanceState) {
+                            super.onCreate(savedInstanceState);
+                        }
+                    }
+                    """.trimIndent()
+                )
+
+                val jniDir = File(srcMain, "jni").also { it.mkdirs() }
+                File(jniDir, "Android.mk").writeText(
+                    """
+                    LOCAL_PATH := $(call my-dir)
+
+                    include $(CLEAR_VARS)
+                    LOCAL_MODULE    := native-lib
+                    LOCAL_SRC_FILES := native-lib.cpp
+                    LOCAL_LDLIBS    := -llog -landroid
+
+                    include $(BUILD_SHARED_LIBRARY)
+                    """.trimIndent()
+                )
+
+                File(jniDir, "Application.mk").writeText(
+                    """
+                    APP_ABI := arm64-v8a
+                    APP_PLATFORM := android-24
+                    APP_STL := c++_shared
+                    """.trimIndent()
+                )
+
+                File(jniDir, "native-lib.cpp").writeText(
+                    """
+                    #include <jni.h>
+                    #include <string>
+
+                    extern "C" JNIEXPORT jstring JNICALL
+                    Java_com_example_${finalName}_MainActivity_stringFromJNI(
+                            JNIEnv* env,
+                            jobject /* this */) {
+                        std::string hello = "Hello from PrismDE C++!";
+                        return env->NewStringUTF(hello.c_str());
+                    }
+                    """.trimIndent()
+                )
+            }
+
             ProjectType.SINGLE_FILE_EXECUTABLE, ProjectType.AUTO_DETECT -> {
                 File(projectDir, "main.cpp").writeText(
                     """

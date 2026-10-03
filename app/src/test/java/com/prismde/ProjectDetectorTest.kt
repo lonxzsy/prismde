@@ -101,6 +101,32 @@ class ProjectDetectorTest {
     }
 
     @Test
+    fun testDetectGradleProject() {
+        val root = tempFolder.newFolder("test_gradle_project")
+        File(root, "build.gradle").writeText("plugins { id 'com.android.application' }")
+        File(root, "gradlew").writeText("#!/bin/sh")
+
+        val detected = ProjectDetector.detect(root)
+        assertEquals(ProjectType.GRADLE, detected)
+    }
+
+    @Test
+    fun testDetectNestedJniProject() {
+        val root = tempFolder.newFolder("test_nested_jni_project")
+        File(root, "build.gradle").writeText("apply plugin: 'com.android.application'")
+        val jniDir = File(root, "app/src/main/jni").also { it.mkdirs() }
+        File(jniDir, "Android.mk").writeText("LOCAL_MODULE := AimCheatPro")
+        File(jniDir, "main.cpp").writeText("#include <jni.h>")
+
+        val proj = com.prismde.core.model.Project("Injector", root.absolutePath)
+        val detected = ProjectDetector.detect(root)
+        assertEquals(ProjectType.GRADLE, detected)
+        org.junit.Assert.assertTrue(proj.hasJniDir)
+        org.junit.Assert.assertTrue(proj.hasAndroidMk)
+        assertEquals("jni", proj.jniDir.name)
+    }
+
+    @Test
     fun testMavenDiagnosticParsing() {
         val parser = com.prismde.feature_build.engine.ClangDiagnosticParser()
         val line = "[ERROR] /src/main/java/Main.java:[15,8] cannot find symbol"

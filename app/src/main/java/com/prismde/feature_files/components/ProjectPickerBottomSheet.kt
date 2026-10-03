@@ -235,6 +235,7 @@ fun ProjectPickerBottomSheet(
                                     )
                                     Text(
                                         text = when (project.detectedType) {
+                                            ProjectType.GRADLE -> stringResource(R.string.type_gradle)
                                             ProjectType.PURE_JNI_SO -> stringResource(R.string.type_jni_so)
                                             ProjectType.CMAKE -> stringResource(R.string.type_cmake)
                                             ProjectType.SINGLE_FILE_EXECUTABLE -> stringResource(R.string.type_single_file)
@@ -354,6 +355,11 @@ fun CreateProjectDialog(
                 Spacer(Modifier.height(8.dp))
 
                 val templates = listOf(
+                    Triple(
+                        ProjectType.GRADLE,
+                        stringResource(R.string.type_gradle),
+                        stringResource(R.string.template_gradle_desc)
+                    ),
                     Triple(
                         ProjectType.PURE_JNI_SO,
                         stringResource(R.string.type_jni_so),

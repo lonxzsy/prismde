@@ -40,6 +40,24 @@ class BuildProcessRunner {
 
         val isRu = java.util.Locale.getDefault().language == "ru"
 
+        if (detectedType == ProjectType.GRADLE) {
+            _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System (Gradle) ==="))
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "Тип проекта: GRADLE (Android / Java)" else "Project type: GRADLE (Android / Java)"))
+            _events.emit(BuildOutputEvent.LogLine(if (isRu) "Задачи (Tasks): ${config.gradleTasks} ${config.gradleCustomFlags}" else "Tasks: ${config.gradleTasks} ${config.gradleCustomFlags}"))
+
+            val artifactFile = buildGradle(project, config, ndk)
+            val success = artifactFile != null && artifactFile.exists()
+            val exitCode = if (success) 0 else 1
+            if (success) {
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "✔ Сборка Gradle успешно завершена! Создан артефакт: ${artifactFile.absolutePath}" else "✔ Gradle build completed successfully! Generated artifact: ${artifactFile.absolutePath}"))
+            } else {
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки Gradle. Проверьте вывод и карточки ошибок выше." else "✖ Gradle build failed. Check the output and error diagnostics above.", isError = true))
+            }
+            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile))
+            return@withContext success
+        }
+
         if (detectedType == ProjectType.MAVEN) {
             _events.emit(BuildOutputEvent.LogLine("=== PrismDE Build System (Maven) ==="))
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Проект: ${project.name}" else "Project: ${project.name}"))
@@ -113,10 +131,11 @@ class BuildProcessRunner {
         val targetSo = File(libsDir, soName)
 
         val jniDir = if (project.hasJniDir) project.jniDir else project.rootDir
-        val directSources = jniDir.listFiles { _, name ->
-            val ext = name.substringAfterLast('.', "").lowercase()
-            ext in ProjectDetector.COMPILABLE_EXTENSIONS
-        }?.toList() ?: emptyList()
+        val directSources = jniDir.walkTopDown().filter { file ->
+            file.isFile &&
+            file.extension.lowercase() in ProjectDetector.COMPILABLE_EXTENSIONS &&
+            file.parentFile?.name !in ProjectDetector.IGNORED_DIRS
+        }.toList()
         val sources = if (directSources.isNotEmpty()) directSources else ProjectDetector.findSourceFiles(project)
 
         if (sources.isEmpty()) {
@@ -129,20 +148,44 @@ class BuildProcessRunner {
         if (project.hasAndroidMk && ndkBuildScript != null && ndkBuildScript.exists()) {
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется ndk-build с файлом Android.mk..." else "Using ndk-build with Android.mk..."))
             ndkBuildScript.setExecutable(true, false)
-            val projectPath = if (project.rootDir.name.equals("jni", ignoreCase = true)) {
-                project.rootDir.parentFile?.absolutePath ?: project.rootDir.absolutePath
-            } else {
-                project.rootDir.absolutePath
+            val androidMkFile = when {
+                File(project.jniDir, "Android.mk").exists() -> File(project.jniDir, "Android.mk")
+                File(project.rootDir, "Android.mk").exists() -> File(project.rootDir, "Android.mk")
+                File(project.rootDir, "app/src/main/jni/Android.mk").exists() -> File(project.rootDir, "app/src/main/jni/Android.mk")
+                else -> File(project.jniDir, "Android.mk")
             }
-            val command = listOf(
+            val appMkFile = when {
+                File(project.jniDir, "Application.mk").exists() -> File(project.jniDir, "Application.mk")
+                File(project.rootDir, "Application.mk").exists() -> File(project.rootDir, "Application.mk")
+                File(project.rootDir, "app/src/main/jni/Application.mk").exists() -> File(project.rootDir, "app/src/main/jni/Application.mk")
+                else -> null
+            }
+
+            val mkDir = androidMkFile.absoluteFile.parentFile ?: project.rootDir
+            val mkParentDir = mkDir.parentFile ?: mkDir
+
+            val command = mutableListOf(
                 "/system/bin/sh",
                 ndkBuildScript.absolutePath,
-                "NDK_PROJECT_PATH=$projectPath",
+                "APP_BUILD_SCRIPT=${androidMkFile.absolutePath}",
+                "NDK_PROJECT_PATH=${mkDir.absolutePath}",
                 "APP_ABI=${config.selectedAbi.abiString}",
                 "APP_PLATFORM=android-${config.minApiLevel}"
             )
-            executeProcess(command, project.rootDir, ndkBuildScript.parentFile)
-            return if (targetSo.exists()) targetSo else libsDir.listFiles { _, name -> name.endsWith(".so") }?.firstOrNull()
+            if (appMkFile != null) {
+                command.add("NDK_APPLICATION_MK=${appMkFile.absolutePath}")
+            }
+            executeProcess(command, mkDir, ndkBuildScript.parentFile)
+            val candidateSos = listOf(
+                targetSo,
+                File(mkDir, "libs/${config.selectedAbi.abiString}/$soName"),
+                File(mkParentDir, "libs/${config.selectedAbi.abiString}/$soName"),
+                File(project.rootDir, "libs/${config.selectedAbi.abiString}/$soName"),
+                File(project.rootDir, "app/libs/${config.selectedAbi.abiString}/$soName")
+            )
+            val found = candidateSos.firstOrNull { it.exists() }
+            return found ?: libsDir.listFiles { _, name -> name.endsWith(".so") }?.firstOrNull()
+                ?: project.rootDir.walkTopDown().firstOrNull { it.isFile && it.extension.equals("so", ignoreCase = true) }
         }
 
         // Direct Clang++ invocation
@@ -348,8 +391,9 @@ class BuildProcessRunner {
             return null
         }
 
-        val artifacts = targetDir.walkTopDown().maxDepth(3).filter { file ->
+        val artifacts = project.rootDir.walkTopDown().maxDepth(5).filter { file ->
             file.isFile &&
+                    (file.parentFile?.name == "target" || file.path.contains("target")) &&
                     (file.extension.equals("jar", ignoreCase = true) ||
                      file.extension.equals("aar", ignoreCase = true) ||
                      file.extension.equals("war", ignoreCase = true) ||
@@ -359,13 +403,116 @@ class BuildProcessRunner {
                     !file.name.startsWith("original-", ignoreCase = true)
         }.toList()
 
+        if (artifacts.isEmpty()) {
+            if (!success) {
+                _events.emit(
+                    BuildOutputEvent.LogLine(
+                        if (isRu) "Подсказка: Для сборки без mvnw установите Maven в Termux (pkg install maven openjdk-17) или добавьте wrapper mvnw в корень проекта."
+                        else "Hint: For building without mvnw, install Maven in Termux (pkg install maven openjdk-17) or add wrapper mvnw to project root.",
+                        isError = true
+                    )
+                )
+            }
+            return null
+        }
+
         return artifacts.maxByOrNull { it.lastModified() }
+    }
+
+    private suspend fun buildGradle(
+        project: Project,
+        config: BuildConfiguration,
+        ndk: NdkVersion?
+    ): File? {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+
+        // 1. Detect Gradle Wrapper (gradlew / gradlew.bat) or installed Gradle binary
+        val gradlewFile = File(project.rootDir, "gradlew")
+        val gradlewBat = File(project.rootDir, "gradlew.bat")
+
+        val (executableCmd, workingDir, extraBinDir) = when {
+            gradlewFile.exists() -> {
+                try { gradlewFile.setExecutable(true, false) } catch (_: Throwable) {}
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется Gradle Wrapper (./gradlew)..." else "Using Gradle Wrapper (./gradlew)..."))
+                Triple(listOf("/system/bin/sh", gradlewFile.absolutePath), project.rootDir, null)
+            }
+            gradlewBat.exists() && System.getProperty("os.name")?.lowercase()?.contains("windows") == true -> {
+                _events.emit(BuildOutputEvent.LogLine("Using Gradle Wrapper (gradlew.bat)..."))
+                Triple(listOf("cmd.exe", "/c", gradlewBat.absolutePath), project.rootDir, null)
+            }
+            else -> {
+                // Search installed gradle binary in Termux / system paths
+                val candidatePaths = listOf(
+                    "/data/data/com.termux/files/usr/bin/gradle",
+                    "/data/user/0/com.termux/files/usr/bin/gradle",
+                    "/data/data/com.termux/files/usr/share/gradle/bin/gradle",
+                    "/system/bin/gradle",
+                    "/system/xbin/gradle"
+                )
+                val found = candidatePaths.map { File(it) }.firstOrNull { it.exists() }
+                if (found != null) {
+                    try { found.setExecutable(true, false) } catch (_: Throwable) {}
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется установленный Gradle: ${found.absolutePath}" else "Using installed Gradle: ${found.absolutePath}"))
+                    Triple(listOf("/system/bin/sh", found.absolutePath), project.rootDir, found.parentFile)
+                } else {
+                    _events.emit(BuildOutputEvent.LogLine(if (isRu) "Поиск gradle в системном PATH..." else "Searching for gradle in system PATH..."))
+                    Triple(listOf("gradle"), project.rootDir, null)
+                }
+            }
+        }
+
+        val tasks = config.gradleTasks.split(" ").filter { it.isNotBlank() }.ifEmpty { listOf("assembleDebug") }
+        val flags = config.gradleCustomFlags.split(" ").filter { it.isNotBlank() }
+
+        val command = mutableListOf<String>()
+        command.addAll(executableCmd)
+        command.addAll(tasks)
+        command.addAll(flags)
+
+        // Avoid daemon background issues in constrained mobile containers if not already specified
+        if (!command.contains("--no-daemon") && !command.contains("--daemon")) {
+            command.add("--no-daemon")
+        }
+
+        _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
+        _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
+
+        val success = executeProcess(command, workingDir, extraBinDir, ndk)
+
+        // Search for generated APK, AAR, or JAR in build outputs
+        val artifacts = project.rootDir.walkTopDown().maxDepth(6).filter { file ->
+            file.isFile &&
+                    (file.extension.equals("apk", ignoreCase = true) ||
+                     file.extension.equals("aar", ignoreCase = true) ||
+                     file.extension.equals("jar", ignoreCase = true)) &&
+                    file.path.contains("build", ignoreCase = true) &&
+                    !file.name.endsWith("-unaligned.apk", ignoreCase = true) &&
+                    !file.name.endsWith("-sources.jar", ignoreCase = true)
+        }.toList()
+
+        if (artifacts.isEmpty()) {
+            if (!success) {
+                _events.emit(
+                    BuildOutputEvent.LogLine(
+                        if (isRu) "Подсказка: Для сборки Gradle убедитесь, что в системе установлен JDK (openjdk-17) и Android SDK, либо настроен gradlew."
+                        else "Hint: For Gradle builds, ensure JDK (openjdk-17) and Android SDK are installed, or gradlew is properly configured.",
+                        isError = true
+                    )
+                )
+            }
+            return null
+        }
+
+        // Return generated APK if available, or newest artifact
+        return artifacts.filter { it.extension.equals("apk", ignoreCase = true) }.maxByOrNull { it.lastModified() }
+            ?: artifacts.maxByOrNull { it.lastModified() }
     }
 
     private suspend fun executeProcess(
         command: List<String>,
         workingDir: File,
-        extraBinDir: File? = null
+        extraBinDir: File? = null,
+        ndk: NdkVersion? = null
     ): Boolean {
         return try {
             val processBuilder = ProcessBuilder(command)
@@ -398,6 +545,46 @@ class BuildProcessRunner {
                 }
             }
 
+            // Auto-detect ANDROID_HOME / ANDROID_SDK_ROOT
+            if (env["ANDROID_HOME"].isNullOrBlank() && env["ANDROID_SDK_ROOT"].isNullOrBlank()) {
+                val localProps = File(workingDir, "local.properties")
+                if (localProps.exists()) {
+                    try {
+                        for (line in localProps.readLines()) {
+                            val trimmed = line.trim()
+                            if (trimmed.startsWith("sdk.dir=")) {
+                                val path = trimmed.substringAfter("sdk.dir=").replace("\\:", ":").replace("\\\\", "/")
+                                if (File(path).exists()) {
+                                    env["ANDROID_HOME"] = path
+                                    env["ANDROID_SDK_ROOT"] = path
+                                    break
+                                }
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+                if (env["ANDROID_HOME"].isNullOrBlank()) {
+                    val sdkCandidates = listOf(
+                        File("/data/data/com.termux/files/home/android-sdk"),
+                        File("/sdcard/Android/sdk"),
+                        File("/sdcard/android-sdk"),
+                        File("/data/local/android-sdk")
+                    )
+                    sdkCandidates.firstOrNull { it.exists() }?.let {
+                        env["ANDROID_HOME"] = it.absolutePath
+                        env["ANDROID_SDK_ROOT"] = it.absolutePath
+                    }
+                }
+            }
+
+            // Provide active NDK location to Gradle / CMake
+            ndk?.getEffectiveNdkDir()?.let { ndkDir ->
+                if (ndkDir.exists()) {
+                    env["ANDROID_NDK_HOME"] = ndkDir.absolutePath
+                    env["NDK_HOME"] = ndkDir.absolutePath
+                }
+            }
+
             val tempDir = File(workingDir, ".prism_tmp").also { it.mkdirs() }
             try {
                 tempDir.setReadable(true, false)
@@ -411,12 +598,18 @@ class BuildProcessRunner {
 
             val process = processBuilder.start()
 
-            // Stream stdout
+            // Stream stdout and parse diagnostics (e.g. Maven, Gradle, Javac output to stdout)
             val stdoutThread = Thread {
                 BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        line?.let { _events.tryEmit(BuildOutputEvent.LogLine(it)) }
+                        line?.let { l ->
+                            _events.tryEmit(BuildOutputEvent.LogLine(l))
+                            val diag = parser.parseLine(l)
+                            if (diag != null) {
+                                _events.tryEmit(BuildOutputEvent.DiagnosticFound(diag))
+                            }
+                        }
                     }
                 }
             }

@@ -214,18 +214,20 @@ class AiAgentEngine(
                             buildConfig.projectType
                         }
                         val isMaven = detectedType == com.prismde.core.model.ProjectType.MAVEN
+                        val isGradle = detectedType == com.prismde.core.model.ProjectType.GRADLE
+                        val isJvmOrGradle = isMaven || isGradle
 
                         onAction(
                             AiAgentAction.Thinking(
-                                if (isMaven) {
-                                    if (isRu) "Запуск сборки проекта через Maven..." else "Running project compilation with Maven..."
-                                } else {
-                                    if (isRu) "Запуск компиляции проекта через NDK..." else "Running project compilation with NDK..."
+                                when {
+                                    isGradle -> if (isRu) "Запуск сборки проекта через Gradle..." else "Running project compilation with Gradle..."
+                                    isMaven -> if (isRu) "Запуск сборки проекта через Maven..." else "Running project compilation with Maven..."
+                                    else -> if (isRu) "Запуск компиляции проекта через NDK..." else "Running project compilation with NDK..."
                                 }
                             )
                         )
 
-                        if (!isMaven && (ndk == null || !ndk.isInstalled)) {
+                        if (!isJvmOrGradle && (ndk == null || !ndk.isInstalled)) {
                             val errMsg = if (isRu) "Ошибка: NDK не установлен или не настроен. Установите NDK в Настройках для сборки."
                                          else "Error: Android NDK is not installed or configured. Please install NDK from Settings."
                             onAction(AiAgentAction.BuildProject(status = if (isRu) "NDK не установлен" else "NDK not installed", isSuccess = false, errorCount = 1))
@@ -256,14 +258,20 @@ class AiAgentEngine(
                             val errorCount = if (errors.isNotEmpty()) errors.size else if (!buildSuccess) 1 else 0
 
                             if (buildSuccess) {
-                                val defaultArtifact = if (isMaven) "target/${project.name}.jar" else "libs/${bConfig.selectedAbi.abiString}/lib${project.name}.so"
+                                val defaultArtifact = when {
+                                    isGradle -> "build/outputs/apk/debug/${project.name}.apk"
+                                    isMaven -> "target/${project.name}.jar"
+                                    else -> "libs/${bConfig.selectedAbi.abiString}/lib${project.name}.so"
+                                }
                                 val artifact = completedEvent?.artifactFile?.absolutePath ?: defaultArtifact
                                 onAction(AiAgentAction.BuildProject(status = if (isRu) "Сборка успешна" else "Build Succeeded", isSuccess = true, errorCount = 0))
                                 toolResults.append(
                                     "<tool_result name=\"build_project\" status=\"SUCCESS\">\n" +
                                     "Build completed successfully!\n" +
                                     "Artifact: $artifact\n" +
-                                    (if (isMaven) "Maven project compiled cleanly without errors.\n" else "All native source files compiled cleanly without errors.\n") +
+                                    (if (isGradle) "Gradle Android/JVM project built cleanly without errors.\n"
+                                     else if (isMaven) "Maven project compiled cleanly without errors.\n"
+                                     else "All native source files compiled cleanly without errors.\n") +
                                     "</tool_result>\n"
                                 )
                             } else {
@@ -659,7 +667,7 @@ class AiAgentEngine(
 
     private fun buildSystemPrompt(project: Project, files: List<String>, isRu: Boolean): String {
         return if (isRu) """
-            Ты автономный AI-ассистент разработчика в мобильной IDE PrismDE (C/C++, Android NDK, CMake, Maven Java/Android).
+            Ты автономный AI-ассистент разработчика в мобильной IDE PrismDE (C/C++, Android NDK, CMake, Gradle Android/Java, Maven).
             Твоя цель — помочь разработчику реализовать функциональность, исправить баги или создать новые файлы в проекте "${project.name}".
 
             Файлы в текущем проекте:
@@ -680,19 +688,19 @@ class AiAgentEngine(
             3. Просмотр структуры файлов проекта:
                <tool_call name="list_files"></tool_call>
 
-            4. Сборка и компиляция проекта (Clang/NDK/CMake или Maven pom.xml):
+            4. Сборка и компиляция проекта (Gradle/NDK/CMake или Maven):
                <tool_call name="build_project"></tool_call>
 
             ПРАВИЛА РАБОТЫ:
             - Если тебе нужно узнать содержимое файла, вызови <tool_call name="read_file">.
             - Если нужно создать или модифицировать код, вызови <tool_call name="write_file">. Всегда предоставляй ПОЛНОЕ валидное содержимое файла в теге <content>.
-            - Если пользователь просит собрать или проверить проект, или после внесения правок в код C/C++/Java, вызови <tool_call name="build_project"></tool_call>.
-            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang/Javac, открой указанные файлы, исправь ошибки через write_file и ОБЯЗАТЕЛЬНО снова вызови build_project для подтверждения успешного исправления.
+            - Если пользователь просит собрать или проверить проект, или после внесения правок в код C/C++/Java/Kotlin, вызови <tool_call name="build_project"></tool_call>.
+            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang/Javac/Kotlinc, открой указанные файлы, исправь ошибки через write_file и ОБЯЗАТЕЛЬНО снова вызови build_project для подтверждения успешного исправления.
             - ВНИМАНИЕ: Используй ТОЛЬКО стандартный тег <tool_call name="...">...</tool_call>. НЕ используй спецсимволы DSML (<|DSML|>, invoke, calls, parameter). Обязательно закрывай каждый вызов тегом </tool_call>.
             - После выполнения всех операций напиши краткое, профессиональное и понятное резюме на русском языке без лишней воды.
         """.trimIndent()
         else """
-            You are an autonomous developer AI assistant in the mobile IDE PrismDE (C/C++, Android NDK, CMake, Maven Java/Android).
+            You are an autonomous developer AI assistant in the mobile IDE PrismDE (C/C++, Android NDK, CMake, Gradle Android/Java, Maven).
             Your goal is to help the developer implement features, fix bugs, or create new files in project "${project.name}".
 
             Project files:

@@ -8,28 +8,48 @@ object ProjectDetector {
 
     val COMPILABLE_EXTENSIONS = setOf("c", "cpp", "cc", "cxx", "c++", "cp", "s", "S", "java", "kt")
     val HEADER_EXTENSIONS = setOf("h", "hpp", "hxx", "hh", "inc", "inl")
-    private val IGNORED_DIRS = setOf("build", ".git", ".gradle", "libs", "obj", "bin", ".idea", "target", ".mvn")
+    val IGNORED_DIRS = setOf("build", ".git", ".gradle", "libs", "obj", "bin", ".idea", "target", ".mvn")
 
     fun detect(rootDir: File): ProjectType {
         if (!rootDir.exists() || !rootDir.isDirectory) {
             return ProjectType.SINGLE_FILE_EXECUTABLE
         }
 
+        // 1. Maven project detection
         val hasPom = File(rootDir, "pom.xml").exists() || File(rootDir, "mvnw").exists() || File(rootDir, "mvnw.cmd").exists()
         if (hasPom) {
             return ProjectType.MAVEN
         }
 
-        val isJniNamed = rootDir.name.equals("jni", ignoreCase = true)
-        val jniDir = if (isJniNamed) rootDir else File(rootDir, "jni")
-        val hasJni = jniDir.exists() && jniDir.isDirectory
-        val hasRootGradle = File(rootDir, "build.gradle").exists() || File(rootDir, "build.gradle.kts").exists()
-        val hasRootCMake = File(rootDir, "CMakeLists.txt").exists() || (hasJni && File(jniDir, "CMakeLists.txt").exists())
-        val hasAndroidMk = File(rootDir, "Android.mk").exists() || (hasJni && File(jniDir, "Android.mk").exists()) || File(rootDir, "Application.mk").exists()
+        // 2. Gradle project detection
+        val hasGradle = File(rootDir, "build.gradle").exists() ||
+                File(rootDir, "build.gradle.kts").exists() ||
+                File(rootDir, "settings.gradle").exists() ||
+                File(rootDir, "settings.gradle.kts").exists() ||
+                File(rootDir, "gradlew").exists() ||
+                File(rootDir, "gradlew.bat").exists()
+        if (hasGradle) {
+            return ProjectType.GRADLE
+        }
 
-        // Pure JNI project case: has Android.mk, or is/contains jni/ folder without root Gradle wrapper
-        if (hasAndroidMk || (hasJni && !hasRootGradle)) {
-            val jniFiles = jniDir.listFiles() ?: emptyArray()
+        val isJniNamed = rootDir.name.equals("jni", ignoreCase = true)
+        val candidateJniDirs = listOf(
+            if (isJniNamed) rootDir else File(rootDir, "jni"),
+            File(rootDir, "app/src/main/jni"),
+            File(rootDir, "src/main/jni"),
+            File(rootDir, "app/src/main/cpp"),
+            File(rootDir, "src/main/cpp"),
+            File(rootDir, "cpp")
+        )
+        val effectiveJniDir = candidateJniDirs.firstOrNull { it.exists() && it.isDirectory }
+        val hasJni = effectiveJniDir != null
+
+        val hasRootCMake = File(rootDir, "CMakeLists.txt").exists() || (hasJni && File(effectiveJniDir, "CMakeLists.txt").exists())
+        val hasAndroidMk = File(rootDir, "Android.mk").exists() || (hasJni && File(effectiveJniDir, "Android.mk").exists()) || File(rootDir, "Application.mk").exists()
+
+        // Pure JNI project case: has Android.mk, or is/contains jni/ folder
+        if (hasAndroidMk || hasJni) {
+            val jniFiles = effectiveJniDir?.listFiles() ?: emptyArray()
             val hasSources = jniFiles.any {
                 it.extension.lowercase() in COMPILABLE_EXTENSIONS ||
                         it.name == "Android.mk" ||

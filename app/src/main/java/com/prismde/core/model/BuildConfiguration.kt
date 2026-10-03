@@ -27,7 +27,8 @@ enum class ProjectType {
     PURE_JNI_SO,             // Project with jni/ folder building .so only
     CMAKE,                   // CMakeLists.txt project
     SINGLE_FILE_EXECUTABLE,  // Single .cpp or .c file executable
-    MAVEN                    // pom.xml / mvnw Java or Android project
+    MAVEN,                   // pom.xml / mvnw Java or Android project
+    GRADLE                   // build.gradle / gradlew Android or Java project
 }
 
 data class BuildConfiguration(
@@ -40,5 +41,8 @@ data class BuildConfiguration(
     val customLdFlags: String = "-llog",
     val activeNdkTag: String = "r26c",
     val mavenGoals: String = "package",
-    val mavenCustomFlags: String = "-DskipTests"
+    val mavenCustomFlags: String = "-DskipTests",
+    val gradleTasks: String = "assembleDebug",
+    val gradleCustomFlags: String = "--no-daemon"
 )
+

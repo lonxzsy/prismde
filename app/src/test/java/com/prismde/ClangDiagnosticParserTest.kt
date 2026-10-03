@@ -95,4 +95,38 @@ class ClangDiagnosticParserTest {
         val diag = parser.parseLine(line)
         assertNull(diag)
     }
+
+    @Test
+    fun testParseKotlinError() {
+        val line = "e: /app/src/main/java/Main.kt: (15, 8): Unresolved reference: xyz"
+        val diag = parser.parseLine(line)
+        assertNotNull(diag)
+        assertEquals("/app/src/main/java/Main.kt", diag?.filePath)
+        assertEquals(15, diag?.line)
+        assertEquals(8, diag?.column)
+        assertEquals(DiagnosticSeverity.ERROR, diag?.severity)
+        assertEquals("Unresolved reference: xyz", diag?.rawMessage)
+    }
+
+    @Test
+    fun testParseStandardJavacError() {
+        val line = "/app/src/main/java/MainActivity.java:42: error: cannot find symbol"
+        val diag = parser.parseLine(line)
+        assertNotNull(diag)
+        assertEquals("/app/src/main/java/MainActivity.java", diag?.filePath)
+        assertEquals(42, diag?.line)
+        assertEquals(DiagnosticSeverity.ERROR, diag?.severity)
+        assertEquals("cannot find symbol", diag?.rawMessage)
+    }
+
+    @Test
+    fun testParseAaptError() {
+        val line = "/app/src/main/res/layout/activity_main.xml:10: AAPT: error: resource not found"
+        val diag = parser.parseLine(line)
+        assertNotNull(diag)
+        assertEquals("/app/src/main/res/layout/activity_main.xml", diag?.filePath)
+        assertEquals(10, diag?.line)
+        assertEquals(DiagnosticSeverity.ERROR, diag?.severity)
+        assertEquals("resource not found", diag?.rawMessage)
+    }
 }

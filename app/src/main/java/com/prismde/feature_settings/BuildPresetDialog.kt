@@ -50,6 +50,8 @@ fun BuildPresetDialog(
     var customLdFlags by remember { mutableStateOf(initialConfig.customLdFlags) }
     var mavenGoals by remember { mutableStateOf(initialConfig.mavenGoals) }
     var mavenCustomFlags by remember { mutableStateOf(initialConfig.mavenCustomFlags) }
+    var gradleTasks by remember { mutableStateOf(initialConfig.gradleTasks) }
+    var gradleCustomFlags by remember { mutableStateOf(initialConfig.gradleCustomFlags) }
 
     val scrollState = rememberScrollState()
 
@@ -86,6 +88,7 @@ fun BuildPresetDialog(
                 Text(stringResource(R.string.project_type_build_system), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 listOf(
                     ProjectType.AUTO_DETECT to stringResource(R.string.type_auto_detect),
+                    ProjectType.GRADLE to stringResource(R.string.type_gradle),
                     ProjectType.PURE_JNI_SO to stringResource(R.string.type_jni_so),
                     ProjectType.CMAKE to stringResource(R.string.type_cmake),
                     ProjectType.SINGLE_FILE_EXECUTABLE to stringResource(R.string.type_single_file),
@@ -178,6 +181,28 @@ fun BuildPresetDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Gradle Tasks
+                OutlinedTextField(
+                    value = gradleTasks,
+                    onValueChange = { gradleTasks = it },
+                    label = { Text(if (isRu) "Gradle задачи (напр: assembleDebug)" else "Gradle Tasks (e.g.: assembleDebug)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Gradle Flags
+                OutlinedTextField(
+                    value = gradleCustomFlags,
+                    onValueChange = { gradleCustomFlags = it },
+                    label = { Text(if (isRu) "Gradle флаги (напр: --no-daemon)" else "Gradle Flags (e.g.: --no-daemon)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
@@ -194,7 +219,9 @@ fun BuildPresetDialog(
                             customCFlags = customCFlags,
                             customLdFlags = customLdFlags,
                             mavenGoals = mavenGoals,
-                            mavenCustomFlags = mavenCustomFlags
+                            mavenCustomFlags = mavenCustomFlags,
+                            gradleTasks = gradleTasks,
+                            gradleCustomFlags = gradleCustomFlags
                         )
                     )
                 },

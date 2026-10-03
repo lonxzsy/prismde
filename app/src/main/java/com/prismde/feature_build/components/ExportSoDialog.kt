@@ -45,6 +45,20 @@ fun ExportSoDialog(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val isApk = soFile.extension.equals("apk", ignoreCase = true)
+    val isSo = soFile.extension.equals("so", ignoreCase = true)
+
+    val titleText = when {
+        isApk -> stringResource(R.string.apk_built)
+        isSo -> stringResource(R.string.library_built)
+        else -> stringResource(R.string.artifact_built)
+    }
+
+    val descText = when {
+        isApk -> stringResource(R.string.apk_built_desc)
+        isSo -> stringResource(R.string.library_built_desc)
+        else -> stringResource(R.string.artifact_built_desc)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -57,13 +71,13 @@ fun ExportSoDialog(
                     modifier = Modifier.size(28.dp)
                 )
                 Spacer(Modifier.width(10.dp))
-                Text(stringResource(R.string.library_built))
+                Text(titleText)
             }
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = stringResource(R.string.library_built_desc),
+                    text = descText,
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -84,10 +98,12 @@ fun ExportSoDialog(
                             text = stringResource(R.string.size_kb, soFile.length() / 1024),
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Text(
-                            text = stringResource(R.string.architecture_label, soFile.parentFile?.name ?: "arm64-v8a"),
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        if (isSo) {
+                            Text(
+                                text = stringResource(R.string.architecture_label, soFile.parentFile?.name ?: "arm64-v8a"),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                         Spacer(Modifier.height(6.dp))
                         Text(
                             text = soFile.absolutePath,
@@ -99,15 +115,28 @@ fun ExportSoDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    shareSoFile(context, soFile)
-                },
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.share_so))
+            Row {
+                if (isApk) {
+                    Button(
+                        onClick = {
+                            installApk(context, soFile)
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(stringResource(R.string.install_apk))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
+                Button(
+                    onClick = {
+                        shareSoFile(context, soFile)
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.share_so))
+                }
             }
         },
         dismissButton = {
@@ -125,11 +154,25 @@ fun ExportSoDialog(
     )
 }
 
+private fun installApk(context: Context, file: File) {
+    try {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
 private fun shareSoFile(context: Context, file: File) {
     try {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val mime = if (file.extension.equals("apk", ignoreCase = true)) "application/vnd.android.package-archive" else "application/octet-stream"
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/octet-stream"
+            type = mime
             putExtra(Intent.EXTRA_STREAM, uri)
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
