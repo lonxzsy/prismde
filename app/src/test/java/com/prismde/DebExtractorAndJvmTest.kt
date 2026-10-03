@@ -151,4 +151,20 @@ class DebExtractorAndJvmTest {
         assertEquals("fake-zlib", libz1.readText())
         assertTrue("libz.so should have been copied from libz.so.1.3.2", libz.exists())
     }
+
+    @Test
+    fun testLibcxxAndVersionMarkerLogic() {
+        val workDir = tempFolder.newFolder("libcxx_test")
+        val libDir = File(workDir, "lib").also { it.mkdirs() }
+        val marker = File(libDir, ".prism_libs_version")
+        val currentVersion = "v2-libcxx"
+
+        assertTrue("Marker should not exist initially", !marker.exists())
+        val needUpdateInitial = !marker.exists() || marker.readText().trim() != currentVersion
+        assertTrue("Should need update initially", needUpdateInitial)
+
+        marker.writeText(currentVersion)
+        val needUpdateAfter = !marker.exists() || marker.readText().trim() != currentVersion
+        assertFalse("Should not need update once marker is set", needUpdateAfter)
+    }
 }

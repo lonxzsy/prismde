@@ -227,6 +227,11 @@ object BuildToolInstaller {
         val libDir = File(jdkDir, "lib")
         if (!libDir.exists()) libDir.mkdirs()
 
+        // Version marker to force re-extraction if APK assets are updated
+        val versionMarker = File(libDir, ".prism_libs_version")
+        val currentLibsVersion = "v2-libcxx"
+        val needUpdate = !versionMarker.exists() || versionMarker.readText().trim() != currentLibsVersion
+
         // 1. Copy bundled native libraries from app assets (arm64-v8a)
         try {
             val assetManager = context.assets
@@ -234,7 +239,7 @@ object BuildToolInstaller {
             if (assetFiles != null && assetFiles.isNotEmpty()) {
                 for (name in assetFiles) {
                     val destFile = File(libDir, name)
-                    if (!destFile.exists() || destFile.length() == 0L) {
+                    if (needUpdate || !destFile.exists() || destFile.length() == 0L) {
                         try {
                             assetManager.open("jdk_libs/arm64-v8a/$name").use { input ->
                                 FileOutputStream(destFile).use { output ->
@@ -247,6 +252,7 @@ object BuildToolInstaller {
                     }
                 }
             }
+            try { versionMarker.writeText(currentLibsVersion) } catch (_: Throwable) {}
         } catch (_: Throwable) {}
 
         // 2. Ensure libz.so.1 and libz.so exist
@@ -284,9 +290,10 @@ object BuildToolInstaller {
         val jdkDir = getJdkDir(context)
         ensureJdkRuntimeLibraries(context, jdkDir)
         val libz1 = File(jdkDir, "lib/libz.so.1")
+        val libcxx = File(jdkDir, "lib/libc++_shared.so")
         val tagFile = File(jdkDir, ".prism_jdk_tag")
         val isTagged = tagFile.exists() && (tagFile.readText().trim() == JDK_BUILD_TAG || tagFile.readText().trim().startsWith("17.0.20-termux-deb"))
-        if (exe.exists() && libz1.exists()) {
+        if (exe.exists() && libz1.exists() && libcxx.exists()) {
             if (!tagFile.exists() || tagFile.readText().trim() != JDK_BUILD_TAG) {
                 try { tagFile.writeText(JDK_BUILD_TAG) } catch (_: Throwable) {}
             }

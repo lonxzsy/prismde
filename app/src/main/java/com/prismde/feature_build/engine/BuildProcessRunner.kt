@@ -814,6 +814,9 @@ class BuildProcessRunner {
                 val parentLib = File(binDir.parentFile, "lib")
                 if (parentLib.exists()) ldPaths.add(parentLib.absolutePath)
             }
+            context?.applicationInfo?.nativeLibraryDir?.let { appLibDir ->
+                if (File(appLibDir).exists()) ldPaths.add(appLibDir)
+            }
             val currentLd = env["LD_LIBRARY_PATH"] ?: ""
             if (currentLd.isNotBlank()) ldPaths.add(currentLd)
             ldPaths.add("/system/lib64")
