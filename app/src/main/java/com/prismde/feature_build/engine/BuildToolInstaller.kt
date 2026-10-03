@@ -456,6 +456,327 @@ object BuildToolInstaller {
         }
     }
 
+    // ==================== Android SDK & Tools Management ====================
+
+    const val ANDROID_PLATFORM_API_DEFAULT = 34
+    const val ANDROID_BUILD_TOOLS_VERSION_DEFAULT = "34.0.0"
+
+    fun getAndroidSdkDir(context: Context): File {
+        return File(getToolsDir(context), "android-sdk")
+    }
+
+    fun findExistingSdk(context: Context? = null): File {
+        val candidates = listOf(
+            context?.let { getAndroidSdkDir(it) },
+            File("/data/data/com.termux/files/home/android-sdk"),
+            File("/data/user/0/com.termux/files/home/android-sdk"),
+            File("/data/data/com.itsaky.androidide/files/usr/lib/android-sdk"),
+            File("/sdcard/Android/sdk"),
+            File("/sdcard/android-sdk"),
+            File("/data/local/android-sdk")
+        ).filterNotNull()
+
+        return candidates.firstOrNull { dir ->
+            dir.exists() && (File(dir, "platforms").exists() || File(dir, "build-tools").exists())
+        } ?: (if (context != null) getAndroidSdkDir(context) else File("/sdcard/Android/sdk"))
+    }
+
+    fun ensureAndroidSdk(context: Context): File {
+        val sdkDir = getAndroidSdkDir(context)
+        sdkDir.mkdirs()
+        File(sdkDir, "platforms").mkdirs()
+        File(sdkDir, "build-tools").mkdirs()
+        val licensesDir = File(sdkDir, "licenses").also { it.mkdirs() }
+
+        // Accept official Google SDK licenses so AGP and Gradle don't complain
+        val sdkLicenseFile = File(licensesDir, "android-sdk-license")
+        if (!sdkLicenseFile.exists() || sdkLicenseFile.length() == 0L) {
+            try {
+                sdkLicenseFile.writeText(
+                    "24333f8a63b6825ea9c5514f83c2829b004d1fee\n" +
+                    "d56f5187479451eabf01fb78af6dfcb131a6481e\n" +
+                    "84831b9409646a918e30573bab4c9c91346d8abd\n"
+                )
+            } catch (_: Throwable) {}
+        }
+
+        val previewLicenseFile = File(licensesDir, "android-sdk-preview-license")
+        if (!previewLicenseFile.exists() || previewLicenseFile.length() == 0L) {
+            try { previewLicenseFile.writeText("84831b9409646a918e30573bab4c9c91346d8abd\n") } catch (_: Throwable) {}
+        }
+
+        val googletvLicenseFile = File(licensesDir, "android-googletv-license")
+        if (!googletvLicenseFile.exists() || googletvLicenseFile.length() == 0L) {
+            try { googletvLicenseFile.writeText("601085b94cd77f0b54ff864069554494414c4d6d\n") } catch (_: Throwable) {}
+        }
+
+        return sdkDir
+    }
+
+    fun ensureLocalProperties(projectRootDir: File, sdkDir: File, ndkDir: File? = null) {
+        val localProps = File(projectRootDir, "local.properties")
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+        val formattedSdkPath = if (isWindows) {
+            sdkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+        } else {
+            sdkDir.absolutePath
+        }
+
+        if (!localProps.exists()) {
+            val sb = java.lang.StringBuilder()
+            sb.appendLine("# Location of the SDK. This is only used by Gradle.")
+            sb.appendLine("sdk.dir=$formattedSdkPath")
+            if (ndkDir != null && ndkDir.exists()) {
+                val formattedNdkPath = if (isWindows) {
+                    ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+                } else {
+                    ndkDir.absolutePath
+                }
+                sb.appendLine("ndk.dir=$formattedNdkPath")
+            }
+            try { localProps.writeText(sb.toString()) } catch (_: Throwable) {}
+        } else {
+            try {
+                val lines = localProps.readLines().toMutableList()
+                var hasSdk = false
+                var hasNdk = false
+                for (i in lines.indices) {
+                    val trimmed = lines[i].trim()
+                    if (trimmed.startsWith("sdk.dir=")) {
+                        lines[i] = "sdk.dir=$formattedSdkPath"
+                        hasSdk = true
+                    }
+                    if (trimmed.startsWith("ndk.dir=") && ndkDir != null && ndkDir.exists()) {
+                        val formattedNdkPath = if (isWindows) {
+                            ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+                        } else {
+                            ndkDir.absolutePath
+                        }
+                        lines[i] = "ndk.dir=$formattedNdkPath"
+                        hasNdk = true
+                    }
+                }
+                if (!hasSdk) {
+                    lines.add("sdk.dir=$formattedSdkPath")
+                }
+                if (!hasNdk && ndkDir != null && ndkDir.exists()) {
+                    val formattedNdkPath = if (isWindows) {
+                        ndkDir.absolutePath.replace("\\", "/").replace(":", "\\:")
+                    } else {
+                        ndkDir.absolutePath
+                    }
+                    lines.add("ndk.dir=$formattedNdkPath")
+                }
+                localProps.writeText(lines.joinToString("\n"))
+            } catch (_: Throwable) {}
+        }
+    }
+
+    fun isAndroidPlatformInstalled(context: Context, apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT): Boolean {
+        val sdkDir = findExistingSdk(context)
+        val platformDir = File(sdkDir, "platforms/android-$apiLevel")
+        val androidJar = File(platformDir, "android.jar")
+        return androidJar.exists() && androidJar.length() > 0L
+    }
+
+    fun isAndroidBuildToolsInstalled(context: Context, version: String = ANDROID_BUILD_TOOLS_VERSION_DEFAULT): Boolean {
+        val sdkDir = findExistingSdk(context)
+        val btDir = File(sdkDir, "build-tools/$version")
+        val prop = File(btDir, "source.properties")
+        return prop.exists() || File(btDir, "lib").exists() || File(btDir, "d8").exists() || File(btDir, "d8.jar").exists()
+    }
+
+    suspend fun installAndroidPlatform(
+        context: Context,
+        apiLevel: Int = ANDROID_PLATFORM_API_DEFAULT,
+        onProgress: (statusMessage: String, percent: Float) -> Unit = { _, _ -> }
+    ): Boolean = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val sdkDir = ensureAndroidSdk(context)
+        val platformsDir = File(sdkDir, "platforms").also { it.mkdirs() }
+        val targetPlatformDir = File(platformsDir, "android-$apiLevel")
+
+        val tempArchive = File(context.cacheDir, "platform-${apiLevel}_r03.zip")
+
+        try {
+            onProgress(
+                if (isRu) "Загрузка Android SDK Platform $apiLevel (~58 МБ)..."
+                else "Downloading Android SDK Platform $apiLevel (~58 MB)...",
+                5f
+            )
+
+            var downloadSuccess = false
+            val urls = listOf(
+                "https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r03.zip",
+                "https://mirrors.aliyun.com/android/repository/platform-${apiLevel}_r03.zip",
+                "https://dl.google.com/android/repository/platform-${apiLevel}_r03.zip",
+                "https://mirrors.cloud.tencent.com/android/repository/platform-${apiLevel}_r01.zip",
+                "https://dl.google.com/android/repository/platform-${apiLevel}_r01.zip"
+            )
+
+            for (url in urls) {
+                try {
+                    downloader.download(url, tempArchive) { current, total, percent, _ ->
+                        val scaled = 5f + (percent * 0.75f) // 5% to 80%
+                        onProgress(
+                            if (isRu) "Загрузка Android SDK Platform $apiLevel: ${(current / (1024 * 1024))} МБ / ${(total / (1024 * 1024))} МБ (${percent.toInt()}%)"
+                            else "Downloading Android SDK Platform $apiLevel: ${(current / (1024 * 1024))} MB / ${(total / (1024 * 1024))} MB (${percent.toInt()}%)",
+                            scaled
+                        )
+                    }
+                    downloadSuccess = true
+                    break
+                } catch (e: Exception) {
+                    tempArchive.delete()
+                }
+            }
+
+            if (!downloadSuccess) {
+                onProgress(
+                    if (isRu) "✖ Ошибка: Не удалось загрузить архив Android Platform"
+                    else "✖ Error: Failed to download Android Platform archive",
+                    0f
+                )
+                return@withContext false
+            }
+
+            onProgress(
+                if (isRu) "Распаковка Android SDK Platform $apiLevel..."
+                else "Extracting Android SDK Platform $apiLevel...",
+                85f
+            )
+
+            val extractSuccess = extractor.extract(tempArchive, platformsDir) { msg ->
+                onProgress(msg, 90f)
+            }
+            tempArchive.delete()
+
+            if (!extractSuccess) return@withContext false
+
+            // Normalize folder name if extracted as android-UpsideDownCake or similar
+            if (!targetPlatformDir.exists()) {
+                val candidate = platformsDir.listFiles { f -> f.isDirectory && f.name.contains("android", ignoreCase = true) }?.firstOrNull()
+                if (candidate != null && candidate != targetPlatformDir) {
+                    candidate.renameTo(targetPlatformDir)
+                }
+            }
+
+            val installedJar = File(targetPlatformDir, "android.jar")
+            val success = installedJar.exists() && installedJar.length() > 0L
+            if (success) {
+                onProgress(
+                    if (isRu) "✔ Android SDK Platform $apiLevel успешно установлена!"
+                    else "✔ Android SDK Platform $apiLevel installed successfully!",
+                    100f
+                )
+            }
+            success
+        } catch (e: Exception) {
+            e.printStackTrace()
+            tempArchive.delete()
+            false
+        }
+    }
+
+    suspend fun installBuildTools(
+        context: Context,
+        version: String = ANDROID_BUILD_TOOLS_VERSION_DEFAULT,
+        onProgress: (statusMessage: String, percent: Float) -> Unit = { _, _ -> }
+    ): Boolean = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val sdkDir = ensureAndroidSdk(context)
+        val buildToolsDir = File(sdkDir, "build-tools").also { it.mkdirs() }
+        val targetVersionDir = File(buildToolsDir, version)
+
+        val tempArchive = File(context.cacheDir, "build-tools_r34-linux.zip")
+
+        try {
+            onProgress(
+                if (isRu) "Загрузка Android Build-Tools $version (~55 МБ)..."
+                else "Downloading Android Build-Tools $version (~55 MB)...",
+                5f
+            )
+
+            var downloadSuccess = false
+            val urls = listOf(
+                "https://mirrors.cloud.tencent.com/android/repository/build-tools_r34-linux.zip",
+                "https://mirrors.aliyun.com/android/repository/build-tools_r34-linux.zip",
+                "https://dl.google.com/android/repository/build-tools_r34-linux.zip"
+            )
+
+            for (url in urls) {
+                try {
+                    downloader.download(url, tempArchive) { current, total, percent, _ ->
+                        val scaled = 5f + (percent * 0.75f)
+                        onProgress(
+                            if (isRu) "Загрузка Android Build-Tools: ${(current / (1024 * 1024))} МБ / ${(total / (1024 * 1024))} МБ (${percent.toInt()}%)"
+                            else "Downloading Android Build-Tools: ${(current / (1024 * 1024))} MB / ${(total / (1024 * 1024))} MB (${percent.toInt()}%)",
+                            scaled
+                        )
+                    }
+                    downloadSuccess = true
+                    break
+                } catch (e: Exception) {
+                    tempArchive.delete()
+                }
+            }
+
+            if (!downloadSuccess) {
+                onProgress(
+                    if (isRu) "✖ Ошибка: Не удалось загрузить архив Build-Tools"
+                    else "✖ Error: Failed to download Build-Tools archive",
+                    0f
+                )
+                return@withContext false
+            }
+
+            onProgress(
+                if (isRu) "Распаковка Android Build-Tools..."
+                else "Extracting Android Build-Tools...",
+                85f
+            )
+
+            val extractSuccess = extractor.extract(tempArchive, buildToolsDir) { msg ->
+                onProgress(msg, 90f)
+            }
+            tempArchive.delete()
+
+            if (!extractSuccess) return@withContext false
+
+            // If extracted with name 'android-14', rename to '34.0.0'
+            if (!targetVersionDir.exists()) {
+                val candidate = buildToolsDir.listFiles { f -> f.isDirectory && f.name == "android-14" }?.firstOrNull()
+                    ?: buildToolsDir.listFiles { f -> f.isDirectory && f.name != version }?.firstOrNull()
+                if (candidate != null) {
+                    candidate.renameTo(targetVersionDir)
+                }
+            }
+
+            // Set executable permissions
+            targetVersionDir.walkTopDown().filter { it.isFile }.forEach {
+                try { it.setReadable(true, false) } catch (_: Throwable) {}
+                if (it.extension.isEmpty() || it.extension in setOf("so", "sh")) {
+                    try { it.setExecutable(true, false) } catch (_: Throwable) {}
+                }
+            }
+
+            val prop = File(targetVersionDir, "source.properties")
+            val success = prop.exists() || File(targetVersionDir, "lib").exists()
+            if (success) {
+                onProgress(
+                    if (isRu) "✔ Android Build-Tools $version успешно установлены!"
+                    else "✔ Android Build-Tools $version installed successfully!",
+                    100f
+                )
+            }
+            success
+        } catch (e: Exception) {
+            e.printStackTrace()
+            tempArchive.delete()
+            false
+        }
+    }
+
     // ==================== Standalone OpenJDK Management ====================
 
     fun getJdkDir(context: Context): File {
@@ -939,6 +1260,30 @@ object BuildToolInstaller {
                     if (isInternalJdk) "Internal standalone OpenJDK 17 inside PrismDE"
                     else "Java Runtime and Compiler required for Maven and Gradle builds",
                 sizeLabel = javaInfo.sourceDescription
+            ),
+            BuildToolInfo(
+                id = "android_platform",
+                name = "Android SDK Platform 34",
+                version = "API 34",
+                isInstalled = isAndroidPlatformInstalled(context, 34),
+                installedPath = File(findExistingSdk(context), "platforms/android-34").takeIf { it.exists() }?.absolutePath,
+                description = if (isRu)
+                    "Базовая библиотека Android (android.jar) для компиляции приложений"
+                else
+                    "Android Platform library (android.jar) required to compile Android apps",
+                sizeLabel = "~58 MB"
+            ),
+            BuildToolInfo(
+                id = "android_build_tools",
+                name = "Android SDK Build-Tools",
+                version = ANDROID_BUILD_TOOLS_VERSION_DEFAULT,
+                isInstalled = isAndroidBuildToolsInstalled(context, ANDROID_BUILD_TOOLS_VERSION_DEFAULT),
+                installedPath = File(findExistingSdk(context), "build-tools/$ANDROID_BUILD_TOOLS_VERSION_DEFAULT").takeIf { it.exists() }?.absolutePath,
+                description = if (isRu)
+                    "Компоненты сборщика Android: d8 (DEX), AAPT2, apksigner, zipalign"
+                else
+                    "Android build components: d8 (DEX compiler), AAPT2, apksigner, zipalign",
+                sizeLabel = "~55 MB"
             )
         )
     }

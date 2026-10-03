@@ -647,6 +647,49 @@ class BuildProcessRunner {
             BuildToolInstaller.ensureJdkRuntimeLibraries(context)
             // Ensure Gradle Wrapper and Android-optimized gradle.properties are in place
             BuildToolInstaller.ensureGradleWrapper(context, project.rootDir)
+
+            // Ensure Android SDK directory & licenses are created in PrismDE storage
+            val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
+            // Ensure local.properties in project root has sdk.dir and ndk.dir
+            BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, ndk?.getEffectiveNdkDir())
+
+            // Auto-install Android SDK Platform 34 (android.jar) if missing!
+            if (!BuildToolInstaller.isAndroidPlatformInstalled(context, 34)) {
+                _events.emit(BuildOutputEvent.LogLine(
+                    if (isRu) "ℹ Android SDK Platform 34 (android.jar) не найден. Автоматическая загрузка (~58 МБ)..."
+                    else "ℹ Android SDK Platform 34 (android.jar) not found. Automatically downloading (~58 MB)..."
+                ))
+                val platformInstalled = BuildToolInstaller.installAndroidPlatform(context, 34) { status, pct ->
+                    if (pct == 5f || pct == 85f || pct == 100f) {
+                        _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                    }
+                }
+                if (platformInstalled) {
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "✔ Android SDK Platform 34 успешно установлен!"
+                        else "✔ Android SDK Platform 34 installed successfully!"
+                    ))
+                }
+            }
+
+            // Auto-install Android Build-Tools 34.0.0 if missing!
+            if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, "34.0.0")) {
+                _events.emit(BuildOutputEvent.LogLine(
+                    if (isRu) "ℹ Android Build-Tools 34.0.0 не найдены. Автоматическая загрузка (~55 МБ)..."
+                    else "ℹ Android Build-Tools 34.0.0 not found. Automatically downloading (~55 MB)..."
+                ))
+                val btInstalled = BuildToolInstaller.installBuildTools(context, "34.0.0") { status, pct ->
+                    if (pct == 5f || pct == 85f || pct == 100f) {
+                        _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                    }
+                }
+                if (btInstalled) {
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "✔ Android Build-Tools 34.0.0 успешно установлены!"
+                        else "✔ Android Build-Tools 34.0.0 installed successfully!"
+                    ))
+                }
+            }
         }
 
         // 1. Detect Gradle Wrapper (gradlew / gradlew.bat) or installed Gradle binary
@@ -845,17 +888,10 @@ class BuildProcessRunner {
                     } catch (_: Throwable) {}
                 }
                 if (env["ANDROID_HOME"].isNullOrBlank()) {
-                    val sdkCandidates = listOf(
-                        if (context != null) File(context.filesDir, "tools/android-sdk") else null,
-                        if (context != null) File(context.filesDir, "android-sdk") else null,
-                        File("/data/data/com.termux/files/home/android-sdk"),
-                        File("/sdcard/Android/sdk"),
-                        File("/sdcard/android-sdk"),
-                        File("/data/local/android-sdk")
-                    ).filterNotNull()
-                    sdkCandidates.firstOrNull { it.exists() }?.let {
-                        env["ANDROID_HOME"] = it.absolutePath
-                        env["ANDROID_SDK_ROOT"] = it.absolutePath
+                    val sdkDir = if (context != null) BuildToolInstaller.findExistingSdk(context) else null
+                    if (sdkDir != null && sdkDir.exists()) {
+                        env["ANDROID_HOME"] = sdkDir.absolutePath
+                        env["ANDROID_SDK_ROOT"] = sdkDir.absolutePath
                     }
                 }
             }

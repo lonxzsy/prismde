@@ -347,6 +347,10 @@ object ProjectManager {
 
                 // Provision Gradle Wrapper (gradlew, gradlew.bat, wrapper jar/properties) & gradle.properties
                 BuildToolInstaller.ensureGradleWrapper(context, projectDir)
+
+                // Provision Android SDK & local.properties
+                val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
+                BuildToolInstaller.ensureLocalProperties(projectDir, sdkDir)
             }
 
             ProjectType.SINGLE_FILE_EXECUTABLE, ProjectType.AUTO_DETECT -> {

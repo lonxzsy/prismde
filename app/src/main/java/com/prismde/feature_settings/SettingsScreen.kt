@@ -153,11 +153,25 @@ fun SettingsScreen(
     var gradleInstallProgress by remember { mutableStateOf(0f) }
     var gradleInstallStatus by remember { mutableStateOf("") }
 
+    var isInstallingPlatform by remember { mutableStateOf(false) }
+    var platformInstallProgress by remember { mutableStateOf(0f) }
+    var platformInstallStatus by remember { mutableStateOf("") }
+
+    var isInstallingBuildTools by remember { mutableStateOf(false) }
+    var buildToolsInstallProgress by remember { mutableStateOf(0f) }
+    var buildToolsInstallStatus by remember { mutableStateOf("") }
+
     val isMavenInstalled = remember(mavenRefreshTrigger) {
         BuildToolInstaller.isMavenInstalled(context)
     }
     val isGradleInstalled = remember(mavenRefreshTrigger) {
         BuildToolInstaller.isGradleInstalled(context)
+    }
+    val isPlatformInstalled = remember(mavenRefreshTrigger) {
+        BuildToolInstaller.isAndroidPlatformInstalled(context, 34)
+    }
+    val isBuildToolsInstalled = remember(mavenRefreshTrigger) {
+        BuildToolInstaller.isAndroidBuildToolsInstalled(context, "34.0.0")
     }
     val isInternalJdkInstalled = remember(mavenRefreshTrigger) {
         BuildToolInstaller.isJdkInstalled(context)
@@ -351,9 +365,9 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // SECTION: Build Tools & SDK (Maven, Gradle, JDK)
+        // SECTION: Build Tools & SDK (Maven, Gradle, JDK, Android SDK)
         SettingsSectionHeader(
-            title = if (isRu) "Инструменты сборки (Maven, Gradle, JDK)" else "Build Tools & SDK (Maven, Gradle, JDK)",
+            title = if (isRu) "Инструменты сборки (Maven, Gradle, JDK, Android SDK)" else "Build Tools & SDK (Maven, Gradle, JDK, Android SDK)",
             icon = Icons.Rounded.Code
         )
         Card(
@@ -672,6 +686,188 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(10.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // Android SDK Platform 34 Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Android SDK Platform 34",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            if (isPlatformInstalled) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (isRu) "Установлен" else "Installed",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = if (isPlatformInstalled) {
+                                val sdk = BuildToolInstaller.findExistingSdk(context)
+                                "${sdk.name}/platforms/android-34"
+                            } else {
+                                if (isRu) "Базовая библиотека Android (android.jar, ~58 МБ)" else "Android Platform library (android.jar, ~58 MB)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (isInstallingPlatform) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            if (platformInstallProgress > 0f) {
+                                Text("${platformInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isInstallingPlatform = true
+                                    platformInstallProgress = 0f
+                                    val ok = BuildToolInstaller.installAndroidPlatform(context, 34) { status, pct ->
+                                        platformInstallStatus = status
+                                        platformInstallProgress = pct
+                                    }
+                                    isInstallingPlatform = false
+                                    mavenRefreshTrigger++
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (ok) (if (isRu) "✔ Android SDK Platform 34 успешно установлена!" else "✔ Android SDK Platform 34 installed successfully!")
+                                        else (if (isRu) "✖ Ошибка установки: $platformInstallStatus" else "✖ Install error: $platformInstallStatus"),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                if (isPlatformInstalled) {
+                                    if (isRu) "Переустановить" else "Reinstall"
+                                } else {
+                                    if (isRu) "Установить" else "Install"
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (isInstallingPlatform && platformInstallStatus.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = platformInstallStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // Android SDK Build-Tools 34.0.0 Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Android Build-Tools 34.0.0",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            if (isBuildToolsInstalled) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (isRu) "Установлен" else "Installed",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = if (isBuildToolsInstalled) {
+                                val sdk = BuildToolInstaller.findExistingSdk(context)
+                                "${sdk.name}/build-tools/34.0.0"
+                            } else {
+                                if (isRu) "Компилятор DEX (d8), упаковщик и подпись APK (~55 МБ)" else "DEX compiler (d8), packaging and APK signer (~55 MB)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (isInstallingBuildTools) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            if (buildToolsInstallProgress > 0f) {
+                                Text("${buildToolsInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isInstallingBuildTools = true
+                                    buildToolsInstallProgress = 0f
+                                    val ok = BuildToolInstaller.installBuildTools(context, "34.0.0") { status, pct ->
+                                        buildToolsInstallStatus = status
+                                        buildToolsInstallProgress = pct
+                                    }
+                                    isInstallingBuildTools = false
+                                    mavenRefreshTrigger++
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        if (ok) (if (isRu) "✔ Android Build-Tools 34.0.0 успешно установлены!" else "✔ Android Build-Tools 34.0.0 installed successfully!")
+                                        else (if (isRu) "✖ Ошибка установки: $buildToolsInstallStatus" else "✖ Install error: $buildToolsInstallStatus"),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                if (isBuildToolsInstalled) {
+                                    if (isRu) "Переустановить" else "Reinstall"
+                                } else {
+                                    if (isRu) "Установить" else "Install"
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (isInstallingBuildTools && buildToolsInstallStatus.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = buildToolsInstallStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
 
