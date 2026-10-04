@@ -701,7 +701,7 @@ class NdkSourcePropertiesAndGradleTest {
                     -gcc-toolchain \
                     $(TOOLCHAIN_ROOT) \
                     -fpic
-                TARGET_CXXFLAGS := -gcc-toolchain $(TOOLCHAIN_ROOT) -O2
+                TARGET_CXXFLAGS := -gcc-toolchain $(call host-path,$(TOOLCHAIN_ROOT)) -O2
                 TARGET_LDFLAGS += --gcc-toolchain=$(TOOLCHAIN_ROOT)
                 """.trimIndent()
             )
@@ -712,8 +712,42 @@ class NdkSourcePropertiesAndGradleTest {
         val text = mkFile.readText()
         assertFalse("Must not contain -gcc-toolchain", text.contains("-gcc-toolchain"))
         assertFalse("Must not contain --gcc-toolchain", text.contains("--gcc-toolchain"))
+        assertFalse("Must not have dangling closing parenthesis from nested call", text.contains(" )"))
         assertTrue("Must preserve -fpic", text.contains("-fpic"))
         assertTrue("Must preserve -O2", text.contains("-O2"))
+        assertTrue("Must inject override GCC_TOOLCHAIN :=", text.contains("override GCC_TOOLCHAIN :="))
+    }
+
+    @Test
+    fun testCleanMakefileContentRepairsDanglingParenthesesFromPriorRegex() {
+        val broken = """
+            TARGET_CFLAGS := \
+                -target $(TARGET_LLVM_TRIPLE) \
+                ) \
+                -fno-addrsig
+            TARGET_CXXFLAGS += )
+            TARGET_LDFLAGS += ) -Wl,--gc-sections
+        """.trimIndent()
+
+        val repaired = BuildToolInstaller.cleanMakefileContent(broken)
+        assertFalse("Must not contain standalone ')' line", repaired.contains("    )"))
+        assertFalse("Must not contain '+= )'", repaired.contains("+= )"))
+        assertTrue("Must preserve TARGET_CFLAGS target and fno-addrsig", repaired.contains("-target \$(TARGET_LLVM_TRIPLE)"))
+        assertTrue("Must preserve -fno-addrsig", repaired.contains("-fno-addrsig"))
+        assertTrue("Must preserve TARGET_CXXFLAGS without syntax error", repaired.contains("TARGET_CXXFLAGS +="))
+        assertTrue("Must preserve -Wl,--gc-sections", repaired.contains("-Wl,--gc-sections"))
+    }
+
+    @Test
+    fun testCleanMakefileContentPreservesValidMultilineMakeParentheses() {
+        val validMultiline = """
+            FOO := $(strip \
+                $(BAR) \
+            )
+        """.trimIndent()
+
+        val result = BuildToolInstaller.cleanMakefileContent(validMultiline)
+        assertTrue("Must preserve balanced multiline closing paren", result.trimEnd().endsWith(")"))
     }
 }
 

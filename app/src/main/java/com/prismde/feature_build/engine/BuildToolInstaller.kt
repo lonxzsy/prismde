@@ -755,8 +755,13 @@ object BuildToolInstaller {
                         txt = txt.replace(Regex("""\barmeabi\b(?!\-v7a)"""), selectedAbi)
                         modified = true
                     }
-                    if (txt.contains("gcc-toolchain")) {
-                        txt = txt.replace(Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\([^)]+\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?"""), "")
+                    val cleaned = cleanMakefileContent(txt)
+                    if (cleaned != txt) {
+                        txt = cleaned
+                        modified = true
+                    }
+                    if (!txt.contains("override GCC_TOOLCHAIN :=")) {
+                        txt = "$txt\n# PrismDE: Disable legacy GCC toolchain in Clang\noverride GCC_TOOLCHAIN :=\n"
                         modified = true
                     }
                     if (modified) {
@@ -776,8 +781,8 @@ object BuildToolInstaller {
             if (androidMk.exists() && androidMk.isFile) {
                 try {
                     val txt = androidMk.readText()
-                    if (txt.contains("gcc-toolchain")) {
-                        val cleaned = txt.replace(Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\([^)]+\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?"""), "")
+                    val cleaned = cleanMakefileContent(txt)
+                    if (cleaned != txt) {
                         androidMk.writeText(cleaned)
                     }
                 } catch (_: Throwable) {}
@@ -963,25 +968,131 @@ object BuildToolInstaller {
     }
 
     /**
-     * Recursively strips unsupported legacy flags such as -gcc-toolchain from all NDK makefiles
-     * and scripts to prevent "clang++: error: unknown argument: '-gcc-toolchain'" failures.
+     * Sanitizes Makefile content by:
+     * 1. Stripping obsolete -gcc-toolchain / --gcc-toolchain flags and their arguments
+     *    (supporting nested GNU Make function calls such as $(call host-path,$(...))).
+     * 2. Removing dangling closing parentheses left behind by corrupted regexes.
+     * 3. Removing empty line-continuation backslashes.
+     * 4. Normalizing line endings to UNIX '\n'.
+     */
+    fun cleanMakefileContent(content: String): String {
+        var txt = content
+
+        // 1. Strip -gcc-toolchain and its following argument, supporting up to 3 levels of nested $(...)
+        if (txt.contains("gcc-toolchain")) {
+            val gccToolchainRegex = Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?""")
+            txt = txt.replace(gccToolchainRegex, "")
+        }
+
+        // 2. Line-by-line repair of dangling parentheses and orphaned line continuations
+        val lines = txt.split("\n")
+        val repairedLines = mutableListOf<String>()
+        var pendingOpens = 0
+
+        for (rawLine in lines) {
+            val lineWithoutCr = rawLine.trimEnd('\r')
+            val isContinuation = lineWithoutCr.endsWith('\\')
+            val contentWithoutSlash = if (isContinuation) lineWithoutCr.dropLast(1).trimEnd() else lineWithoutCr
+
+            val lineOpens = contentWithoutSlash.count { it == '(' }
+            val lineCloses = contentWithoutSlash.count { it == ')' }
+
+            // If this line is just ')' (or ') \') and there are NO pending open parentheses from previous lines, drop it
+            if (contentWithoutSlash.matches(Regex("""^[ \t]*\)[ \t]*$""")) && pendingOpens <= 0) {
+                continue
+            }
+
+            // If line became only a backslash with whitespace, drop it
+            if (lineWithoutCr.matches(Regex("""^[ \t]*\\[ \t]*$"""))) {
+                continue
+            }
+
+            var line = lineWithoutCr
+            val netBalance = pendingOpens + lineOpens - lineCloses
+            if (netBalance < 0) {
+                var excessCloses = -netBalance
+                var attempts = 0
+                while (excessCloses > 0 && attempts++ < 3) {
+                    var reduced = false
+                    // a. Remove dangling ')' immediately after assignment: '+= )' or ':= )'
+                    if (line.contains(Regex("""[:+=]\s*\)"""))) {
+                        line = line.replaceFirst(Regex("""([:+=]\s*)\)[ \t]*"""), "$1")
+                        excessCloses--
+                        reduced = true
+                    }
+                    // b. Remove dangling ')' surrounded by whitespace: ' ) ' -> ' '
+                    if (excessCloses > 0 && line.contains(Regex("""[ \t]+\)[ \t]+"""))) {
+                        line = line.replaceFirst(Regex("""[ \t]+\)[ \t]+"""), " ")
+                        excessCloses--
+                        reduced = true
+                    }
+                    // c. Remove dangling ')' before line continuation: ' ) \' -> ' \'
+                    if (excessCloses > 0 && line.contains(Regex("""[ \t]+\)[ \t]*\\$"""))) {
+                        line = line.replaceFirst(Regex("""[ \t]+\)[ \t]*\\$"""), " \\")
+                        excessCloses--
+                        reduced = true
+                    }
+                    // d. Remove dangling ')' at end of line: ' )' -> ''
+                    if (excessCloses > 0 && line.contains(Regex("""[ \t]+\)[ \t]*$"""))) {
+                        line = line.replaceFirst(Regex("""[ \t]+\)[ \t]*$"""), "")
+                        excessCloses--
+                        reduced = true
+                    }
+                    if (!reduced) break
+                }
+            }
+
+            // Update pendingOpens for the next line if this line ends with '\'
+            if (line.endsWith('\\')) {
+                val newContent = line.dropLast(1)
+                val finalOpens = newContent.count { it == '(' }
+                val finalCloses = newContent.count { it == ')' }
+                pendingOpens = maxOf(0, pendingOpens + finalOpens - finalCloses)
+            } else {
+                pendingOpens = 0
+            }
+
+            repairedLines.add(line)
+        }
+
+        return repairedLines.joinToString("\n")
+    }
+
+    /**
+     * Recursively sanitizes and repairs all NDK makefiles and scripts:
+     * - Fixes dangling parentheses left behind by corrupted regexes.
+     * - Strips unsupported legacy flags such as -gcc-toolchain.
+     * - Injects 'override GCC_TOOLCHAIN :=' into init.mk and default-build-commands.mk.
      */
     fun patchNdkMakefiles(rootDir: File) {
         if (!rootDir.exists() || !rootDir.isDirectory) return
         try {
             rootDir.walkTopDown().maxDepth(9).forEach { file ->
-                if (file.isFile && file.extension.lowercase() in setOf("mk", "sh", "bash", "cmd", "bat")) {
+                if (file.isFile && file.extension.lowercase() in setOf("mk", "sh", "bash", "cmd", "bat", "cmake")) {
                     try {
                         val text = file.readText()
-                        if (text.contains("gcc-toolchain")) {
-                            var patched = text
-                            // Remove -gcc-toolchain and its following argument (including line continuations with backslash)
-                            patched = patched.replace(Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\([^)]+\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?"""), "")
-                            // Clean up lines that now have only whitespace or a trailing backslash that became orphaned
-                            patched = patched.replace(Regex("""(?m)^[ \t]*\\[ \t]*$"""), "")
-                            if (patched != text) {
-                                file.writeText(patched)
-                            }
+                        val cleaned = cleanMakefileContent(text)
+                        if (cleaned != text) {
+                            file.writeText(cleaned)
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+
+            // Inject override GCC_TOOLCHAIN := into build/core/init.mk and default-build-commands.mk
+            val initMkCandidates = listOf(
+                File(rootDir, "build/core/init.mk"),
+                File(rootDir, "android-ndk-aide/build/core/init.mk"),
+                File(rootDir, "build/core/default-build-commands.mk"),
+                File(rootDir, "android-ndk-aide/build/core/default-build-commands.mk")
+            )
+            val overrideSnippet = "\n# PrismDE: Disable legacy GCC toolchain in Clang invocations\noverride GCC_TOOLCHAIN :=\n"
+            for (mk in initMkCandidates) {
+                if (mk.exists() && mk.isFile) {
+                    try {
+                        val content = mk.readText()
+                        if (!content.contains("override GCC_TOOLCHAIN :=")) {
+                            mk.appendText(overrideSnippet)
                         }
                     } catch (_: Throwable) {}
                 }
