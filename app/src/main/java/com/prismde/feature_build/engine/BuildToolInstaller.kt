@@ -458,7 +458,7 @@ object BuildToolInstaller {
                 }
                 val withoutSdkDownloadOverride = propsText
                     .lineSequence()
-                    .filterNot { it.trim().startsWith("android.builder.sdkDownload=") }
+                    .filterNot { it.trim().matches(Regex("android\\.builder\\.sdkDownload\\s*=.*")) }
                     .joinToString("\n")
                 if (withoutSdkDownloadOverride != propsText) {
                     propsText = withoutSdkDownloadOverride
@@ -778,6 +778,38 @@ object BuildToolInstaller {
         return ANDROID_PLATFORM_API_DEFAULT
     }
 
+    /** Returns an explicitly requested build-tools version, if the project declares one. */
+    fun detectProjectBuildToolsVersion(projectRootDir: File): String? {
+        val buildToolsRegex = Regex("""buildToolsVersion\s*=?\s*[\"']([^\"']+)[\"']""")
+        val buildGradleFiles = listOf(
+            File(projectRootDir, "app/build.gradle"),
+            File(projectRootDir, "app/build.gradle.kts"),
+            File(projectRootDir, "build.gradle"),
+            File(projectRootDir, "build.gradle.kts")
+        )
+        for (bg in buildGradleFiles) {
+            if (bg.exists() && bg.isFile) {
+                try {
+                    val match = buildToolsRegex.find(bg.readText())
+                    val version = match?.groupValues?.getOrNull(1)?.trim()
+                    if (!version.isNullOrBlank() && Regex("""\d+\.\d+\.\d+""").matches(version)) {
+                        return version
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+
+        // Kotlin/Gradle projects sometimes keep the value in a version catalog.
+        val catalog = File(projectRootDir, "gradle/libs.versions.toml")
+        if (catalog.exists()) {
+            try {
+                val catalogRegex = Regex("""(?im)^\s*[\w.-]*(?:buildTools|build-tools)[\w.-]*\s*=\s*[\"'](\d+\.\d+\.\d+)[\"']""")
+                catalogRegex.find(catalog.readText())?.groupValues?.getOrNull(1)?.let { return it }
+            } catch (_: Throwable) {}
+        }
+        return null
+    }
+
     /**
      * Makes diverted platform directories available under the canonical Android SDK name.
      * Official SDK metadata is intentionally preserved because AGP uses it to identify targets.
@@ -808,7 +840,10 @@ object BuildToolInstaller {
             f.isDirectory && f != targetPlatformDir && (f.name.startsWith("android-$apiLevel-") || f.name.contains("android-$apiLevel"))
         }?.sortedByDescending { it.lastModified() } ?: emptyList()
 
-        val validAlt = altDirs.firstOrNull { File(it, "android.jar").exists() && File(it, "android.jar").length() > 1000L }
+        val targetJar = File(targetPlatformDir, "android.jar")
+        val validAlt = if (!targetJar.exists() || targetJar.length() < 100_000L) {
+            altDirs.firstOrNull { File(it, "android.jar").exists() && File(it, "android.jar").length() > 1000L }
+        } else null
         if (validAlt != null) {
             // A newer/diverted complete download exists (e.g. android-34-3 from AGP). Replace targetPlatformDir with it.
             try {
@@ -829,8 +864,131 @@ object BuildToolInstaller {
         }
 
         if (targetPlatformDir.exists()) {
+            normalizePlatformMetadataForAgp(targetPlatformDir, apiLevel)
             val androidJar = File(targetPlatformDir, "android.jar")
             try { androidJar.setReadable(true, false) } catch (_: Throwable) {}
+        }
+
+        // sdkmanager creates suffixed directories when a stale canonical directory is
+        // present. Once the canonical package is valid, remove those duplicate installs
+        // so the next Gradle invocation cannot select android-XX-2 again.
+        altDirs.forEach { dir ->
+            if (dir.exists() && dir != targetPlatformDir) {
+                try { dir.deleteRecursively() } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    /**
+     * sdkmanager uses a -2/-3 suffix when a stale or incomplete package directory exists.
+     * Collapse only valid duplicate Build-Tools directories before Gradle starts.
+     */
+    fun normalizeAllSdkBuildTools(buildToolsDir: File) {
+        if (!buildToolsDir.exists()) return
+        val suffixed = Regex("""^(\d+\.\d+\.\d+)-(\d+)$""")
+        val versions = buildToolsDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.mapNotNull { suffixed.matchEntire(it.name)?.groupValues?.get(1) }
+            ?.toSet()
+            .orEmpty()
+
+        for (version in versions) {
+            val canonical = File(buildToolsDir, version)
+            val duplicates = buildToolsDir.listFiles()
+                ?.filter { it.isDirectory && suffixed.matchEntire(it.name)?.groupValues?.get(1) == version }
+                ?.sortedByDescending { it.lastModified() }
+                .orEmpty()
+            if (!isBuildToolsDirectoryReady(canonical)) {
+                val valid = duplicates.firstOrNull { isBuildToolsDirectoryReady(it) }
+                if (valid != null) {
+                    try { canonical.deleteRecursively() } catch (_: Throwable) {}
+                    if (!valid.renameTo(canonical)) {
+                        try {
+                            valid.copyRecursively(canonical, overwrite = true)
+                            valid.deleteRecursively()
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+            if (isBuildToolsDirectoryReady(canonical)) {
+                duplicates.forEach { duplicate ->
+                    if (duplicate.exists()) {
+                        try { duplicate.deleteRecursively() } catch (_: Throwable) {}
+                    }
+                }
+            }
+        }
+    }
+
+    private fun isBuildToolsDirectoryReady(directory: File): Boolean {
+        if (!directory.exists() || !directory.isDirectory) return false
+        val hasMetadata = File(directory, "source.properties").exists()
+        val hasTool = listOf("aapt2", "aapt", "d8", "d8.jar", "zipalign")
+            .any { File(directory, it).exists() }
+        return hasMetadata && hasTool
+    }
+
+    fun describeBuildTools(sdkDir: File, version: String): String {
+        normalizeAllSdkBuildTools(File(sdkDir, "build-tools"))
+        val dir = File(sdkDir, "build-tools/$version")
+        val files = if (dir.exists()) {
+            dir.listFiles()?.filter { it.isFile }?.joinToString(", ") { "${it.name}=${it.length()}b" }.orEmpty()
+        } else "MISSING"
+        return "SDK Build-Tools $version: path=${dir.absolutePath} exists=${dir.exists()} ready=${isBuildToolsDirectoryReady(dir)} files=[$files]"
+    }
+
+    fun describeInstalledBuildTools(sdkDir: File): String {
+        val buildToolsDir = File(sdkDir, "build-tools")
+        normalizeAllSdkBuildTools(buildToolsDir)
+        val installed = buildToolsDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.sortedBy { it.name }
+            ?.joinToString(", ") { dir ->
+                "${dir.name}(ready=${isBuildToolsDirectoryReady(dir)},size=${dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }})"
+            }
+            .orEmpty()
+            .ifBlank { "(none)" }
+        return "SDK Build-Tools installed: $installed"
+    }
+
+    /**
+     * AGP versions used by older user projects do not understand SDK extension targets.
+     * Android 34 is distributed by Google as an extension package (ext7), although its
+     * target hash is still android-34. Keep the actual android.jar, but expose compatible
+     * base-platform metadata so DefaultSdkLoader resolves the canonical target.
+     */
+    private fun normalizePlatformMetadataForAgp(platformDir: File, apiLevel: Int) {
+        val sourceProperties = File(platformDir, "source.properties")
+        if (sourceProperties.exists()) {
+            try {
+                val lines = sourceProperties.readLines()
+                    .filterNot {
+                        val key = it.substringBefore('=', "").trim()
+                        key.equals("AndroidVersion.ExtensionLevel", ignoreCase = true) ||
+                                key.equals("AndroidVersion.IsBaseSdk", ignoreCase = true) ||
+                                key.equals("ExtensionLevel", ignoreCase = true)
+                    }
+                    .toMutableList()
+                fun upsert(key: String, value: String) {
+                    val index = lines.indexOfFirst { it.trim().startsWith("$key=") }
+                    if (index >= 0) lines[index] = "$key=$value" else lines.add("$key=$value")
+                }
+                upsert("Pkg.Desc", "Android SDK Platform $apiLevel")
+                upsert("AndroidVersion.ApiLevel", apiLevel.toString())
+                sourceProperties.writeText(lines.joinToString("\n") + "\n")
+            } catch (_: Throwable) {}
+        }
+
+        // package.xml is used by sdkmanager to decide whether the canonical package is
+        // already installed. Remove only extension fields; preserve licenses and revision.
+        val packageXml = File(platformDir, "package.xml")
+        if (packageXml.exists()) {
+            try {
+                var xml = packageXml.readText()
+                xml = xml.replace(Regex("<extension-level>.*?</extension-level>", setOf(RegexOption.DOT_MATCHES_ALL)), "")
+                    .replace(Regex("<base-extension>.*?</base-extension>", setOf(RegexOption.DOT_MATCHES_ALL)), "")
+                packageXml.writeText(xml)
+            } catch (_: Throwable) {}
         }
     }
 
@@ -863,6 +1021,7 @@ object BuildToolInstaller {
         val declaredApi = Regex("""(?m)^AndroidVersion\.ApiLevel\s*=\s*(\d+)\s*$""")
             .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
         if (declaredApi != null && declaredApi != apiLevel) return false
+        if (text.contains("ExtensionLevel", ignoreCase = true)) return false
         return true
     }
 
@@ -898,9 +1057,8 @@ object BuildToolInstaller {
 
     fun isAndroidBuildToolsInstalled(context: Context, version: String = ANDROID_BUILD_TOOLS_VERSION_DEFAULT): Boolean {
         val sdkDir = findExistingSdk(context)
-        val btDir = File(sdkDir, "build-tools/$version")
-        val prop = File(btDir, "source.properties")
-        return prop.exists() || File(btDir, "lib").exists() || File(btDir, "d8").exists() || File(btDir, "d8.jar").exists()
+        normalizeAllSdkBuildTools(File(sdkDir, "build-tools"))
+        return isBuildToolsDirectoryReady(File(sdkDir, "build-tools/$version"))
     }
 
     suspend fun installAndroidPlatform(
@@ -1054,7 +1212,9 @@ object BuildToolInstaller {
         val buildToolsDir = File(sdkDir, "build-tools").also { it.mkdirs() }
         val targetVersionDir = File(buildToolsDir, version)
 
-        val tempArchive = File(context.cacheDir, "build-tools_r34-linux.zip")
+        val archiveVersion = if (version == "34.0.0") "34" else version
+        val archiveName = "build-tools_r${archiveVersion}-linux.zip"
+        val tempArchive = File(context.cacheDir, archiveName)
 
         try {
             onProgress(
@@ -1065,9 +1225,9 @@ object BuildToolInstaller {
 
             var downloadSuccess = false
             val urls = listOf(
-                "https://dl.google.com/android/repository/build-tools_r34-linux.zip",
-                "https://mirrors.cloud.tencent.com/android/repository/build-tools_r34-linux.zip",
-                "https://mirrors.aliyun.com/android/repository/build-tools_r34-linux.zip"
+                "https://dl.google.com/android/repository/$archiveName",
+                "https://mirrors.cloud.tencent.com/android/repository/$archiveName",
+                "https://mirrors.aliyun.com/android/repository/$archiveName"
             )
 
             for (url in urls) {
@@ -1080,8 +1240,16 @@ object BuildToolInstaller {
                             scaled
                         )
                     }
-                    downloadSuccess = true
-                    break
+                    if (tempArchive.exists() && tempArchive.length() > 1_000_000L) {
+                        downloadSuccess = true
+                        onProgress(
+                            if (isRu) "✔ Успешно загружено ${tempArchive.length() / (1024 * 1024)} МБ из $url"
+                            else "✔ Successfully downloaded ${tempArchive.length() / (1024 * 1024)} MB from $url",
+                            80f
+                        )
+                        break
+                    }
+                    tempArchive.delete()
                 } catch (e: Exception) {
                     tempArchive.delete()
                 }

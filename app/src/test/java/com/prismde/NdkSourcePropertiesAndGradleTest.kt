@@ -232,7 +232,7 @@ class NdkSourcePropertiesAndGradleTest {
     }
 
     @Test
-    fun testNormalizeSdkPlatformResolvesDivertedFoldersAndPreservesMetadata() {
+    fun testNormalizeSdkPlatformResolvesExtensionPlatformForAgp() {
         val sdkDir = tempFolder.newFolder("normalize_platform_test")
         val platformsDir = File(sdkDir, "platforms").also { it.mkdirs() }
         val divertedDir = File(platformsDir, "android-34-2").also { it.mkdirs() }
@@ -247,11 +247,28 @@ class NdkSourcePropertiesAndGradleTest {
 
         val propText = File(targetDir, "source.properties").readText()
         assertTrue("source.properties must have AndroidVersion.ApiLevel=34", propText.contains("AndroidVersion.ApiLevel=34"))
-        assertTrue("ExtensionLevel from the official platform metadata must be preserved", propText.contains("ExtensionLevel=7"))
+        assertTrue("ExtensionLevel must be removed from source.properties for legacy AGP", !propText.contains("ExtensionLevel"))
 
         val packageXml = File(targetDir, "package.xml")
-        packageXml.writeText("official metadata")
-        assertTrue("Official package metadata must not be removed", packageXml.exists())
+        packageXml.writeText("<extension-level>7</extension-level><base-extension>true</base-extension>")
+        BuildToolInstaller.normalizeSdkPlatform(platformsDir, 34)
+        assertTrue("package.xml must be retained", packageXml.exists())
+        assertTrue("Extension level must be removed from package metadata", !packageXml.readText().contains("extension-level"))
         assertTrue("The diverted folder must be moved to the canonical path", !divertedDir.exists())
+    }
+
+    @Test
+    fun testDetectProjectBuildToolsVersion() {
+        val projectDir = tempFolder.newFolder("build_tools_detection_test")
+        val appDir = File(projectDir, "app").also { it.mkdirs() }
+        File(appDir, "build.gradle").writeText(
+            """
+            android {
+                buildToolsVersion "33.0.1"
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("33.0.1", BuildToolInstaller.detectProjectBuildToolsVersion(projectDir))
     }
 }

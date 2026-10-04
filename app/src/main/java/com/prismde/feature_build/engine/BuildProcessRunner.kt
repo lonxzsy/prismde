@@ -677,6 +677,10 @@ class BuildProcessRunner {
 
             val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
             val platformsDir = File(sdkDir, "platforms")
+            // Resolve extension-platform metadata before asking AGP to inspect the SDK.
+            // Otherwise sdkmanager sees android-34 as occupied and installs a second copy
+            // under android-34-2, while older AGP still looks only for android-34.
+            BuildToolInstaller.normalizeSdkPlatform(platformsDir, requiredApi)
             if (!BuildToolInstaller.isPlatformReady(sdkDir, requiredApi)) {
                 BuildToolInstaller.purgeBrokenPlatform(platformsDir, requiredApi)
             }
@@ -722,14 +726,19 @@ class BuildProcessRunner {
                 _events.emit(BuildOutputEvent.LogLine(line))
             }
 
-            // Auto-install Android Build-Tools 34.0.0 if missing!
-            if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, "34.0.0")) {
+            val requiredBuildTools = BuildToolInstaller.detectProjectBuildToolsVersion(project.rootDir)
+                ?: BuildToolInstaller.ANDROID_BUILD_TOOLS_VERSION_DEFAULT
+            _events.emit(BuildOutputEvent.LogLine(
+                if (isRu) "Проверка Android Build-Tools $requiredBuildTools..."
+                else "Checking Android Build-Tools $requiredBuildTools..."
+            ))
+            if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, requiredBuildTools)) {
                 _events.emit(BuildOutputEvent.LogLine(
-                    if (isRu) "ℹ Android Build-Tools 34.0.0 не найдены. Автоматическая загрузка (~55 МБ)..."
-                    else "ℹ Android Build-Tools 34.0.0 not found. Automatically downloading (~55 MB)..."
+                    if (isRu) "ℹ Android Build-Tools $requiredBuildTools не найдены. Автоматическая загрузка..."
+                    else "ℹ Android Build-Tools $requiredBuildTools not found. Automatically downloading..."
                 ))
                 var lastBtPct = -1
-                val btInstalled = BuildToolInstaller.installBuildTools(context, "34.0.0") { status, pct ->
+                val btInstalled = BuildToolInstaller.installBuildTools(context, requiredBuildTools) { status, pct ->
                     val step = (pct / 25f).toInt() * 25
                     if (step != lastBtPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
                         lastBtPct = step
@@ -738,11 +747,19 @@ class BuildProcessRunner {
                 }
                 if (btInstalled) {
                     _events.emit(BuildOutputEvent.LogLine(
-                        if (isRu) "✔ Android Build-Tools 34.0.0 успешно установлены!"
-                        else "✔ Android Build-Tools 34.0.0 installed successfully!"
+                        if (isRu) "✔ Android Build-Tools $requiredBuildTools успешно установлены!"
+                        else "✔ Android Build-Tools $requiredBuildTools installed successfully!"
                     ))
                 }
             }
+            val buildToolsReady = BuildToolInstaller.isAndroidBuildToolsInstalled(context, requiredBuildTools)
+            _events.emit(BuildOutputEvent.LogLine(
+                if (buildToolsReady) "SDK Build-Tools $requiredBuildTools ready"
+                else "SDK Build-Tools $requiredBuildTools is NOT usable"
+            ))
+            BuildToolInstaller.describeBuildTools(sdkDir, requiredBuildTools)
+                .lineSequence()
+                .forEach { line -> _events.emit(BuildOutputEvent.LogLine(line)) }
         }
 
         // 1. Detect Gradle Wrapper (gradlew / gradlew.bat) or installed Gradle binary
@@ -843,12 +860,34 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
+        var success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
 
         if (context != null) {
             try {
                 val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
-                BuildToolInstaller.normalizeAllSdkPlatforms(File(sdkDir, "platforms"))
+                val platformsDir = File(sdkDir, "platforms")
+                BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
+                BuildToolInstaller.normalizeAllSdkBuildTools(File(sdkDir, "build-tools"))
+
+                val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
+                val canonicalReady = BuildToolInstaller.isPlatformReady(sdkDir, requiredApi)
+                _events.emit(BuildOutputEvent.LogLine(
+                    "SDK post-build verification: platform=android-$requiredApi ready=$canonicalReady, " +
+                            "platformPath=${File(platformsDir, "android-$requiredApi").absolutePath}"
+                ))
+                _events.emit(BuildOutputEvent.LogLine(BuildToolInstaller.describeInstalledBuildTools(sdkDir)))
+
+                // AGP may have installed a package after the initial check. If its package
+                // landed in android-XX-2, make it canonical and retry once with the same
+                // project command. This avoids reporting a false failure after a successful
+                // SDK download.
+                if (!success && canonicalReady) {
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "ℹ SDK-платформа установлена, повторная попытка Gradle после нормализации..."
+                        else "ℹ SDK platform installed; retrying Gradle after normalization..."
+                    ))
+                    success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
+                }
             } catch (_: Throwable) {}
         }
 
@@ -1117,7 +1156,31 @@ class BuildProcessRunner {
 
             val ansiRegex = Regex("\u001B\\[[;\\d]*[ -/]*[@-~]")
             var lastStdoutWasBlank = false
-            var agpInstalledPlatform = false
+            val sdkInstallLock = Any()
+            var agpInstalledSdkComponent = false
+
+            fun handleAgpSdkLine(trimmed: String) {
+                val isInstallLine = trimmed.contains("Installing Android SDK Platform", ignoreCase = true) ||
+                        trimmed.contains("Installing Android SDK Build-Tools", ignoreCase = true) ||
+                        trimmed.contains("Install Android SDK Platform", ignoreCase = true) &&
+                        trimmed.contains("complete", ignoreCase = true)
+                val isFinishedLine = trimmed.contains("finished", ignoreCase = true) ||
+                        trimmed.contains("complete", ignoreCase = true)
+                if (!isInstallLine && !agpInstalledSdkComponent) return
+
+                synchronized(sdkInstallLock) {
+                    if (isInstallLine) agpInstalledSdkComponent = true
+                    if (agpInstalledSdkComponent && isFinishedLine && context != null) {
+                        try {
+                            val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
+                            val platformsDir = File(sdkDir, "platforms")
+                            BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
+                            _events.tryEmit(BuildOutputEvent.LogLine("→ AGP SDK installation completed; canonical SDK directories normalized"))
+                        } catch (_: Throwable) {}
+                        agpInstalledSdkComponent = false
+                    }
+                }
+            }
 
             // Stream stdout and parse diagnostics (e.g. Maven, Gradle, Javac output to stdout)
             val stdoutThread = Thread {
@@ -1138,23 +1201,7 @@ class BuildProcessRunner {
                                 lastStdoutWasBlank = false
                             }
 
-                            // Detect AGP automatic SDK installation and normalize immediately
-                            if (trimmed.contains("Installing Android SDK Platform", ignoreCase = true) ||
-                                trimmed.contains("Installing Android SDK Build-Tools", ignoreCase = true) ||
-                                trimmed.contains("Install Android SDK Platform", ignoreCase = true) && trimmed.contains("complete", ignoreCase = true)) {
-                                agpInstalledPlatform = true
-                            }
-                            if (agpInstalledPlatform && (trimmed.contains("finished", ignoreCase = true) || trimmed.contains("complete", ignoreCase = true))) {
-                                if (context != null) {
-                                    try {
-                                        val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
-                                        val platformsDir = File(sdkDir, "platforms")
-                                        BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
-                                        _events.tryEmit(BuildOutputEvent.LogLine("→ Normalized SDK platforms after AGP auto-download"))
-                                    } catch (_: Throwable) {}
-                                }
-                                agpInstalledPlatform = false
-                            }
+                            handleAgpSdkLine(trimmed)
 
                             _events.tryEmit(BuildOutputEvent.LogLine(clean))
                             val diag = parser.parseLine(clean)
@@ -1184,6 +1231,11 @@ class BuildProcessRunner {
                             } else {
                                 lastStderrWasBlank = false
                             }
+
+                            // AGP writes sdkmanager installation progress to stderr.
+                            // Handle this stream as well, otherwise android-XX-2 remains
+                            // in place until after Gradle has already failed.
+                            handleAgpSdkLine(trimmed)
 
                             _events.tryEmit(BuildOutputEvent.LogLine(clean, isError = true))
                             val diag = parser.parseLine(clean)
