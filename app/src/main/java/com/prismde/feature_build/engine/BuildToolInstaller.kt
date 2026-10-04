@@ -755,8 +755,30 @@ object BuildToolInstaller {
                         txt = txt.replace(Regex("""\barmeabi\b(?!\-v7a)"""), selectedAbi)
                         modified = true
                     }
+                    if (txt.contains("gcc-toolchain")) {
+                        txt = txt.replace(Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\([^)]+\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?"""), "")
+                        modified = true
+                    }
                     if (modified) {
                         appMk.writeText(txt)
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+
+        // 3. Sanitize Android.mk
+        val androidMkCandidates = listOf(
+            File(projectRootDir, "app/src/main/jni/Android.mk"),
+            File(projectRootDir, "src/main/jni/Android.mk"),
+            File(projectRootDir, "jni/Android.mk")
+        )
+        for (androidMk in androidMkCandidates) {
+            if (androidMk.exists() && androidMk.isFile) {
+                try {
+                    val txt = androidMk.readText()
+                    if (txt.contains("gcc-toolchain")) {
+                        val cleaned = txt.replace(Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\([^)]+\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?"""), "")
+                        androidMk.writeText(cleaned)
                     }
                 } catch (_: Throwable) {}
             }
@@ -941,6 +963,33 @@ object BuildToolInstaller {
     }
 
     /**
+     * Recursively strips unsupported legacy flags such as -gcc-toolchain from all NDK makefiles
+     * and scripts to prevent "clang++: error: unknown argument: '-gcc-toolchain'" failures.
+     */
+    fun patchNdkMakefiles(rootDir: File) {
+        if (!rootDir.exists() || !rootDir.isDirectory) return
+        try {
+            rootDir.walkTopDown().maxDepth(9).forEach { file ->
+                if (file.isFile && file.extension.lowercase() in setOf("mk", "sh", "bash", "cmd", "bat")) {
+                    try {
+                        val text = file.readText()
+                        if (text.contains("gcc-toolchain")) {
+                            var patched = text
+                            // Remove -gcc-toolchain and its following argument (including line continuations with backslash)
+                            patched = patched.replace(Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\([^)]+\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?"""), "")
+                            // Clean up lines that now have only whitespace or a trailing backslash that became orphaned
+                            patched = patched.replace(Regex("""(?m)^[ \t]*\\[ \t]*$"""), "")
+                            if (patched != text) {
+                                file.writeText(patched)
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /**
      * Flattens or links nested NDK structures (e.g. android-ndk-aide or android-ndk-r26c)
      * up into the target root directory, ensuring ndk-build and all toolchains are
      * directly accessible at the NDK root with 755 permissions and Android-compatible shebangs.
@@ -1061,9 +1110,10 @@ object BuildToolInstaller {
             }
         }
 
-        // 4. Normalize shebangs, script invocations, and permissions (0755)
+        // 4. Normalize shebangs, script invocations, makefiles, and permissions (0755)
         for (root in allNdkRoots) {
             patchAllNdkScripts(root)
+            patchNdkMakefiles(root)
         }
     }
 

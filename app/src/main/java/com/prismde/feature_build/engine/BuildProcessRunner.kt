@@ -781,7 +781,11 @@ class BuildProcessRunner {
                 n.ensurePermissions(context)
             }
             BuildToolInstaller.flattenOrLinkNdkRoot(File(context.filesDir, "ndk/r26c"))
+            BuildToolInstaller.patchNdkMakefiles(File(context.filesDir, "ndk/r26c"))
+            BuildToolInstaller.patchNdkMakefiles(File(context.filesDir, "ndk/r26c/android-ndk-aide"))
             BuildToolInstaller.flattenOrLinkNdkRoot(File(sdkDir, "ndk/26.2.11394342"))
+            BuildToolInstaller.patchNdkMakefiles(File(sdkDir, "ndk/26.2.11394342"))
+            BuildToolInstaller.patchNdkMakefiles(project.rootDir)
 
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)

@@ -790,6 +790,7 @@ data class NdkVersion(
             if (!ndkDir.exists()) return
 
             com.prismde.feature_build.engine.BuildToolInstaller.flattenOrLinkNdkRoot(ndkDir)
+            com.prismde.feature_build.engine.BuildToolInstaller.patchNdkMakefiles(ndkDir)
             ensureNdkMetadata(ndkDir, context = context)
 
             fun applyChmod755(target: File) {

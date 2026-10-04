@@ -689,6 +689,32 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("Wrapper must use /system/bin/sh", content.startsWith("#!/system/bin/sh"))
         assertTrue("Wrapper must execute build/ndk-build", content.contains("build/ndk-build"))
     }
+
+    @Test
+    fun testPatchNdkMakefilesRemovesGccToolchain() {
+        val root = tempFolder.newFolder("gcc_toolchain_strip_test")
+        val buildDir = File(root, "build/core").also { it.mkdirs() }
+        val mkFile = File(buildDir, "default-build-commands.mk").also {
+            it.writeText(
+                """
+                TARGET_CFLAGS := \
+                    -gcc-toolchain \
+                    $(TOOLCHAIN_ROOT) \
+                    -fpic
+                TARGET_CXXFLAGS := -gcc-toolchain $(TOOLCHAIN_ROOT) -O2
+                TARGET_LDFLAGS += --gcc-toolchain=$(TOOLCHAIN_ROOT)
+                """.trimIndent()
+            )
+        }
+
+        BuildToolInstaller.patchNdkMakefiles(root)
+
+        val text = mkFile.readText()
+        assertFalse("Must not contain -gcc-toolchain", text.contains("-gcc-toolchain"))
+        assertFalse("Must not contain --gcc-toolchain", text.contains("--gcc-toolchain"))
+        assertTrue("Must preserve -fpic", text.contains("-fpic"))
+        assertTrue("Must preserve -O2", text.contains("-O2"))
+    }
 }
 
 
