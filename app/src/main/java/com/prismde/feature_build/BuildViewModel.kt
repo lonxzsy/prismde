@@ -77,7 +77,7 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.value = _uiState.value.copy(diagnostics = sorted)
                     }
                     is BuildOutputEvent.Completed -> {
-                        val logFile = writeBuildLog(event.projectRoot, _uiState.value.logs, event.success)
+                        val logFile = writeBuildLog(event.projectRoot, _uiState.value.logs, event.success, event.errorSummary)
                         _uiState.value = _uiState.value.copy(
                             isBuilding = false,
                             buildSuccess = event.success,
@@ -158,7 +158,8 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
     private fun writeBuildLog(
         projectRoot: File?,
         logs: List<BuildOutputEvent.LogLine>,
-        success: Boolean
+        success: Boolean,
+        errorSummary: String? = null
     ): File? {
         if (projectRoot == null || !projectRoot.exists()) return null
         return try {
@@ -167,6 +168,25 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                 appendLine("PrismDE build log")
                 appendLine("success=$success")
                 appendLine("time=${java.time.Instant.now()}")
+                if (!success) {
+                    val rootCause = errorSummary ?: run {
+                        val errorLines = logs.filter { it.isError }.map { it.text.trim() }
+                            .filterNot { it.startsWith("====") || it.contains("ОШИБКА СБОРКИ GRADLE") || it.contains("GRADLE BUILD FAILED") }
+                        errorLines.firstOrNull { it.contains("What went wrong:", ignoreCase = true) }
+                            ?: errorLines.firstOrNull { it.startsWith("Execution failed for task") }
+                            ?: errorLines.firstOrNull { it.startsWith("AAPT2") || it.startsWith("error:") }
+                            ?: errorLines.firstOrNull { it.contains("FAILURE:", ignoreCase = true) }
+                            ?: errorLines.firstOrNull() ?: "Unknown error"
+                    }
+                    appendLine("root_cause=${rootCause.take(250)}")
+                    appendLine("--- WHAT WENT WRONG ---")
+                    val keyErrors = logs.filter { it.isError }
+                        .map { it.text.trim() }
+                        .filterNot { it.startsWith("====") }
+                        .take(15)
+                    keyErrors.forEach { appendLine(it) }
+                    appendLine("-----------------------")
+                }
                 appendLine("----")
                 logs.forEach { line ->
                     appendLine(if (line.isError) "[E] ${line.text}" else line.text)

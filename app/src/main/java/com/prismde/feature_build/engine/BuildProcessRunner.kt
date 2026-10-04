@@ -5,6 +5,7 @@ import com.prismde.core.model.AndroidAbi
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.DefaultNdkCatalog
 import com.prismde.core.model.Diagnostic
+import com.prismde.core.model.DiagnosticSeverity
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.model.Project
 import com.prismde.core.model.ProjectType
@@ -23,16 +24,83 @@ sealed class BuildOutputEvent {
         val exitCode: Int,
         val success: Boolean,
         val artifactFile: File? = null,
-        val projectRoot: File? = null
+        val projectRoot: File? = null,
+        val errorSummary: String? = null
     ) : BuildOutputEvent()
 }
 
+data class ProcessExecutionResult(
+    val exitCode: Int,
+    val success: Boolean,
+    val agpInstalledSdkComponent: Boolean = false,
+    val outputLines: List<String> = emptyList()
+)
+
 class BuildProcessRunner {
+
+    companion object {
+        fun extractGradleError(outputLines: List<String>): Pair<String, String>? {
+            val whatWentWrongIdx = outputLines.indexOfFirst { line ->
+                line.trim().startsWith("* What went wrong:", ignoreCase = true) ||
+                line.trim().equals("What went wrong:", ignoreCase = true)
+            }
+
+            if (whatWentWrongIdx != -1) {
+                val detailLines = mutableListOf<String>()
+                for (i in (whatWentWrongIdx + 1) until outputLines.size) {
+                    val line = outputLines[i]
+                    val trimmed = line.trim()
+                    if (trimmed.startsWith("* Try:", ignoreCase = true) ||
+                        trimmed.startsWith("* Exception is:", ignoreCase = true) ||
+                        trimmed.startsWith("* Get more help at", ignoreCase = true) ||
+                        trimmed.startsWith("BUILD FAILED", ignoreCase = true)
+                    ) {
+                        break
+                    }
+                    detailLines.add(line)
+                }
+
+                while (detailLines.isNotEmpty() && detailLines.first().isBlank()) {
+                    detailLines.removeAt(0)
+                }
+                while (detailLines.isNotEmpty() && detailLines.last().isBlank()) {
+                    detailLines.removeAt(detailLines.size - 1)
+                }
+
+                val failureTask = detailLines.firstOrNull { it.trim().startsWith("Execution failed for task") }?.trim()
+                val causeLine = detailLines.firstOrNull { it.trim().startsWith(">") }?.trim()?.removePrefix(">")?.trim()
+                val headline = when {
+                    causeLine != null && failureTask != null -> "$failureTask: $causeLine"
+                    causeLine != null -> causeLine
+                    failureTask != null -> failureTask
+                    else -> detailLines.firstOrNull { it.isNotBlank() }?.trim() ?: "Gradle build failed"
+                }
+
+                val details = detailLines.joinToString("\n").trim()
+                return Pair(headline, details.ifBlank { headline })
+            }
+
+            val errorLine = outputLines.firstOrNull { line ->
+                val trimmed = line.trim()
+                trimmed.startsWith("Execution failed for task", ignoreCase = true) ||
+                trimmed.startsWith("FAILURE: Build failed", ignoreCase = true) ||
+                trimmed.contains("Failed to find target with hash string", ignoreCase = true) ||
+                (trimmed.startsWith("ERROR:") || trimmed.startsWith("error:"))
+            }?.trim()
+
+            return if (errorLine != null) {
+                Pair(errorLine, errorLine)
+            } else {
+                null
+            }
+        }
+    }
 
     private val isRu get() = java.util.Locale.getDefault().language == "ru"
     private val parser = ClangDiagnosticParser()
     private val _events = MutableSharedFlow<BuildOutputEvent>(extraBufferCapacity = 500)
     val events: SharedFlow<BuildOutputEvent> = _events
+    private var lastBuildErrorSummary: String? = null
 
     suspend fun runBuild(
         project: Project,
@@ -40,6 +108,7 @@ class BuildProcessRunner {
         config: BuildConfiguration,
         context: Context? = null
     ): Boolean = withContext(Dispatchers.IO) {
+        lastBuildErrorSummary = null
         val detectedType = if (config.projectType == ProjectType.AUTO_DETECT) {
             ProjectDetector.detect(project.rootDir, context)
         } else {
@@ -81,12 +150,13 @@ class BuildProcessRunner {
             val artifactFile = buildGradle(project, config, ndk, context)
             val success = artifactFile != null && artifactFile.exists()
             val exitCode = if (success) 0 else 1
+            val errorSummary = if (!success) lastBuildErrorSummary else null
             if (success) {
                 _events.emit(BuildOutputEvent.LogLine(if (isRu) "✔ Сборка Gradle успешно завершена! Создан артефакт: ${artifactFile.absolutePath}" else "✔ Gradle build completed successfully! Generated artifact: ${artifactFile.absolutePath}"))
             } else {
                 _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ Ошибка сборки Gradle. Проверьте вывод и карточки ошибок выше." else "✖ Gradle build failed. Check the output and error diagnostics above.", isError = true))
             }
-            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile, project.rootDir))
+            _events.emit(BuildOutputEvent.Completed(exitCode, success, artifactFile, project.rootDir, errorSummary))
             return@withContext success
         }
 
@@ -221,8 +291,8 @@ class BuildProcessRunner {
                 File(project.rootDir, "libs/${config.selectedAbi.abiString}/$soName").delete()
             } catch (_: Throwable) {}
 
-            val buildSuccess = executeProcess(command, mkDir, ndkBuildScript.parentFile, ndk, config, context)
-            if (!buildSuccess) {
+            val buildResult = executeProcess(command, mkDir, ndkBuildScript.parentFile, ndk, config, context)
+            if (!buildResult.success) {
                 return null
             }
 
@@ -276,8 +346,8 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Выполнение команды Clang++:" else "Executing Clang++ command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, project.rootDir, compilerFile.parentFile, ndk, config, context)
-        return if (success && targetSo.exists()) targetSo else null
+        val execResult = executeProcess(command, project.rootDir, compilerFile.parentFile, ndk, config, context)
+        return if (execResult.success && targetSo.exists()) targetSo else null
     }
 
     private suspend fun buildCMake(
@@ -303,11 +373,11 @@ class BuildProcessRunner {
         }
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Генерация проекта CMake..." else "Configuring CMake project..."))
-        if (!executeProcess(cmakeCommand, project.rootDir, null, ndk, config, context)) return null
+        if (!executeProcess(cmakeCommand, project.rootDir, null, ndk, config, context).success) return null
 
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Сборка через Ninja..." else "Building with Ninja..."))
         val ninjaCommand = listOf("ninja", "-C", buildDir.absolutePath)
-        if (!executeProcess(ninjaCommand, project.rootDir, null, ndk, config, context)) return null
+        if (!executeProcess(ninjaCommand, project.rootDir, null, ndk, config, context).success) return null
 
         return buildDir.walkTopDown().firstOrNull { it.isFile && (it.extension == "so" || it.canExecute()) }
     }
@@ -365,8 +435,8 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Выполнение команды Clang++:" else "Executing Clang++ command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, project.rootDir, compilerFile.parentFile, ndk, config, context)
-        return if (success && targetExe.exists()) targetExe else null
+        val execResult = executeProcess(command, project.rootDir, compilerFile.parentFile, ndk, config, context)
+        return if (execResult.success && targetExe.exists()) targetExe else null
     }
 
     private suspend fun buildMaven(
@@ -576,20 +646,24 @@ class BuildProcessRunner {
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Maven:" else "Executing Maven command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        val success = executeProcess(command, workingDir, extraBinDir, null, config, context)
+        val mavenStartTime = System.currentTimeMillis()
+        val execResult = executeProcess(command, workingDir, extraBinDir, null, config, context)
+        val success = execResult.success
+
+        if (!success) {
+            _events.emit(
+                BuildOutputEvent.LogLine(
+                    if (isRu) "Подсказка: Проверьте логи сборки выше и настройки pom.xml. Убедитесь, что все зависимости и плагины Maven доступны."
+                    else "Hint: Check build logs above and pom.xml settings. Ensure all dependencies and Maven plugins are accessible.",
+                    isError = true
+                )
+            )
+            return null
+        }
 
         // Find resulting artifact in target/ directory (.jar, .aar, .war, .apk)
         val targetDir = File(project.rootDir, "target")
         if (!targetDir.exists()) {
-            if (!success) {
-                _events.emit(
-                    BuildOutputEvent.LogLine(
-                        if (isRu) "Подсказка: Проверьте логи сборки выше и настройки pom.xml. Убедитесь, что все зависимости и плагины Maven доступны."
-                        else "Hint: Check build logs above and pom.xml settings. Ensure all dependencies and Maven plugins are accessible.",
-                        isError = true
-                    )
-                )
-            }
             return null
         }
 
@@ -602,19 +676,11 @@ class BuildProcessRunner {
                      file.extension.equals("apk", ignoreCase = true)) &&
                     !file.name.endsWith("-sources.jar", ignoreCase = true) &&
                     !file.name.endsWith("-javadoc.jar", ignoreCase = true) &&
-                    !file.name.startsWith("original-", ignoreCase = true)
+                    !file.name.startsWith("original-", ignoreCase = true) &&
+                    file.lastModified() >= mavenStartTime - 2000L
         }.toList()
 
         if (artifacts.isEmpty()) {
-            if (!success) {
-                _events.emit(
-                    BuildOutputEvent.LogLine(
-                        if (isRu) "Подсказка: Проверьте логи сборки выше и настройки pom.xml. Убедитесь, что все зависимости и плагины Maven доступны."
-                        else "Hint: Check build logs above and pom.xml settings. Ensure all dependencies and Maven plugins are accessible.",
-                        isError = true
-                    )
-                )
-            }
             return null
         }
 
@@ -665,6 +731,7 @@ class BuildProcessRunner {
 
             // Ensure Android SDK directory & licenses are created in PrismDE storage
             val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
+            BuildToolInstaller.cleanExtraneousSdkFiles(sdkDir, BuildToolInstaller.getToolsDir(context))
 
             // Ensure NDK has source.properties and permissions!
             effectiveNdk?.let {
@@ -760,6 +827,18 @@ class BuildProcessRunner {
             BuildToolInstaller.describeBuildTools(sdkDir, requiredBuildTools)
                 .lineSequence()
                 .forEach { line -> _events.emit(BuildOutputEvent.LogLine(line)) }
+
+            // Ensure gradle.properties is re-synchronized with verified native aapt2 override
+            BuildToolInstaller.ensureGradleWrapper(context, project.rootDir)
+            val nativeAapt2 = BuildToolInstaller.getAapt2Executable(context, requiredBuildTools)
+            if (nativeAapt2 != null && nativeAapt2.exists()) {
+                val (passed, execMsg) = BuildToolInstaller.verifyBinaryExecution(nativeAapt2, "version")
+                _events.emit(BuildOutputEvent.LogLine(
+                    "SDK AAPT2 verification: path=${nativeAapt2.absolutePath}, " +
+                    "arch=${BuildToolInstaller.readElfArchitecture(nativeAapt2)}, " +
+                    "exec=${if (passed) "PASS ($execMsg)" else "FAIL ($execMsg)"}"
+                ))
+            }
         }
 
         // 1. Detect Gradle Wrapper (gradlew / gradlew.bat) or installed Gradle binary
@@ -857,10 +936,22 @@ class BuildProcessRunner {
             command.add("-Pandroid.suppressUnsupportedCompileSdk=$requiredApi")
         }
 
+        val requiredBuildTools = BuildToolInstaller.detectProjectBuildToolsVersion(project.rootDir)
+            ?: BuildToolInstaller.ANDROID_BUILD_TOOLS_VERSION_DEFAULT
+        val aapt2Exe = BuildToolInstaller.getAapt2Executable(context, requiredBuildTools)
+        if (aapt2Exe != null && aapt2Exe.exists() && BuildToolInstaller.isExecutableOnCurrentPlatform(aapt2Exe)) {
+            if (!command.any { it.startsWith("-Pandroid.aapt2FromMavenOverride=") }) {
+                command.add("-Pandroid.aapt2FromMavenOverride=${aapt2Exe.absolutePath}")
+            }
+        }
+
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
-        var success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
+        val buildStartTime = System.currentTimeMillis()
+        var execResult = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
+        var success = execResult.success
+        val outputLines = execResult.outputLines.toMutableList()
 
         if (context != null) {
             try {
@@ -877,11 +968,18 @@ class BuildProcessRunner {
                 ))
                 _events.emit(BuildOutputEvent.LogLine(BuildToolInstaller.describeInstalledBuildTools(sdkDir)))
 
-                // AGP may have installed a package after the initial check. If its package
-                // landed in android-XX-2, make it canonical and retry once with the same
-                // project command. This avoids reporting a false failure after a successful
-                // SDK download.
-                if (!success && canonicalReady) {
+                // Only retry if AGP downloaded SDK components during this run,
+                // or if the failure was specifically missing SDK target and the platform is now canonical and ready.
+                val shouldRetry = !success && canonicalReady && (
+                    execResult.agpInstalledSdkComponent ||
+                    outputLines.any { line ->
+                        line.contains("Failed to find target with hash string", ignoreCase = true) ||
+                        line.contains("Install Android SDK", ignoreCase = true) ||
+                        line.contains("Installing Android SDK", ignoreCase = true)
+                    }
+                )
+
+                if (shouldRetry) {
                     val retryCommand = command.toMutableList().apply {
                         if (!any { it.matches(Regex("-Pandroid\\.builder\\.sdkDownload=.*")) }) {
                             add("-Pandroid.builder.sdkDownload=false")
@@ -896,24 +994,41 @@ class BuildProcessRunner {
                         else "Retrying Gradle with SDK auto-download disabled:"
                     ))
                     _events.emit(BuildOutputEvent.LogLine(retryCommand.joinToString(" ")))
-                    success = executeProcess(retryCommand, workingDir, extraBinDir, effectiveNdk, config, context)
+                    execResult = executeProcess(retryCommand, workingDir, extraBinDir, effectiveNdk, config, context)
+                    success = execResult.success
+                    outputLines.addAll(execResult.outputLines)
                 }
             } catch (_: Throwable) {}
         }
 
-        // Search for generated APK, AAR, or JAR in build outputs
-        val artifacts = project.rootDir.walkTopDown().maxDepth(6).filter { file ->
-            file.isFile &&
-                    (file.extension.equals("apk", ignoreCase = true) ||
-                     file.extension.equals("aar", ignoreCase = true) ||
-                     file.extension.equals("jar", ignoreCase = true)) &&
-                    file.path.contains("build", ignoreCase = true) &&
-                    !file.name.endsWith("-unaligned.apk", ignoreCase = true) &&
-                    !file.name.endsWith("-sources.jar", ignoreCase = true)
-        }.toList()
-
-        if (artifacts.isEmpty()) {
-            if (!success) {
+        if (!success) {
+            val errorInfo = extractGradleError(outputLines)
+            lastBuildErrorSummary = errorInfo?.first ?: outputLines.firstOrNull { it.trim().startsWith("Execution failed for task") }
+            if (errorInfo != null) {
+                val (summary, details) = errorInfo
+                _events.emit(BuildOutputEvent.LogLine("============================================================", isError = true))
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "✖ ОШИБКА СБОРКИ GRADLE:" else "✖ GRADLE BUILD FAILED:", isError = true))
+                _events.emit(BuildOutputEvent.LogLine(summary, isError = true))
+                if (details.isNotBlank() && details != summary) {
+                    details.lineSequence().forEach { line ->
+                        _events.emit(BuildOutputEvent.LogLine("  $line", isError = true))
+                    }
+                }
+                _events.emit(BuildOutputEvent.LogLine("============================================================", isError = true))
+                _events.emit(
+                    BuildOutputEvent.DiagnosticFound(
+                        Diagnostic(
+                            filePath = "build.gradle",
+                            line = 1,
+                            column = 1,
+                            severity = DiagnosticSeverity.ERROR,
+                            rawMessage = details,
+                            humanTitle = summary,
+                            humanExplanation = details
+                        )
+                    )
+                )
+            } else {
                 _events.emit(
                     BuildOutputEvent.LogLine(
                         if (isRu) "Подсказка: Для сборки Gradle убедитесь, что в системе установлен JDK (openjdk-17) и Android SDK, либо настроен gradlew."
@@ -925,9 +1040,73 @@ class BuildProcessRunner {
             return null
         }
 
-        // Return generated APK if available, or newest artifact
-        return artifacts.filter { it.extension.equals("apk", ignoreCase = true) }.maxByOrNull { it.lastModified() }
-            ?: artifacts.maxByOrNull { it.lastModified() }
+        // Search for generated APK or AAR strictly in build outputs (excluding intermediate/merge artifacts)
+        val apkOutputDir = File(project.rootDir, "app/build/outputs/apk")
+        val altApkOutputDir = File(project.rootDir, "build/outputs/apk")
+        val aarOutputDir = File(project.rootDir, "app/build/outputs/aar")
+        val altAarOutputDir = File(project.rootDir, "build/outputs/aar")
+        val jarOutputDir = File(project.rootDir, "build/libs")
+        val altJarOutputDir = File(project.rootDir, "app/build/libs")
+
+        val candidateDirs = listOf(apkOutputDir, altApkOutputDir, aarOutputDir, altAarOutputDir)
+            .filter { it.exists() && it.isDirectory }
+
+        val outputArtifacts = candidateDirs.flatMap { dir ->
+            dir.walkTopDown().filter { file ->
+                file.isFile &&
+                    (file.extension.equals("apk", ignoreCase = true) || file.extension.equals("aar", ignoreCase = true)) &&
+                    !file.name.endsWith("-unaligned.apk", ignoreCase = true) &&
+                    file.lastModified() >= buildStartTime - 2000L
+            }.toList()
+        }
+
+        val resolvedArtifacts = if (outputArtifacts.isNotEmpty()) {
+            outputArtifacts
+        } else {
+            // Also check for pure Java/Kotlin library .jar in build/libs/ (strictly excluding intermediates)
+            val jarDirs = listOf(jarOutputDir, altJarOutputDir).filter { it.exists() && it.isDirectory }
+            val jarArtifacts = jarDirs.flatMap { dir ->
+                dir.walkTopDown().filter { file ->
+                    file.isFile && file.extension.equals("jar", ignoreCase = true) &&
+                        !file.name.endsWith("-sources.jar", ignoreCase = true) &&
+                        !file.name.endsWith("-javadoc.jar", ignoreCase = true) &&
+                        file.lastModified() >= buildStartTime - 2000L
+                }.toList()
+            }
+            if (jarArtifacts.isNotEmpty()) {
+                jarArtifacts
+            } else {
+                project.rootDir.walkTopDown().maxDepth(8).filter { file ->
+                    file.isFile &&
+                        (file.extension.equals("apk", ignoreCase = true) || file.extension.equals("aar", ignoreCase = true)) &&
+                        file.path.contains("outputs", ignoreCase = true) &&
+                        !file.path.contains("intermediates", ignoreCase = true) &&
+                        !file.path.contains("reports", ignoreCase = true) &&
+                        !file.name.endsWith("-unaligned.apk", ignoreCase = true) &&
+                        file.lastModified() >= buildStartTime - 2000L
+                }.toList()
+            }
+        }
+
+        val finalArtifact = resolvedArtifacts.filter { it.extension.equals("apk", ignoreCase = true) }
+            .maxByOrNull { it.lastModified() }
+            ?: resolvedArtifacts.filter { it.extension.equals("aar", ignoreCase = true) }.maxByOrNull { it.lastModified() }
+            ?: resolvedArtifacts.maxByOrNull { it.lastModified() }
+
+        if (finalArtifact == null) {
+            val msg = if (isRu) "✖ Ошибка: Сборка завершилась, но выходной APK/AAR файл не был создан в build/outputs/."
+                      else "✖ Error: Build completed, but no output APK/AAR artifact was generated in build/outputs/."
+            lastBuildErrorSummary = msg
+            _events.emit(
+                BuildOutputEvent.LogLine(
+                    msg,
+                    isError = true
+                )
+            )
+            return null
+        }
+
+        return finalArtifact
     }
 
     private fun parseLocalModule(file: File): String? {
@@ -955,7 +1134,7 @@ class BuildProcessRunner {
         ndk: NdkVersion? = null,
         config: BuildConfiguration? = null,
         context: Context? = null
-    ): Boolean {
+    ): ProcessExecutionResult {
         return try {
             val processBuilder = ProcessBuilder(command)
                 .directory(workingDir)
@@ -1168,6 +1347,7 @@ class BuildProcessRunner {
             var lastStdoutWasBlank = false
             val sdkInstallLock = Any()
             var agpInstalledSdkComponent = false
+            val collectedLines = java.util.Collections.synchronizedList(mutableListOf<String>())
 
             fun handleAgpSdkLine(trimmed: String) {
                 val isInstallLine = trimmed.contains("Installing Android SDK Platform", ignoreCase = true) ||
@@ -1213,6 +1393,7 @@ class BuildProcessRunner {
 
                             handleAgpSdkLine(trimmed)
 
+                            collectedLines.add(clean)
                             _events.tryEmit(BuildOutputEvent.LogLine(clean))
                             val diag = parser.parseLine(clean)
                             if (diag != null) {
@@ -1247,6 +1428,7 @@ class BuildProcessRunner {
                             // in place until after Gradle has already failed.
                             handleAgpSdkLine(trimmed)
 
+                            collectedLines.add(clean)
                             _events.tryEmit(BuildOutputEvent.LogLine(clean, isError = true))
                             val diag = parser.parseLine(clean)
                             if (diag != null) {
@@ -1264,11 +1446,21 @@ class BuildProcessRunner {
             stderrThread.join()
 
             val code = process.waitFor()
-            code == 0
+            ProcessExecutionResult(
+                exitCode = code,
+                success = code == 0,
+                agpInstalledSdkComponent = agpInstalledSdkComponent,
+                outputLines = collectedLines.toList()
+            )
         } catch (e: Exception) {
             val isRu = java.util.Locale.getDefault().language == "ru"
             _events.emit(BuildOutputEvent.LogLine(if (isRu) "Исключение при запуске процесса: ${e.message}" else "Exception launching process: ${e.message}", isError = true))
-            false
+            ProcessExecutionResult(
+                exitCode = -1,
+                success = false,
+                agpInstalledSdkComponent = false,
+                outputLines = listOf(e.message ?: "Exception launching process")
+            )
         }
     }
 }

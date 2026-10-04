@@ -276,7 +276,8 @@ object ProjectManager {
                         <application
                             android:allowBackup="true"
                             android:label="$finalName"
-                            android:supportsRtl="true">
+                            android:supportsRtl="true"
+                            android:theme="@style/Theme.AppCompat.Light.NoActionBar">
                             <activity
                                 android:name=".MainActivity"
                                 android:exported="true">
@@ -350,11 +351,29 @@ object ProjectManager {
                     """.trimIndent()
                 )
 
-                // Provision Gradle Wrapper (gradlew, gradlew.bat, wrapper jar/properties) & gradle.properties
+                // Explicitly write gradle.properties for the project template with AndroidX enabled
+                val gradleProps = File(projectDir, "gradle.properties")
+                if (!gradleProps.exists()) {
+                    gradleProps.writeText(
+                        """
+                        # Project-wide Gradle settings
+                        org.gradle.jvmargs=-XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xmx1024m
+                        org.gradle.daemon=false
+                        org.gradle.parallel=false
+                        org.gradle.vfs.watch=false
+                        org.gradle.console=plain
+                        android.useAndroidX=true
+                        android.suppressUnsupportedCompileSdk=34,35
+                        """.trimIndent() + "\n"
+                    )
+                }
+
+                // Provision Gradle Wrapper (gradlew, gradlew.bat, wrapper jar/properties) & optimize gradle.properties
                 BuildToolInstaller.ensureGradleWrapper(context, projectDir)
 
-                // Provision Android SDK & local.properties
+                // Provision Android SDK, clean any spurious SDK files & generate local.properties
                 val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
+                BuildToolInstaller.cleanExtraneousSdkFiles(sdkDir, BuildToolInstaller.getToolsDir(context))
                 BuildToolInstaller.ensureLocalProperties(projectDir, sdkDir, context = context)
             }
 

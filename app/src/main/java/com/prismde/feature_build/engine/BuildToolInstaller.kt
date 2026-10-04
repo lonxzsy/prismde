@@ -369,16 +369,17 @@ object BuildToolInstaller {
      * Ensures the project has gradle wrapper files (gradlew, gradlew.bat, gradle/wrapper/...)
      * and a properly configured gradle.properties for optimal execution on Android.
      */
-    fun ensureGradleWrapper(context: Context, projectRootDir: File, force: Boolean = false): Boolean {
+    fun ensureGradleWrapper(context: Context? = null, projectRootDir: File, force: Boolean = false): Boolean {
         return try {
             val gradlew = File(projectRootDir, "gradlew")
             val gradlewBat = File(projectRootDir, "gradlew.bat")
             val wrapperJar = File(projectRootDir, "gradle/wrapper/gradle-wrapper.jar")
             val wrapperProps = File(projectRootDir, "gradle/wrapper/gradle-wrapper.properties")
 
-            val assetManager = context.assets
+            val assetManager = context?.assets
 
             fun copyAssetFile(assetPath: String, destFile: File) {
+                if (assetManager == null) return
                 destFile.parentFile?.mkdirs()
                 assetManager.open(assetPath).use { input ->
                     FileOutputStream(destFile).use { output ->
@@ -418,8 +419,11 @@ object BuildToolInstaller {
 
             // Ensure gradle.properties exists with Android-optimized settings
             val gradleProps = File(projectRootDir, "gradle.properties")
-            val javaHome = getJdkHomeDir(context)?.absolutePath
+            val javaHome = if (context != null) getJdkHomeDir(context)?.absolutePath else null
             val defaultJvmArgs = "-XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xmx1024m"
+            val nativeAapt2 = getAapt2Executable(context)
+            val aapt2Path = nativeAapt2?.absolutePath?.replace("\\", "/")
+
             if (!gradleProps.exists()) {
                 val sb = java.lang.StringBuilder()
                 sb.appendLine("# PrismDE Android Build Optimizations")
@@ -429,6 +433,10 @@ object BuildToolInstaller {
                 sb.appendLine("org.gradle.vfs.watch=false")
                 sb.appendLine("org.gradle.console=plain")
                 sb.appendLine("android.suppressUnsupportedCompileSdk=34,35")
+                sb.appendLine("android.useAndroidX=true")
+                if (!aapt2Path.isNullOrBlank()) {
+                    sb.appendLine("android.aapt2FromMavenOverride=$aapt2Path")
+                }
                 if (!javaHome.isNullOrBlank()) {
                     sb.appendLine("org.gradle.java.home=${javaHome.replace("\\", "/")}")
                 }
@@ -455,6 +463,23 @@ object BuildToolInstaller {
                 if (!propsText.contains("android.suppressUnsupportedCompileSdk")) {
                     propsText += "\nandroid.suppressUnsupportedCompileSdk=34,35\n"
                     modified = true
+                }
+                if (!propsText.contains("android.useAndroidX")) {
+                    propsText += "\nandroid.useAndroidX=true\n"
+                    modified = true
+                }
+                if (!aapt2Path.isNullOrBlank()) {
+                    val aapt2Regex = Regex("""^android\.aapt2FromMavenOverride\s*=.*$""", RegexOption.MULTILINE)
+                    if (aapt2Regex.containsMatchIn(propsText)) {
+                        val updated = aapt2Regex.replace(propsText, "android.aapt2FromMavenOverride=$aapt2Path")
+                        if (updated != propsText) {
+                            propsText = updated
+                            modified = true
+                        }
+                    } else {
+                        propsText += "\nandroid.aapt2FromMavenOverride=$aapt2Path\n"
+                        modified = true
+                    }
                 }
                 val withoutSdkDownloadOverride = propsText
                     .lineSequence()
@@ -506,6 +531,7 @@ object BuildToolInstaller {
 
     fun ensureAndroidSdk(context: Context): File {
         val sdkDir = getAndroidSdkDir(context)
+        cleanExtraneousSdkFiles(sdkDir, getToolsDir(context))
         sdkDir.mkdirs()
         File(sdkDir, "platforms").mkdirs()
         File(sdkDir, "build-tools").mkdirs()
@@ -884,8 +910,206 @@ object BuildToolInstaller {
      * sdkmanager uses a -2/-3 suffix when a stale or incomplete package directory exists.
      * Collapse only valid duplicate Build-Tools directories before Gradle starts.
      */
+    /**
+     * Purges leaked NDK directories and spurious source.properties from SDK root,
+     * build-tools, platforms, and tools directories.
+     */
+    fun cleanExtraneousSdkFiles(sdkDir: File, toolsDir: File? = null) {
+        val rootDirs = mutableListOf<File>()
+        rootDirs.add(sdkDir)
+        toolsDir?.let { rootDirs.add(it) }
+
+        // 1. Root SDK and tools cleanup
+        for (root in rootDirs) {
+            if (!root.exists() || !root.isDirectory) continue
+            val rootProp = File(root, "source.properties")
+            if (rootProp.exists()) {
+                try { rootProp.delete() } catch (_: Throwable) {}
+            }
+            val leakedDirs = listOf("meta", "sysroot", "toolchains", "android-ndk-aide", "tmp")
+            for (dirName in leakedDirs) {
+                val d = File(root, dirName)
+                if (d.exists()) {
+                    try { d.deleteRecursively() } catch (_: Throwable) {}
+                }
+            }
+        }
+
+        // 2. build-tools cleanup
+        val buildToolsDir = File(sdkDir, "build-tools")
+        if (buildToolsDir.exists() && buildToolsDir.isDirectory) {
+            val btProp = File(buildToolsDir, "source.properties")
+            if (btProp.exists()) {
+                try { btProp.delete() } catch (_: Throwable) {}
+            }
+            listOf("meta", "sysroot", "toolchains", "android-ndk-aide", "tmp").forEach { dirName ->
+                val d = File(buildToolsDir, dirName)
+                if (d.exists()) {
+                    try { d.deleteRecursively() } catch (_: Throwable) {}
+                }
+            }
+        }
+
+        // 3. platforms cleanup
+        val platformsDir = File(sdkDir, "platforms")
+        if (platformsDir.exists() && platformsDir.isDirectory) {
+            val platProp = File(platformsDir, "source.properties")
+            if (platProp.exists()) {
+                try { platProp.delete() } catch (_: Throwable) {}
+            }
+            listOf("meta", "sysroot", "toolchains", "android-ndk-aide", "tmp").forEach { dirName ->
+                val d = File(platformsDir, dirName)
+                if (d.exists()) {
+                    try { d.deleteRecursively() } catch (_: Throwable) {}
+                }
+            }
+            // Clean platforms/ subdirectories
+            platformsDir.listFiles()?.filter { it.isDirectory }?.forEach { platformSub ->
+                val jar = File(platformSub, "android.jar")
+                // If it has NO android.jar and only arch-* (leaked NDK platforms like android-21, android-24)
+                if (!jar.exists()) {
+                    val hasArch = platformSub.listFiles()?.any { it.name.startsWith("arch-") } == true
+                    if (hasArch) {
+                        try { platformSub.deleteRecursively() } catch (_: Throwable) {}
+                    }
+                } else {
+                    // Real SDK platform (e.g. android-34): remove any leaked arch-* subfolders
+                    platformSub.listFiles()?.filter { it.isDirectory && it.name.startsWith("arch-") }?.forEach { archDir ->
+                        try { archDir.deleteRecursively() } catch (_: Throwable) {}
+                    }
+                }
+            }
+        }
+    }
+
+    enum class ElfArchitecture {
+        AARCH64, // 0xB7 (183)
+        X86_64,  // 0x3E (62)
+        ARM,     // 0x28 (40)
+        X86,     // 0x03 (3)
+        OTHER,
+        NOT_ELF
+    }
+
+    fun readElfArchitecture(file: File): ElfArchitecture {
+        if (!file.exists() || !file.isFile || file.length() < 20) return ElfArchitecture.NOT_ELF
+        return try {
+            file.inputStream().use { stream ->
+                val header = ByteArray(20)
+                val read = stream.read(header)
+                if (read < 20) return ElfArchitecture.NOT_ELF
+                if (header[0] != 0x7F.toByte() || header[1] != 'E'.code.toByte() ||
+                    header[2] != 'L'.code.toByte() || header[3] != 'F'.code.toByte()) {
+                    return ElfArchitecture.NOT_ELF
+                }
+                val isLittleEndian = header[5].toInt() == 1
+                val eMachine = if (isLittleEndian) {
+                    (header[18].toInt() and 0xFF) or ((header[19].toInt() and 0xFF) shl 8)
+                } else {
+                    ((header[18].toInt() and 0xFF) shl 8) or (header[19].toInt() and 0xFF)
+                }
+                when (eMachine) {
+                    0xB7 -> ElfArchitecture.AARCH64
+                    0x3E -> ElfArchitecture.X86_64
+                    0x28 -> ElfArchitecture.ARM
+                    0x03 -> ElfArchitecture.X86
+                    else -> ElfArchitecture.OTHER
+                }
+            }
+        } catch (_: Throwable) {
+            ElfArchitecture.NOT_ELF
+        }
+    }
+
+    fun isExecutableOnCurrentPlatform(file: File): Boolean {
+        if (!file.exists() || !file.isFile) return false
+        val arch = readElfArchitecture(file)
+        if (arch == ElfArchitecture.X86_64 || arch == ElfArchitecture.X86) {
+            // Android ARM64 devices CANNOT run Linux x86 or x86_64 ELF binaries
+            return false
+        }
+        val isBinaryTool = file.name in setOf("aapt2", "aapt", "aidl", "zipalign", "dexdump", "split-select", "make", "clang", "clang++")
+        if (isBinaryTool && arch == ElfArchitecture.NOT_ELF) {
+            return false
+        }
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+        if (isWindows) return file.length() > 0
+
+        return true
+    }
+
+    /**
+     * Executes the binary with test arguments (e.g. "version") to verify that
+     * the binary runs on the device and does not fail with Exec format error or syntax error.
+     */
+    fun verifyBinaryExecution(binary: File, vararg testArgs: String): Pair<Boolean, String> {
+        if (!binary.exists() || !binary.isFile) {
+            return Pair(false, "File not found: ${binary.absolutePath}")
+        }
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+        if (isWindows) {
+            return Pair(true, "Windows environment (execution simulated)")
+        }
+        val arch = readElfArchitecture(binary)
+        if (arch == ElfArchitecture.X86_64 || arch == ElfArchitecture.X86) {
+            return Pair(false, "Incompatible ELF architecture $arch (ARM64 host requires AARCH64)")
+        }
+        return try {
+            binary.setExecutable(true, false)
+            val cmd = listOf(binary.absolutePath) + testArgs.toList()
+            val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val finished = proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            if (!finished) {
+                proc.destroyForcibly()
+                Pair(false, "Execution timed out (3s)")
+            } else {
+                val output = proc.inputStream.bufferedReader().readText().trim()
+                val exitCode = proc.exitValue()
+                if (exitCode == 0) {
+                    Pair(true, output.ifBlank { "OK (exitCode=0)" })
+                } else {
+                    Pair(false, "Exit code $exitCode: $output")
+                }
+            }
+        } catch (e: Exception) {
+            Pair(false, "Execution exception: ${e.message}")
+        }
+    }
+
+    fun getAapt2Executable(context: Context? = null, version: String = ANDROID_BUILD_TOOLS_VERSION_DEFAULT): File? {
+        val candidates = mutableListOf<File>()
+        val sdkDir = findExistingSdk(context)
+        candidates.add(File(sdkDir, "build-tools/$version/aapt2"))
+        val buildToolsDir = File(sdkDir, "build-tools")
+        if (buildToolsDir.exists() && buildToolsDir.isDirectory) {
+            buildToolsDir.listFiles()?.filter { it.isDirectory }?.forEach { vDir ->
+                candidates.add(File(vDir, "aapt2"))
+            }
+        }
+        candidates.add(File("/data/data/com.termux/files/usr/bin/aapt2"))
+        candidates.add(File("/data/user/0/com.termux/files/usr/bin/aapt2"))
+        candidates.add(File("/data/data/com.itsaky.androidide/files/usr/bin/aapt2"))
+        candidates.add(File("/data/user/0/com.itsaky.androidide/files/usr/bin/aapt2"))
+        if (context != null) {
+            candidates.add(File(getToolsDir(context), "bin/aapt2"))
+        }
+
+        for (cand in candidates.distinct()) {
+            if (cand.exists() && isExecutableOnCurrentPlatform(cand)) {
+                try { cand.setExecutable(true, false) } catch (_: Throwable) {}
+                return cand
+            }
+        }
+        return null
+    }
+
+    /**
+     * sdkmanager uses a -2/-3 suffix when a stale or incomplete package directory exists.
+     * Collapse only valid duplicate Build-Tools directories before Gradle starts.
+     */
     fun normalizeAllSdkBuildTools(buildToolsDir: File) {
         if (!buildToolsDir.exists()) return
+        buildToolsDir.parentFile?.let { sdkDir -> cleanExtraneousSdkFiles(sdkDir) }
         val suffixed = Regex("""^(\d+\.\d+\.\d+)-(\d+)$""")
         val versions = buildToolsDir.listFiles()
             ?.filter { it.isDirectory }
@@ -921,21 +1145,29 @@ object BuildToolInstaller {
         }
     }
 
-    private fun isBuildToolsDirectoryReady(directory: File): Boolean {
+    fun isBuildToolsDirectoryReady(directory: File): Boolean {
         if (!directory.exists() || !directory.isDirectory) return false
         val hasMetadata = File(directory, "source.properties").exists()
-        val hasTool = listOf("aapt2", "aapt", "d8", "d8.jar", "zipalign")
-            .any { File(directory, it).exists() }
-        return hasMetadata && hasTool
+        val aapt2 = File(directory, "aapt2")
+        if (!hasMetadata || !aapt2.exists()) return false
+
+        // Self-check: aapt2 must be executable on current platform
+        if (!isExecutableOnCurrentPlatform(aapt2)) {
+            return false
+        }
+        return true
     }
 
     fun describeBuildTools(sdkDir: File, version: String): String {
         normalizeAllSdkBuildTools(File(sdkDir, "build-tools"))
         val dir = File(sdkDir, "build-tools/$version")
+        val aapt2 = File(dir, "aapt2")
+        val aapt2Arch = if (aapt2.exists()) readElfArchitecture(aapt2).name else "MISSING"
+        val ready = isBuildToolsDirectoryReady(dir)
         val files = if (dir.exists()) {
             dir.listFiles()?.filter { it.isFile }?.joinToString(", ") { "${it.name}=${it.length()}b" }.orEmpty()
         } else "MISSING"
-        return "SDK Build-Tools $version: path=${dir.absolutePath} exists=${dir.exists()} ready=${isBuildToolsDirectoryReady(dir)} files=[$files]"
+        return "SDK Build-Tools $version: path=${dir.absolutePath} exists=${dir.exists()} ready=$ready aapt2_arch=$aapt2Arch files=[$files]"
     }
 
     fun describeInstalledBuildTools(sdkDir: File): String {
@@ -945,7 +1177,9 @@ object BuildToolInstaller {
             ?.filter { it.isDirectory }
             ?.sortedBy { it.name }
             ?.joinToString(", ") { dir ->
-                "${dir.name}(ready=${isBuildToolsDirectoryReady(dir)},size=${dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }})"
+                val aapt2 = File(dir, "aapt2")
+                val arch = if (aapt2.exists()) readElfArchitecture(aapt2).name else "none"
+                "${dir.name}(ready=${isBuildToolsDirectoryReady(dir)},arch=$arch,size=${dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }})"
             }
             .orEmpty()
             .ifBlank { "(none)" }
@@ -1213,6 +1447,30 @@ object BuildToolInstaller {
         val buildToolsDir = File(sdkDir, "build-tools").also { it.mkdirs() }
         val targetVersionDir = File(buildToolsDir, version)
 
+        // Fast path: if build-tools directory already exists with source.properties,
+        // and only needs native ARM64 binaries replaced, skip redundant ~55 MB Google download.
+        if (targetVersionDir.exists() && File(targetVersionDir, "source.properties").exists()) {
+            val aapt2 = File(targetVersionDir, "aapt2")
+            if (!aapt2.exists() || !isExecutableOnCurrentPlatform(aapt2)) {
+                onProgress(
+                    if (isRu) "Обновление нативного ARM64 aapt2 и инструментов сборки..."
+                    else "Updating native ARM64 aapt2 and build tools...",
+                    50f
+                )
+                val installed = ensureArm64BuildTools(context, targetVersionDir, onProgress)
+                if (installed && isBuildToolsDirectoryReady(targetVersionDir)) {
+                    onProgress(
+                        if (isRu) "✔ Android Build-Tools $version успешно обновлены!"
+                        else "✔ Android Build-Tools $version updated successfully!",
+                        100f
+                    )
+                    return@withContext true
+                }
+            } else if (isBuildToolsDirectoryReady(targetVersionDir)) {
+                return@withContext true
+            }
+        }
+
         val archiveVersion = if (version == "34.0.0") "34" else version
         val archiveName = "build-tools_r${archiveVersion}-linux.zip"
         val tempArchive = File(context.cacheDir, archiveName)
@@ -1297,8 +1555,22 @@ object BuildToolInstaller {
                 }
             }
 
+            // Architecture verification: if aapt2 is x86_64 or incompatible with ARM64 Android, install native ARM64 binaries
+            val aapt2File = File(targetVersionDir, "aapt2")
+            if (!isExecutableOnCurrentPlatform(aapt2File)) {
+                onProgress(
+                    if (isRu) "Установка нативного ARM64 aapt2 и инструментов сборки..."
+                    else "Installing native ARM64 aapt2 and build tools...",
+                    90f
+                )
+                ensureArm64BuildTools(context, targetVersionDir) { msg, pct ->
+                    onProgress(msg, 90f + (pct * 0.08f))
+                }
+            }
+
             val prop = File(targetVersionDir, "source.properties")
-            val success = prop.exists() || File(targetVersionDir, "lib").exists()
+            val ready = isBuildToolsDirectoryReady(targetVersionDir)
+            val success = ready || prop.exists() || File(targetVersionDir, "lib").exists()
             if (success) {
                 onProgress(
                     if (isRu) "✔ Android Build-Tools $version успешно установлены!"
@@ -1312,6 +1584,146 @@ object BuildToolInstaller {
             tempArchive.delete()
             false
         }
+    }
+
+    suspend fun ensureArm64BuildTools(
+        context: Context,
+        targetVersionDir: File,
+        onProgress: (statusMessage: String, percent: Float) -> Unit = { _, _ -> }
+    ): Boolean = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        targetVersionDir.mkdirs()
+
+        // 0. If targetVersionDir already has a valid native ARM64 aapt2, fast return
+        val currentAapt2 = File(targetVersionDir, "aapt2")
+        if (currentAapt2.exists() && isExecutableOnCurrentPlatform(currentAapt2)) {
+            val prop = File(targetVersionDir, "source.properties")
+            if (!prop.exists()) {
+                val vName = targetVersionDir.name
+                try { prop.writeText("Pkg.Desc = Android SDK Build-Tools $vName\nPkg.Revision = $vName\n") } catch (_: Throwable) {}
+            }
+            return@withContext true
+        }
+
+        // 1. Check if Termux, AndroidIDE, or internal tools already has working ARM64 aapt2
+        val localCandidates = listOf(
+            File(getToolsDir(context), "bin/aapt2"),
+            File(context.filesDir, "bin/aapt2"),
+            File(context.filesDir, "tools/bin/aapt2"),
+            File("/data/data/com.termux/files/usr/bin/aapt2"),
+            File("/data/user/0/com.termux/files/usr/bin/aapt2"),
+            File("/data/data/com.itsaky.androidide/files/usr/bin/aapt2"),
+            File("/data/user/0/com.itsaky.androidide/files/usr/bin/aapt2")
+        )
+        val validLocalAapt2 = localCandidates.firstOrNull { it.exists() && isExecutableOnCurrentPlatform(it) }
+        if (validLocalAapt2 != null) {
+            try {
+                val targetAapt2 = File(targetVersionDir, "aapt2")
+                validLocalAapt2.copyTo(targetAapt2, overwrite = true)
+                targetAapt2.setExecutable(true, false)
+                targetAapt2.setReadable(true, false)
+            } catch (_: Throwable) {}
+            validLocalAapt2.parentFile?.let { tBin ->
+                listOf("aapt", "aidl", "zipalign").forEach { tool ->
+                    val src = File(tBin, tool)
+                    if (src.exists() && isExecutableOnCurrentPlatform(src)) {
+                        try {
+                            val dst = File(targetVersionDir, tool)
+                            src.copyTo(dst, overwrite = true)
+                            dst.setExecutable(true, false)
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+            if (isExecutableOnCurrentPlatform(File(targetVersionDir, "aapt2"))) {
+                val prop = File(targetVersionDir, "source.properties")
+                if (!prop.exists()) {
+                    val vName = targetVersionDir.name
+                    try { prop.writeText("Pkg.Desc = Android SDK Build-Tools $vName\nPkg.Revision = $vName\n") } catch (_: Throwable) {}
+                }
+                return@withContext true
+            }
+        }
+
+        // 2. Download native ARM64 build-tools from community release (lzhiyong/android-sdk-tools)
+        val arm64ArchiveName = "android-sdk-tools-static-aarch64.zip"
+        val tempArchive = File(context.cacheDir, arm64ArchiveName)
+        val arm64Urls = listOf(
+            "https://github.com/lzhiyong/android-sdk-tools/releases/download/34.0.3/$arm64ArchiveName",
+            "https://gh-proxy.com/https://github.com/lzhiyong/android-sdk-tools/releases/download/34.0.3/$arm64ArchiveName",
+            "https://mirror.ghproxy.com/https://github.com/lzhiyong/android-sdk-tools/releases/download/34.0.3/$arm64ArchiveName",
+            "https://ghfast.top/https://github.com/lzhiyong/android-sdk-tools/releases/download/34.0.3/$arm64ArchiveName"
+        )
+
+        onProgress(
+            if (isRu) "Загрузка нативных ARM64 Build-Tools (~19 МБ)..."
+            else "Downloading native ARM64 Build-Tools (~19 MB)...",
+            20f
+        )
+
+        var downloaded = false
+        for (url in arm64Urls) {
+            try {
+                downloader.download(url, tempArchive) { current, total, percent, _ ->
+                    val scaled = 20f + (percent * 0.5f)
+                    onProgress(
+                        if (isRu) "Загрузка ARM64 Build-Tools: ${(current / (1024 * 1024))} МБ / ${(total / (1024 * 1024))} МБ"
+                        else "Downloading ARM64 Build-Tools: ${(current / (1024 * 1024))} MB / ${(total / (1024 * 1024))} MB",
+                        scaled
+                    )
+                }
+                if (tempArchive.exists() && tempArchive.length() > 5_000_000L) {
+                    downloaded = true
+                    break
+                }
+                tempArchive.delete()
+            } catch (_: Throwable) {
+                tempArchive.delete()
+            }
+        }
+
+        if (!downloaded) {
+            return@withContext false
+        }
+
+        onProgress(
+            if (isRu) "Распаковка нативных ARM64 Build-Tools..."
+            else "Extracting native ARM64 Build-Tools...",
+            75f
+        )
+
+        val extractDir = File(context.cacheDir, "arm64_bt_extract").also { it.mkdirs() }
+        val extracted = extractor.extract(tempArchive, extractDir) { _ -> }
+        tempArchive.delete()
+        if (!extracted) {
+            extractDir.deleteRecursively()
+            return@withContext false
+        }
+
+        val btDirInArchive = File(extractDir, "build-tools").takeIf { it.exists() } ?: extractDir
+        val toolsToCopy = listOf("aapt2", "aapt", "aidl", "zipalign", "dexdump", "split-select", "llvm-rs-cc")
+        for (tool in toolsToCopy) {
+            val src = File(btDirInArchive, tool).takeIf { it.exists() }
+                ?: btDirInArchive.walkTopDown().maxDepth(3).firstOrNull { it.name == tool && it.isFile }
+            if (src != null) {
+                val dst = File(targetVersionDir, tool)
+                try {
+                    src.copyTo(dst, overwrite = true)
+                    dst.setExecutable(true, false)
+                    dst.setReadable(true, false)
+                } catch (_: Throwable) {}
+            }
+        }
+        extractDir.deleteRecursively()
+
+        val prop = File(targetVersionDir, "source.properties")
+        if (!prop.exists()) {
+            val vName = targetVersionDir.name
+            try { prop.writeText("Pkg.Desc = Android SDK Build-Tools $vName\nPkg.Revision = $vName\n") } catch (_: Throwable) {}
+        }
+
+        val aapt2 = File(targetVersionDir, "aapt2")
+        aapt2.exists() && isExecutableOnCurrentPlatform(aapt2)
     }
 
     // ==================== Standalone OpenJDK Management ====================

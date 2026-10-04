@@ -254,15 +254,44 @@ data class NdkVersion(
   }
 }"""
 
+        fun isAllowedNdkDirectory(dir: File): Boolean {
+            if (!dir.exists() || !dir.isDirectory) return false
+            val norm = dir.path.replace("\\", "/").lowercase()
+            val name = dir.name.lowercase()
+            // Dangerous directory names that should never be treated as NDK directories
+            if (name in setOf("android-sdk", "tools", "platforms", "build-tools", "licenses", "system-images", "sources")) {
+                return false
+            }
+            // Dangerous subpaths: anything inside platforms, build-tools, etc.
+            if (norm.contains("/platforms/") || norm.endsWith("/platforms") ||
+                norm.contains("/build-tools/") || norm.endsWith("/build-tools") ||
+                norm.endsWith("/tools") || norm.endsWith("/android-sdk")) {
+                return false
+            }
+            return true
+        }
+
+        fun getNdkTargetDirs(ndkDir: File): List<File> {
+            if (!isAllowedNdkDirectory(ndkDir)) return emptyList()
+            val targets = mutableListOf<File>()
+            targets.add(ndkDir)
+            val aideChild = File(ndkDir, "android-ndk-aide")
+            if (aideChild.exists() && aideChild.isDirectory && isAllowedNdkDirectory(aideChild)) {
+                targets.add(aideChild)
+            }
+            // If ndkDir itself is named android-ndk-aide, include its immediate parent as NDK package root
+            if (ndkDir.name == "android-ndk-aide") {
+                ndkDir.parentFile?.let { p ->
+                    if (isAllowedNdkDirectory(p)) targets.add(p)
+                }
+            }
+            return targets.distinct().filter { isAllowedNdkDirectory(it) }
+        }
+
         fun ensureNdkSourceProperties(ndkDir: File, revision: String = "26.2.11394342") {
             if (!ndkDir.exists() || !ndkDir.isDirectory) return
 
-            val targetDirs = listOf(
-                ndkDir,
-                File(ndkDir, "android-ndk-aide"),
-                ndkDir.parentFile
-            ).filterNotNull().filter { it.exists() && it.isDirectory }
-
+            val targetDirs = getNdkTargetDirs(ndkDir)
             val content = "Pkg.Desc = Android NDK\nPkg.Revision = $revision\n"
 
             for (dir in targetDirs) {
@@ -285,11 +314,7 @@ data class NdkVersion(
 
             ensureNdkSourceProperties(ndkDir, revision)
 
-            val targetDirs = listOf(
-                ndkDir,
-                File(ndkDir, "android-ndk-aide"),
-                ndkDir.parentFile
-            ).filterNotNull().filter { it.exists() && it.isDirectory }
+            val targetDirs = getNdkTargetDirs(ndkDir)
 
             for (dir in targetDirs) {
                 try {
@@ -400,10 +425,7 @@ data class NdkVersion(
         fun ensureNdkStlLibraries(ndkDir: File, context: android.content.Context? = null) {
             if (!ndkDir.exists()) return
 
-            val targetDirs = mutableListOf<File>()
-            targetDirs.add(ndkDir)
-            targetDirs.add(File(ndkDir, "android-ndk-aide"))
-            ndkDir.parentFile?.let { targetDirs.add(it) }
+            val targetDirs = getNdkTargetDirs(ndkDir).toMutableList()
 
             // If context is available, also include sdk/ndk directories
             if (context != null) {
@@ -587,11 +609,7 @@ data class NdkVersion(
         }
 
         fun ensureNdkPlatforms(ndkDir: File) {
-            val targetDirs = listOf(
-                ndkDir,
-                File(ndkDir, "android-ndk-aide"),
-                ndkDir.parentFile
-            ).filterNotNull().filter { it.exists() && it.isDirectory }
+            val targetDirs = getNdkTargetDirs(ndkDir)
 
             val apiLevels = listOf(21, 24, 34)
             val abiToTriple = mapOf(
@@ -674,79 +692,89 @@ data class NdkVersion(
         }
 
         fun ensureHostArchitectureCompatibility(ndkDir: File) {
-            val targetDirs = listOf(
-                ndkDir,
-                File(ndkDir, "android-ndk-aide"),
-                ndkDir.parentFile
-            ).filterNotNull().filter { it.exists() && it.isDirectory }
+            val targetDirs = getNdkTargetDirs(ndkDir)
 
             for (dir in targetDirs) {
-                // 1. prebuilt/linux-x86_64
+                // 1. prebuilt/linux-x86_64, linux-arm64, linux-aarch64
                 val prebuiltDir = File(dir, "prebuilt")
                 if (prebuiltDir.exists()) {
                     val x86 = File(prebuiltDir, "linux-x86_64")
                     val arm64 = File(prebuiltDir, "linux-arm64")
                     val aarch64 = File(prebuiltDir, "linux-aarch64")
-                    val src = if (arm64.exists()) arm64 else if (aarch64.exists()) aarch64 else null
-                    if (!x86.exists()) {
-                        var linked = false
-                        if (src != null) {
-                            try {
-                                android.system.Os.symlink(src.name, x86.absolutePath)
-                                linked = true
-                            } catch (_: Throwable) {}
-                        }
-                        if (!linked) {
-                            try {
-                                x86.mkdirs()
-                                if (src != null && src.isDirectory) {
-                                    src.listFiles()?.forEach { file ->
-                                        val linkFile = File(x86, file.name)
-                                        if (!linkFile.exists()) {
-                                            try {
-                                                android.system.Os.symlink(file.absolutePath, linkFile.absolutePath)
-                                            } catch (_: Throwable) {
-                                                try { file.copyRecursively(linkFile, overwrite = true) } catch (_: Throwable) {}
+
+                    val existingBase = when {
+                        arm64.exists() && arm64.isDirectory -> arm64
+                        aarch64.exists() && aarch64.isDirectory -> aarch64
+                        x86.exists() && x86.isDirectory -> x86
+                        else -> null
+                    }
+
+                    if (existingBase != null) {
+                        for (targetSub in listOf(x86, arm64, aarch64)) {
+                            if (!targetSub.exists()) {
+                                var linked = false
+                                try {
+                                    android.system.Os.symlink(existingBase.name, targetSub.absolutePath)
+                                    linked = true
+                                } catch (_: Throwable) {}
+                                if (!linked) {
+                                    try {
+                                        targetSub.mkdirs()
+                                        existingBase.listFiles()?.forEach { file ->
+                                            val linkFile = File(targetSub, file.name)
+                                            if (!linkFile.exists()) {
+                                                try {
+                                                    android.system.Os.symlink(file.absolutePath, linkFile.absolutePath)
+                                                } catch (_: Throwable) {
+                                                    try { file.copyRecursively(linkFile, overwrite = true) } catch (_: Throwable) {}
+                                                }
                                             }
                                         }
-                                    }
+                                    } catch (_: Throwable) {}
                                 }
-                            } catch (_: Throwable) {}
+                            }
                         }
                     }
                 }
 
-                // 2. toolchains/llvm/prebuilt/linux-x86_64
+                // 2. toolchains/llvm/prebuilt/linux-x86_64, linux-arm64, linux-aarch64
                 val llvmPrebuiltDir = File(dir, "toolchains/llvm/prebuilt")
                 if (llvmPrebuiltDir.exists()) {
                     val x86 = File(llvmPrebuiltDir, "linux-x86_64")
                     val arm64 = File(llvmPrebuiltDir, "linux-arm64")
                     val aarch64 = File(llvmPrebuiltDir, "linux-aarch64")
-                    val src = if (arm64.exists()) arm64 else if (aarch64.exists()) aarch64 else null
-                    if (!x86.exists()) {
-                        var linked = false
-                        if (src != null) {
-                            try {
-                                android.system.Os.symlink(src.name, x86.absolutePath)
-                                linked = true
-                            } catch (_: Throwable) {}
-                        }
-                        if (!linked) {
-                            try {
-                                x86.mkdirs()
-                                if (src != null && src.isDirectory) {
-                                    src.listFiles()?.forEach { file ->
-                                        val linkFile = File(x86, file.name)
-                                        if (!linkFile.exists()) {
-                                            try {
-                                                android.system.Os.symlink(file.absolutePath, linkFile.absolutePath)
-                                            } catch (_: Throwable) {
-                                                try { file.copyRecursively(linkFile, overwrite = true) } catch (_: Throwable) {}
+
+                    val existingBase = when {
+                        arm64.exists() && arm64.isDirectory -> arm64
+                        aarch64.exists() && aarch64.isDirectory -> aarch64
+                        x86.exists() && x86.isDirectory -> x86
+                        else -> null
+                    }
+
+                    if (existingBase != null) {
+                        for (targetSub in listOf(x86, arm64, aarch64)) {
+                            if (!targetSub.exists()) {
+                                var linked = false
+                                try {
+                                    android.system.Os.symlink(existingBase.name, targetSub.absolutePath)
+                                    linked = true
+                                } catch (_: Throwable) {}
+                                if (!linked) {
+                                    try {
+                                        targetSub.mkdirs()
+                                        existingBase.listFiles()?.forEach { file ->
+                                            val linkFile = File(targetSub, file.name)
+                                            if (!linkFile.exists()) {
+                                                try {
+                                                    android.system.Os.symlink(file.absolutePath, linkFile.absolutePath)
+                                                } catch (_: Throwable) {
+                                                    try { file.copyRecursively(linkFile, overwrite = true) } catch (_: Throwable) {}
+                                                }
                                             }
                                         }
-                                    }
+                                    } catch (_: Throwable) {}
                                 }
-                            } catch (_: Throwable) {}
+                            }
                         }
                     }
                 }
@@ -774,7 +802,30 @@ data class NdkVersion(
                 process.waitFor()
             } catch (_: Throwable) {}
 
-            // 2. Explicitly ensure busybox and all prebuilt tools exist and are executable
+            // 2. Discover native ARM64 make source if any
+            val localMakeCandidates = listOf(
+                File(ndkDir, "prebuilt/linux-arm64/bin/make"),
+                File(ndkDir, "prebuilt/linux-aarch64/bin/make"),
+                File(ndkDir, "prebuilt/linux-x86_64/bin/make"),
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-arm64/bin/make"),
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-aarch64/bin/make"),
+                File(ndkDir, "android-ndk-aide/prebuilt/linux-x86_64/bin/make"),
+                File(ndkDir, "bin/make"),
+                File(ndkDir, "android-ndk-aide/bin/make"),
+                File("/data/data/com.termux/files/usr/bin/make"),
+                File("/data/user/0/com.termux/files/usr/bin/make"),
+                File("/data/data/com.itsaky.androidide/files/usr/bin/make"),
+                File("/data/user/0/com.itsaky.androidide/files/usr/bin/make")
+            ) + (if (context != null) listOf(
+                File(context.filesDir, "tools/bin/make"),
+                File(context.filesDir, "bin/make"),
+                File(context.filesDir, "tools/make/bin/make"),
+                File(context.filesDir, "tools/make")
+            ) else emptyList())
+
+            val nativeMakeSource = localMakeCandidates.firstOrNull { it.exists() && com.prismde.feature_build.engine.BuildToolInstaller.isExecutableOnCurrentPlatform(it) }
+
+            // 3. Explicitly ensure busybox, make, and all prebuilt tools exist and are executable
             val prebuiltBinDirs = listOf(
                 File(ndkDir, "prebuilt/linux-arm64/bin"),
                 File(ndkDir, "prebuilt/linux-aarch64/bin"),
@@ -790,13 +841,16 @@ data class NdkVersion(
                 val busybox = File(prebuiltBin, "busybox")
                 if (busybox.exists()) {
                     applyChmod755(busybox)
+                    // Note: 'make' is GNU Make, NOT a busybox applet. Do NOT include 'make' here.
                     val essentialTools = listOf(
-                        "mkdir", "make", "sh", "rm", "cp", "mv", "sed", "awk", "cat",
-                        "echo", "uname", "tar", "grep", "find", "chmod", "basename", "dirname"
+                        "mkdir", "sh", "rm", "cp", "mv", "sed", "awk", "cat",
+                        "echo", "uname", "tar", "grep", "find", "chmod", "basename", "dirname",
+                        "cmp", "cut", "head", "tail", "sort", "uniq", "tr"
                     )
                     for (tool in essentialTools) {
                         val toolFile = File(prebuiltBin, tool)
-                        val needsFix = !toolFile.exists() || (toolFile.isFile && toolFile.length() == 0L)
+                        val needsFix = !toolFile.exists() || (toolFile.isFile && toolFile.length() == 0L) ||
+                                (toolFile.isFile && !com.prismde.feature_build.engine.BuildToolInstaller.isExecutableOnCurrentPlatform(toolFile))
                         if (needsFix) {
                             try { toolFile.delete() } catch (_: Throwable) {}
                             try { android.system.Os.remove(toolFile.absolutePath) } catch (_: Throwable) {}
@@ -811,6 +865,18 @@ data class NdkVersion(
                         }
                         applyChmod755(toolFile)
                     }
+                }
+
+                // If make is missing or incompatible and we have a native make source, install it
+                val makeFile = File(prebuiltBin, "make")
+                val makeIsNative = makeFile.exists() && com.prismde.feature_build.engine.BuildToolInstaller.isExecutableOnCurrentPlatform(makeFile)
+                if (!makeIsNative && nativeMakeSource != null && nativeMakeSource.absolutePath != makeFile.absolutePath) {
+                    try {
+                        makeFile.delete()
+                        try { android.system.Os.remove(makeFile.absolutePath) } catch (_: Throwable) {}
+                        nativeMakeSource.copyTo(makeFile, overwrite = true)
+                        applyChmod755(makeFile)
+                    } catch (_: Throwable) {}
                 }
 
                 prebuiltBin.listFiles()?.forEach { f ->
@@ -904,43 +970,46 @@ data class NdkVersion(
                 }
             }
 
-            val scriptTargets = listOf(
-                File(ndkDir, "ndk-build"),
-                File(ndkDir, "ndk-build-android"),
-                File(ndkDir, "build/ndk-build"),
-                File(ndkDir, "android-ndk-aide/ndk-build"),
-                File(ndkDir, "android-ndk-aide/ndk-build-android"),
-                File(ndkDir, "android-ndk-aide/build/ndk-build")
-            )
+            // Recursively normalize shebangs across all scripts in NDK
+            fun patchScriptsIn(dir: File) {
+                if (!dir.exists() || !dir.isDirectory) return
+                try {
+                    dir.walkTopDown().maxDepth(8).forEach { file ->
+                        if (file.isFile && (file.extension in setOf("sh", "bash", "") || file.name.startsWith("ndk-"))) {
+                            applyChmod755(file)
+                            try {
+                                val header = ByteArray(128)
+                                val read = file.inputStream().use { it.read(header) }
+                                if (read > 2 && header[0] == '#'.code.toByte() && header[1] == '!'.code.toByte()) {
+                                    val fullText = file.readText()
+                                    val lines = fullText.split("\n", limit = 2)
+                                    val firstLine = lines[0].trimEnd('\r')
+                                    if (firstLine.contains("/bin/sh") || firstLine.contains("/bin/bash") ||
+                                        firstLine.contains("/usr/bin/env sh") || firstLine.contains("/usr/bin/env bash") ||
+                                        firstLine.contains("/usr/bin/sh") || firstLine.contains("/usr/bin/bash")) {
+                                        val patchedFirstLine = firstLine.replace(
+                                            Regex("""^#!\s*(?:/usr/bin/env\s+(?:sh|bash)|/(?:usr/)?bin/(?:sh|bash))"""),
+                                            "#!/system/bin/sh"
+                                        )
+                                        val remaining = if (lines.size > 1) lines[1].replace("\r\n", "\n") else ""
+                                        val newContent = if (remaining.isNotEmpty()) "$patchedFirstLine\n$remaining" else "$patchedFirstLine\n"
+                                        file.writeText(newContent)
+                                        applyChmod755(file)
+                                    }
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
 
-            for (script in scriptTargets) {
-                if (script.exists()) {
-                    applyChmod755(script)
-                    try {
-                        val txt = script.readText()
-                        var modified = false
-                        var newTxt = txt
-                        if (txt.contains("\r\n")) {
-                            newTxt = newTxt.replace("\r\n", "\n")
-                            modified = true
-                        }
-                        if (newTxt.startsWith("#!/bin/sh") || newTxt.startsWith("#!/usr/bin/sh") || newTxt.startsWith("#!/bin/bash")) {
-                            newTxt = newTxt.replaceFirst(Regex("^#![^\\n]+"), "#!/system/bin/sh")
-                            modified = true
-                        }
-                        if (modified) {
-                            script.writeText(newTxt)
-                            applyChmod755(script)
-                        }
-                    } catch (_: Throwable) {}
-                }
+            for (target in getNdkTargetDirs(ndkDir)) {
+                patchScriptsIn(target)
             }
 
             // 5. Ensure tmp directory exists and is writable
-            listOf(
-                File(ndkDir, "tmp"),
-                File(ndkDir, "android-ndk-aide/tmp")
-            ).forEach { tmpDir ->
+            for (target in getNdkTargetDirs(ndkDir)) {
+                val tmpDir = File(target, "tmp")
                 try {
                     tmpDir.mkdirs()
                     tmpDir.setWritable(true, false)
