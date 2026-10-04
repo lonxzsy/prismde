@@ -1003,12 +1003,20 @@ data class NdkVersion(
                 } catch (_: Throwable) {}
             }
 
-            for (target in getNdkTargetDirs(ndkDir)) {
-                patchScriptsIn(target)
+            val allTargets = getNdkTargetDirs(ndkDir).toMutableList()
+            if (context != null) {
+                val sdkNdkDir = File(context.filesDir, "tools/android-sdk/ndk")
+                if (sdkNdkDir.exists() && sdkNdkDir.isDirectory) {
+                    sdkNdkDir.listFiles()?.filter { it.isDirectory }?.let { allTargets.addAll(it) }
+                }
+                val appNdkDir = File(context.filesDir, "ndk")
+                if (appNdkDir.exists() && appNdkDir.isDirectory) {
+                    appNdkDir.listFiles()?.filter { it.isDirectory }?.let { allTargets.addAll(it) }
+                }
             }
 
-            // 5. Ensure tmp directory exists and is writable
-            for (target in getNdkTargetDirs(ndkDir)) {
+            for (target in allTargets.distinct().filter { isAllowedNdkDirectory(it) }) {
+                patchScriptsIn(target)
                 val tmpDir = File(target, "tmp")
                 try {
                     tmpDir.mkdirs()

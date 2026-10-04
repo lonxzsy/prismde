@@ -695,8 +695,8 @@ class BuildProcessRunner {
     ): File? {
         val isRu = java.util.Locale.getDefault().language == "ru"
 
-        val effectiveNdk = ndk ?: DefaultNdkCatalog.AVAILABLE_VERSIONS.firstOrNull {
-            it.getEffectiveNdkDir()?.exists() == true
+        var effectiveNdk = ndk ?: DefaultNdkCatalog.AVAILABLE_VERSIONS.firstOrNull {
+            it.getEffectiveNdkDir()?.let { dir -> BuildToolInstaller.isUsableArm64Ndk(dir) } == true
         }
 
         // Ensure JDK runtime dependencies (libz.so.1, libc++_shared.so, etc.) and auto-install if missing
@@ -733,10 +733,51 @@ class BuildProcessRunner {
             val sdkDir = BuildToolInstaller.ensureAndroidSdk(context)
             BuildToolInstaller.cleanExtraneousSdkFiles(sdkDir, BuildToolInstaller.getToolsDir(context))
 
-            // Ensure NDK has source.properties and permissions!
-            effectiveNdk?.let {
-                it.ensureSourceProperties(context = context)
-                it.ensurePermissions(context)
+            // Check if project requires Android NDK (C/C++ sources or externalNativeBuild)
+            val requiresNdk = BuildToolInstaller.projectRequiresNdk(project.rootDir)
+            if (requiresNdk) {
+                // Purge any x86_64 NDK downloaded by AGP by mistake
+                BuildToolInstaller.purgeBrokenX86Ndk(sdkDir, BuildToolInstaller.getToolsDir(context))
+
+                val hasArm64Ndk = effectiveNdk?.getEffectiveNdkDir()?.let { BuildToolInstaller.isUsableArm64Ndk(it) } == true
+                if (!hasArm64Ndk) {
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "ℹ В проекте используется Android NDK (C/C++), но NDK для ARM64 не найден. Автоматическая загрузка (~105 МБ)..."
+                        else "ℹ Project requires Android NDK (C/C++), but ARM64 NDK is not found. Automatically downloading (~105 MB)..."
+                    ))
+                    var lastNdkPct = -1
+                    val ndkInstalled = BuildToolInstaller.installNdk(context, "r26c") { status, pct ->
+                        val step = (pct / 20f).toInt() * 20
+                        if (step != lastNdkPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
+                            lastNdkPct = step
+                            _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                        }
+                    }
+                    if (ndkInstalled) {
+                        effectiveNdk = DefaultNdkCatalog.AVAILABLE_VERSIONS.firstOrNull {
+                            it.getEffectiveNdkDir()?.let { dir -> BuildToolInstaller.isUsableArm64Ndk(dir) } == true
+                        } ?: DefaultNdkCatalog.AVAILABLE_VERSIONS.first()
+                        _events.emit(BuildOutputEvent.LogLine(
+                            if (isRu) "✔ Android NDK r26c (ARM64) успешно установлен!"
+                            else "✔ Android NDK r26c (ARM64) installed successfully!"
+                        ))
+                    } else {
+                        _events.emit(BuildOutputEvent.LogLine(
+                            if (isRu) "⚠ Автоматическая загрузка NDK не удалась. Сборка продолжится с доступными инструментами."
+                            else "⚠ Automatic NDK download failed. Build will proceed with available tools.",
+                            isError = true
+                        ))
+                    }
+                }
+            }
+
+            // Ensure NDK has source.properties, permissions, and symlink in SDK!
+            effectiveNdk?.let { n ->
+                n.ensureSourceProperties(context = context)
+                n.ensurePermissions(context)
+                n.getEffectiveNdkDir()?.let { nDir ->
+                    BuildToolInstaller.ensureSdkNdkLink(sdkDir, nDir, n.getPkgRevision(), context)
+                }
             }
 
             // Ensure local.properties in project root has sdk.dir and ndk.dir
@@ -960,6 +1001,16 @@ class BuildProcessRunner {
                 BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
                 BuildToolInstaller.normalizeAllSdkBuildTools(File(sdkDir, "build-tools"))
 
+                // Sanitize and normalize NDK directories in SDK
+                BuildToolInstaller.purgeBrokenX86Ndk(sdkDir, BuildToolInstaller.getToolsDir(context))
+                effectiveNdk?.let { n ->
+                    n.ensureSourceProperties(context = context)
+                    n.ensurePermissions(context)
+                    n.getEffectiveNdkDir()?.let { nDir ->
+                        BuildToolInstaller.ensureSdkNdkLink(sdkDir, nDir, n.getPkgRevision(), context)
+                    }
+                }
+
                 val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
                 val canonicalReady = BuildToolInstaller.isPlatformReady(sdkDir, requiredApi)
                 _events.emit(BuildOutputEvent.LogLine(
@@ -970,7 +1021,13 @@ class BuildProcessRunner {
 
                 // Only retry if AGP downloaded SDK components during this run,
                 // or if the failure was specifically missing SDK target and the platform is now canonical and ready.
-                val shouldRetry = !success && canonicalReady && (
+                // Do NOT retry on compilation, CXX/NDK configuration, or code errors!
+                val hasCodeOrNdkError = outputLines.any { line ->
+                    line.contains("configureNdkBuild", ignoreCase = true) ||
+                    line.contains("Compilation error", ignoreCase = true) ||
+                    (line.contains("CXX", ignoreCase = true) && line.contains("error", ignoreCase = true))
+                }
+                val shouldRetry = !success && canonicalReady && !hasCodeOrNdkError && (
                     execResult.agpInstalledSdkComponent ||
                     outputLines.any { line ->
                         line.contains("Failed to find target with hash string", ignoreCase = true) ||
@@ -1159,7 +1216,18 @@ class BuildProcessRunner {
             }
 
             // Add NDK toolchain bin directories to PATH so ndk-build, make, clang are directly accessible
-            ndk?.getEffectiveNdkDir()?.let { ndkDir ->
+            val resolvedNdkDir = ndk?.getEffectiveNdkDir() ?: run {
+                val candidateDirs = mutableListOf<File>()
+                if (context != null) {
+                    val appNdk = File(context.filesDir, "ndk")
+                    if (appNdk.exists()) appNdk.listFiles()?.filter { it.isDirectory }?.let { candidateDirs.addAll(it) }
+                    val sdkNdk = File(context.filesDir, "tools/android-sdk/ndk")
+                    if (sdkNdk.exists()) sdkNdk.listFiles()?.filter { it.isDirectory }?.let { candidateDirs.addAll(it) }
+                }
+                candidateDirs.firstOrNull { it.exists() && BuildToolInstaller.isUsableArm64Ndk(it) }
+            }
+
+            resolvedNdkDir?.let { ndkDir ->
                 if (ndkDir.exists()) {
                     val ndkBinDirs = listOf(
                         File(ndkDir, "prebuilt/linux-arm64/bin"),
@@ -1167,6 +1235,7 @@ class BuildProcessRunner {
                         File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
                         File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
                         File(ndkDir, "bin"),
+                        File(ndkDir, "build"),
                         ndkDir
                     )
                     for (b in ndkBinDirs) {
@@ -1225,7 +1294,7 @@ class BuildProcessRunner {
             }
 
             // Provide active NDK location to Gradle / CMake
-            ndk?.getEffectiveNdkDir()?.let { ndkDir ->
+            resolvedNdkDir?.let { ndkDir ->
                 if (ndkDir.exists()) {
                     env["ANDROID_NDK_HOME"] = ndkDir.absolutePath
                     env["ANDROID_NDK_ROOT"] = ndkDir.absolutePath

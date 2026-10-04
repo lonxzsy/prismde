@@ -3,6 +3,7 @@ package com.prismde.feature_build.engine
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import com.prismde.core.model.DefaultNdkCatalog
 import com.prismde.core.model.NdkVersion
 import com.prismde.feature_ndk.engine.NdkDownloader
 import com.prismde.feature_ndk.engine.NdkExtractor
@@ -611,23 +612,8 @@ object BuildToolInstaller {
             val sdkNdkRevisions = listOf(effectiveRevision, "25.1.8937393")
             for (rev in sdkNdkRevisions) {
                 try {
+                    ensureSdkNdkLink(sdkDir, ndkDir, rev, context)
                     val sdkNdkDir = File(sdkDir, "ndk/$rev")
-                    if (sdkNdkDir.exists()) {
-                        try {
-                            val canonSdk = sdkNdkDir.canonicalFile
-                            val canonNdk = ndkDir.canonicalFile
-                            if (canonSdk.absolutePath != canonNdk.absolutePath) {
-                                try { sdkNdkDir.delete() } catch (_: Throwable) {}
-                                try { android.system.Os.remove(sdkNdkDir.absolutePath) } catch (_: Throwable) {}
-                                try { android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath) } catch (_: Throwable) {}
-                            }
-                        } catch (_: Throwable) {}
-                    } else {
-                        sdkNdkDir.parentFile?.mkdirs()
-                        try {
-                            android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath)
-                        } catch (_: Throwable) {}
-                    }
                     if (sdkNdkDir.exists()) {
                         NdkVersion.ensureNdkMetadata(sdkNdkDir, rev, context)
                         NdkVersion.ensureNdkPermissions(sdkNdkDir, context)
@@ -802,6 +788,151 @@ object BuildToolInstaller {
             }
         }
         return ANDROID_PLATFORM_API_DEFAULT
+    }
+
+    /**
+     * Determines whether the project requires the Android NDK (C/C++ sources or externalNativeBuild).
+     */
+    fun projectRequiresNdk(projectRootDir: File): Boolean {
+        val jniDirs = listOf(
+            File(projectRootDir, "app/src/main/jni"),
+            File(projectRootDir, "src/main/jni"),
+            File(projectRootDir, "jni"),
+            File(projectRootDir, "app/src/main/cpp"),
+            File(projectRootDir, "src/main/cpp"),
+            File(projectRootDir, "cpp")
+        )
+        if (jniDirs.any { it.exists() && it.isDirectory && (it.listFiles()?.isNotEmpty() == true) }) {
+            return true
+        }
+
+        val buildGradleFiles = listOf(
+            File(projectRootDir, "app/build.gradle"),
+            File(projectRootDir, "app/build.gradle.kts"),
+            File(projectRootDir, "build.gradle"),
+            File(projectRootDir, "build.gradle.kts")
+        )
+        for (bg in buildGradleFiles) {
+            if (bg.exists() && bg.isFile) {
+                try {
+                    val text = bg.readText()
+                    if (text.contains("externalNativeBuild") ||
+                        text.contains("ndkBuild") ||
+                        text.contains("ndkVersion") ||
+                        text.contains("cmake {") ||
+                        text.contains("cmake{") ||
+                        text.contains("ndk {") ||
+                        text.contains("ndk{")
+                    ) {
+                        return true
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+        return false
+    }
+
+    /**
+     * Checks if an NDK directory contains x86_64 host binaries (such as from Google SDK auto-download)
+     * and lacks a native ARM64 toolchain.
+     */
+    fun isX86Ndk(dir: File): Boolean {
+        if (!dir.exists() || !dir.isDirectory) return false
+        val x86Indicators = listOf(
+            File(dir, "prebuilt/linux-x86_64/bin/make"),
+            File(dir, "toolchains/llvm/prebuilt/linux-x86_64/bin/clang"),
+            File(dir, "toolchains/llvm/prebuilt/linux-x86_64")
+        )
+        val hasX86 = x86Indicators.any { it.exists() }
+        if (!hasX86) return false
+
+        // Check if there is an ARM64 binary in the toolchain
+        val arm64Candidates = listOf(
+            File(dir, "toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
+            File(dir, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang"),
+            File(dir, "bin/clang"),
+            File(dir, "android-ndk-aide/bin/clang")
+        )
+        val hasArm64 = arm64Candidates.any { it.exists() && readElfArchitecture(it) == ElfArchitecture.AARCH64 }
+        return !hasArm64
+    }
+
+    /**
+     * Checks if an NDK directory is usable on this ARM64 Android device.
+     */
+    fun isUsableArm64Ndk(dir: File): Boolean {
+        if (!dir.exists() || !dir.isDirectory) return false
+        val hasNdkBuild = File(dir, "ndk-build").exists() ||
+                File(dir, "build/ndk-build").exists() ||
+                File(dir, "ndk-build-android").exists() ||
+                File(dir, "android-ndk-aide/ndk-build").exists()
+        if (!hasNdkBuild) return false
+        if (isX86Ndk(dir)) return false
+        return true
+    }
+
+    /**
+     * Purges invalid x86_64 NDK directories that were auto-downloaded by AGP into the SDK.
+     */
+    fun purgeBrokenX86Ndk(sdkDir: File, toolsDir: File? = null): Boolean {
+        var purgedAny = false
+        val ndkDirs = mutableListOf<File>()
+        val sdkNdk = File(sdkDir, "ndk")
+        if (sdkNdk.exists() && sdkNdk.isDirectory) {
+            sdkNdk.listFiles()?.filter { it.isDirectory }?.let { ndkDirs.addAll(it) }
+        }
+        if (toolsDir != null) {
+            val toolsNdk = File(toolsDir, "android-sdk/ndk")
+            if (toolsNdk.exists() && toolsNdk.isDirectory) {
+                toolsNdk.listFiles()?.filter { it.isDirectory }?.let { ndkDirs.addAll(it) }
+            }
+        }
+
+        for (dir in ndkDirs.distinct()) {
+            if (isX86Ndk(dir)) {
+                try {
+                    dir.deleteRecursively()
+                    purgedAny = true
+                } catch (_: Throwable) {}
+            }
+        }
+        return purgedAny
+    }
+
+    /**
+     * Safely links or mirrors an ARM64 NDK into the SDK's ndk/<revision> path so AGP finds it.
+     */
+    fun ensureSdkNdkLink(
+        sdkDir: File,
+        ndkDir: File,
+        revision: String = "26.2.11394342",
+        context: Context? = null
+    ) {
+        val sdkNdkDir = File(sdkDir, "ndk/$revision")
+        if (sdkNdkDir.exists()) {
+            try {
+                if (sdkNdkDir.canonicalFile.absolutePath == ndkDir.canonicalFile.absolutePath) {
+                    NdkVersion.ensureNdkMetadata(sdkNdkDir, revision, context)
+                    NdkVersion.ensureNdkPermissions(sdkNdkDir, context)
+                    return
+                }
+            } catch (_: Throwable) {}
+            try { sdkNdkDir.deleteRecursively() } catch (_: Throwable) {}
+        }
+        sdkNdkDir.parentFile?.mkdirs()
+        var linked = false
+        try {
+            android.system.Os.symlink(ndkDir.absolutePath, sdkNdkDir.absolutePath)
+            linked = true
+        } catch (_: Throwable) {}
+        if (!linked) {
+            try {
+                ndkDir.copyRecursively(sdkNdkDir, overwrite = true)
+            } catch (_: Throwable) {}
+        }
+        val target = if (sdkNdkDir.exists()) sdkNdkDir else ndkDir
+        NdkVersion.ensureNdkMetadata(target, revision, context)
+        NdkVersion.ensureNdkPermissions(target, context)
     }
 
     /** Returns an explicitly requested build-tools version, if the project declares one. */
@@ -1724,6 +1855,119 @@ object BuildToolInstaller {
 
         val aapt2 = File(targetVersionDir, "aapt2")
         aapt2.exists() && isExecutableOnCurrentPlatform(aapt2)
+    }
+
+    /**
+     * Downloads and installs the native ARM64 Android NDK into internal storage.
+     */
+    suspend fun installNdk(
+        context: Context,
+        ndkTag: String = "r26c",
+        onProgress: (statusMessage: String, percent: Float) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        val isRu = java.util.Locale.getDefault().language == "ru"
+        val ndkStorageDir = File(context.filesDir, "ndk").also { it.mkdirs() }
+        val targetDir = File(ndkStorageDir, ndkTag)
+        if (isUsableArm64Ndk(targetDir)) {
+            onProgress(
+                if (isRu) "✔ Android NDK $ndkTag уже установлен."
+                else "✔ Android NDK $ndkTag is already installed.",
+                100f
+            )
+            return@withContext true
+        }
+
+        val tempArchive = File(context.cacheDir, "ndk_download_temp.tar.gz")
+        if (tempArchive.exists()) tempArchive.delete()
+
+        val downloadUrls = listOf(
+            DefaultNdkCatalog.R26_LIGHT_URL,
+            DefaultNdkCatalog.R26_ASSET_URL
+        )
+
+        var downloadSuccess = false
+        var lastError: String? = null
+
+        for (url in downloadUrls) {
+            try {
+                onProgress(
+                    if (isRu) "Подключение к источнику Android NDK (ARM64)..."
+                    else "Connecting to Android NDK (ARM64) source...",
+                    5f
+                )
+                downloader.download(url, tempArchive) { current, total, percent, speed ->
+                    val scaled = 5f + (percent * 0.70f)
+                    val curMb = current / (1024 * 1024)
+                    val totalMb = if (total > 0) total / (1024 * 1024) else 105
+                    val speedMb = String.format(java.util.Locale.US, "%.1f", speed.toFloat() / (1024 * 1024))
+                    onProgress(
+                        if (isRu) "Загрузка Android NDK: $curMb / $totalMb МБ (${percent.toInt()}%) — $speedMb МБ/с"
+                        else "Downloading Android NDK: $curMb / $totalMb MB (${percent.toInt()}%) — $speedMb MB/s",
+                        scaled
+                    )
+                }
+                if (tempArchive.exists() && tempArchive.length() > 20 * 1024 * 1024L) {
+                    downloadSuccess = true
+                    break
+                } else {
+                    tempArchive.delete()
+                }
+            } catch (e: Exception) {
+                lastError = e.message
+                tempArchive.delete()
+            }
+        }
+
+        if (!downloadSuccess) {
+            onProgress(
+                if (isRu) "✖ Ошибка загрузки NDK: ${lastError ?: "сетевая ошибка"}"
+                else "✖ Failed to download NDK: ${lastError ?: "network error"}",
+                0f
+            )
+            return@withContext false
+        }
+
+        onProgress(
+            if (isRu) "Распаковка Android NDK (ARM64)..."
+            else "Extracting Android NDK (ARM64)...",
+            80f
+        )
+        targetDir.mkdirs()
+        val extractSuccess = extractor.extract(tempArchive, targetDir) { msg ->
+            onProgress(msg, 90f)
+        }
+        tempArchive.delete()
+
+        if (!extractSuccess) {
+            targetDir.deleteRecursively()
+            onProgress(
+                if (isRu) "✖ Ошибка распаковки архива NDK"
+                else "✖ Failed to unpack NDK archive",
+                0f
+            )
+            return@withContext false
+        }
+
+        onProgress(
+            if (isRu) "Настройка прав доступа и окружения NDK..."
+            else "Configuring NDK permissions and environment...",
+            95f
+        )
+        NdkVersion.ensureNdkMetadata(targetDir, "26.2.11394342", context)
+        NdkVersion.ensureNdkPermissions(targetDir, context)
+        NdkVersion.ensureNdkStlLibraries(targetDir, context)
+
+        val sdkDir = findExistingSdk(context)
+        if (sdkDir != null && sdkDir.exists()) {
+            ensureSdkNdkLink(sdkDir, targetDir, "26.2.11394342", context)
+        }
+
+        onProgress(
+            if (isRu) "✔ Android NDK успешно установлен и настроен!"
+            else "✔ Android NDK installed and configured successfully!",
+            100f
+        )
+        true
     }
 
     // ==================== Standalone OpenJDK Management ====================

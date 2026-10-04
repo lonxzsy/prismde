@@ -574,5 +574,70 @@ class NdkSourcePropertiesAndGradleTest {
         assertFalse("Corrupted aapt2 must be rejected", BuildToolInstaller.isExecutableOnCurrentPlatform(corruptAapt2))
         assertFalse("Corrupted make must be rejected", BuildToolInstaller.isExecutableOnCurrentPlatform(corruptMake))
     }
+
+    @Test
+    fun testProjectRequiresNdkDetection() {
+        val root = tempFolder.newFolder("ndk_req_test")
+        assertFalse("Empty project should not require NDK", BuildToolInstaller.projectRequiresNdk(root))
+
+        // Case 1: has JNI directory with files
+        val jniDir = File(root, "app/src/main/jni").also { it.mkdirs() }
+        File(jniDir, "Android.mk").writeText("LOCAL_MODULE := test")
+        assertTrue("Project with app/src/main/jni should require NDK", BuildToolInstaller.projectRequiresNdk(root))
+
+        // Clean JNI directory
+        jniDir.deleteRecursively()
+        assertFalse("Project without JNI or Gradle config should not require NDK", BuildToolInstaller.projectRequiresNdk(root))
+
+        // Case 2: build.gradle specifies externalNativeBuild
+        val appDir = File(root, "app").also { it.mkdirs() }
+        val bg = File(appDir, "build.gradle").also {
+            it.writeText("android { externalNativeBuild { ndkBuild { path 'Android.mk' } } }")
+        }
+        assertTrue("Project with externalNativeBuild should require NDK", BuildToolInstaller.projectRequiresNdk(root))
+    }
+
+    @Test
+    fun testIsX86NdkAndPurgeBrokenX86Ndk() {
+        val root = tempFolder.newFolder("purge_test")
+        val sdkDir = File(root, "sdk").also { it.mkdirs() }
+        val brokenNdkDir = File(sdkDir, "ndk/26.2.11394342").also { it.mkdirs() }
+        val x86Make = File(brokenNdkDir, "prebuilt/linux-x86_64/bin/make").also {
+            it.parentFile?.mkdirs()
+            val b = ByteArray(24)
+            b[0] = 0x7F.toByte()
+            b[1] = 'E'.code.toByte()
+            b[2] = 'L'.code.toByte()
+            b[3] = 'F'.code.toByte()
+            b[4] = 2
+            b[5] = 1
+            b[18] = 0x3E.toByte() // x86_64 ELF
+            it.writeBytes(b)
+        }
+        File(brokenNdkDir, "ndk-build").writeText("#!/bin/sh\n")
+
+        assertTrue("Should detect Google x86_64 NDK", BuildToolInstaller.isX86Ndk(brokenNdkDir))
+        assertFalse("x86_64 NDK must not be usable on ARM64", BuildToolInstaller.isUsableArm64Ndk(brokenNdkDir))
+
+        val purged = BuildToolInstaller.purgeBrokenX86Ndk(sdkDir)
+        assertTrue("Broken x86_64 NDK must be purged", purged)
+        assertFalse("Broken NDK directory must no longer exist", brokenNdkDir.exists())
+    }
+
+    @Test
+    fun testEnsureSdkNdkLinkProvisionsValidNdk() {
+        val root = tempFolder.newFolder("link_test")
+        val sdkDir = File(root, "sdk").also { it.mkdirs() }
+        val appNdkDir = File(root, "app_ndk/r26c").also { it.mkdirs() }
+        File(appNdkDir, "ndk-build").writeText("#!/system/bin/sh\n")
+
+        BuildToolInstaller.ensureSdkNdkLink(sdkDir, appNdkDir, "26.2.11394342")
+
+        val sdkNdkDir = File(sdkDir, "ndk/26.2.11394342")
+        assertTrue("Linked SDK NDK directory must exist", sdkNdkDir.exists())
+        val prop = File(sdkNdkDir, "source.properties")
+        assertTrue("source.properties must be generated in linked SDK NDK", prop.exists())
+        assertTrue("Pkg.Revision must match", prop.readText().contains("Pkg.Revision = 26.2.11394342"))
+    }
 }
 
