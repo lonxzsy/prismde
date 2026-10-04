@@ -780,11 +780,17 @@ class BuildProcessRunner {
                 n.ensureSourceProperties(context = context)
                 n.ensurePermissions(context)
             }
-            BuildToolInstaller.flattenOrLinkNdkRoot(File(context.filesDir, "ndk/r26c"))
-            BuildToolInstaller.patchNdkMakefiles(File(context.filesDir, "ndk/r26c"))
-            BuildToolInstaller.patchNdkMakefiles(File(context.filesDir, "ndk/r26c/android-ndk-aide"))
-            BuildToolInstaller.flattenOrLinkNdkRoot(File(sdkDir, "ndk/26.2.11394342"))
-            BuildToolInstaller.patchNdkMakefiles(File(sdkDir, "ndk/26.2.11394342"))
+            val ndkR26c = File(context.filesDir, "ndk/r26c")
+            val sdkNdk26 = File(sdkDir, "ndk/26.2.11394342")
+            BuildToolInstaller.flattenOrLinkNdkRoot(ndkR26c)
+            com.prismde.core.model.NdkVersion.ensureNdkStlLibraries(ndkR26c, context)
+            com.prismde.core.model.NdkVersion.ensureNdkPlatforms(ndkR26c)
+            BuildToolInstaller.patchNdkMakefiles(ndkR26c)
+            BuildToolInstaller.patchNdkMakefiles(File(ndkR26c, "android-ndk-aide"))
+            BuildToolInstaller.flattenOrLinkNdkRoot(sdkNdk26)
+            com.prismde.core.model.NdkVersion.ensureNdkStlLibraries(sdkNdk26, context)
+            com.prismde.core.model.NdkVersion.ensureNdkPlatforms(sdkNdk26)
+            BuildToolInstaller.patchNdkMakefiles(sdkNdk26)
             BuildToolInstaller.patchNdkMakefiles(project.rootDir)
 
             // Ensure local.properties in project root has sdk.dir and ndk.dir

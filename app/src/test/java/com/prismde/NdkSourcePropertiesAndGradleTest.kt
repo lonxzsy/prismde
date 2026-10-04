@@ -203,6 +203,13 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("libc++_static.a must exist for aarch64-linux-android", aarch64Static.exists())
         assertEquals("Static stub must start with ar magic", "!<arch>\n", aarch64Static.readText())
 
+        val aarch64Gcc = File(llvmArm64Sysroot, "usr/lib/aarch64-linux-android/libgcc.a")
+        assertTrue("libgcc.a must exist for aarch64-linux-android to satisfy ld.lld", aarch64Gcc.exists())
+        assertEquals("libgcc.a must start with ar magic", "!<arch>\n", aarch64Gcc.readText())
+
+        val aarch64Atomic = File(llvmArm64Sysroot, "usr/lib/aarch64-linux-android/libatomic.a")
+        assertTrue("libatomic.a must exist for aarch64-linux-android", aarch64Atomic.exists())
+
         // Check arm-linux-androideabi (preventing the crash reported by AGP)
         val armStl = File(llvmArm64Sysroot, "usr/lib/arm-linux-androideabi/libc++_shared.so")
         assertTrue("libc++_shared.so must be provisioned for arm-linux-androideabi", armStl.exists())
@@ -748,6 +755,30 @@ class NdkSourcePropertiesAndGradleTest {
 
         val result = BuildToolInstaller.cleanMakefileContent(validMultiline)
         assertTrue("Must preserve balanced multiline closing paren", result.trimEnd().endsWith(")"))
+    }
+
+    @Test
+    fun testCleanMakefileContentStripsLgccAndInjectsOverrideTargetLibgcc() {
+        val root = tempFolder.newFolder("lgcc_strip_test")
+        val buildDir = File(root, "build/core").also { it.mkdirs() }
+        val mkFile = File(buildDir, "default-build-commands.mk").also {
+            it.writeText(
+                """
+                TARGET_LDLIBS := -lc -lm -lgcc
+                TARGET_LDFLAGS += -lgcc_real -Wl,--no-undefined
+                """.trimIndent()
+            )
+        }
+
+        BuildToolInstaller.patchNdkMakefiles(root)
+
+        val text = mkFile.readText()
+        assertFalse("Must not contain -lgcc", text.contains("-lgcc"))
+        assertFalse("Must not contain -lgcc_real", text.contains("-lgcc_real"))
+        assertTrue("Must preserve -lc", text.contains("-lc"))
+        assertTrue("Must preserve -lm", text.contains("-lm"))
+        assertTrue("Must preserve -Wl,--no-undefined", text.contains("-Wl,--no-undefined"))
+        assertTrue("Must inject override TARGET_LIBGCC :=", text.contains("override TARGET_LIBGCC :="))
     }
 }
 

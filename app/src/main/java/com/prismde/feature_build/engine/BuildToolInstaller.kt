@@ -760,8 +760,8 @@ object BuildToolInstaller {
                         txt = cleaned
                         modified = true
                     }
-                    if (!txt.contains("override GCC_TOOLCHAIN :=")) {
-                        txt = "$txt\n# PrismDE: Disable legacy GCC toolchain in Clang\noverride GCC_TOOLCHAIN :=\n"
+                    if (!txt.contains("override GCC_TOOLCHAIN :=") || !txt.contains("override TARGET_LIBGCC :=")) {
+                        txt = "$txt\n# PrismDE: Disable legacy GCC toolchain in Clang\noverride GCC_TOOLCHAIN :=\noverride TARGET_LIBGCC :=\n"
                         modified = true
                     }
                     if (modified) {
@@ -786,6 +786,35 @@ object BuildToolInstaller {
                         androidMk.writeText(cleaned)
                     }
                 } catch (_: Throwable) {}
+            }
+        }
+
+        // 4. Provision libgcc.a and companion runtime stubs in project jni and cxx output directories
+        val emptyArBytes = "!<arch>\n".toByteArray(Charsets.US_ASCII)
+        val projectDirsToStub = listOf(
+            File(projectRootDir, "app/src/main/jni"),
+            File(projectRootDir, "src/main/jni"),
+            File(projectRootDir, "jni"),
+            File(projectRootDir, "app/build/intermediates/cxx")
+        )
+        for (baseDir in projectDirsToStub) {
+            if (!baseDir.exists()) continue
+            val candidateDirs = mutableListOf(baseDir)
+            if (baseDir.isDirectory) {
+                baseDir.walkTopDown().maxDepth(6).filter { it.isDirectory && (it.name == selectedAbi || it.name.startsWith("obj")) }.forEach {
+                    candidateDirs.add(it)
+                }
+            }
+            for (cDir in candidateDirs.distinct()) {
+                for (libName in listOf("libgcc.a", "libgcc_real.a", "libatomic.a", "libunwind.a")) {
+                    val stubFile = File(cDir, libName)
+                    if (!stubFile.exists() || stubFile.length() == 0L) {
+                        try {
+                            stubFile.writeBytes(emptyArBytes)
+                            stubFile.setReadable(true, false)
+                        } catch (_: Throwable) {}
+                    }
+                }
             }
         }
     }
@@ -984,6 +1013,11 @@ object BuildToolInstaller {
             txt = txt.replace(gccToolchainRegex, "")
         }
 
+        // 1b. Strip obsolete -lgcc and -lgcc_real linker flags
+        if (txt.contains("gcc")) {
+            txt = txt.replace(Regex("""\s*-l(?:gcc_real|gcc)\b"""), "")
+        }
+
         // 2. Line-by-line repair of dangling parentheses and orphaned line continuations
         val lines = txt.split("\n")
         val repairedLines = mutableListOf<String>()
@@ -1086,12 +1120,12 @@ object BuildToolInstaller {
                 File(rootDir, "build/core/default-build-commands.mk"),
                 File(rootDir, "android-ndk-aide/build/core/default-build-commands.mk")
             )
-            val overrideSnippet = "\n# PrismDE: Disable legacy GCC toolchain in Clang invocations\noverride GCC_TOOLCHAIN :=\n"
+            val overrideSnippet = "\n# PrismDE: Disable legacy GCC toolchain in Clang invocations\noverride GCC_TOOLCHAIN :=\noverride TARGET_LIBGCC :=\n"
             for (mk in initMkCandidates) {
                 if (mk.exists() && mk.isFile) {
                     try {
                         val content = mk.readText()
-                        if (!content.contains("override GCC_TOOLCHAIN :=")) {
+                        if (!content.contains("override GCC_TOOLCHAIN :=") || !content.contains("override TARGET_LIBGCC :=")) {
                             mk.appendText(overrideSnippet)
                         }
                     } catch (_: Throwable) {}

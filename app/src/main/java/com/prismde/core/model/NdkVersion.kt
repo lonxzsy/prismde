@@ -536,20 +536,50 @@ data class NdkVersion(
                             }
                         }
 
-                        // Ensure static stubs
-                        val staticA = File(tripleDir, "libc++_static.a")
-                        if (!staticA.exists() || staticA.length() == 0L) {
-                            try {
-                                staticA.writeBytes(emptyArBytes)
-                                staticA.setReadable(true, false)
-                            } catch (_: Throwable) {}
+                        // Ensure static stubs for C++ STL and GCC runtime compatibility (required by ld.lld)
+                        val staticStubNames = listOf(
+                            "libc++_static.a",
+                            "libc++abi.a",
+                            "libgcc.a",
+                            "libgcc_real.a",
+                            "libatomic.a",
+                            "libunwind.a"
+                        )
+                        for (staticName in staticStubNames) {
+                            val staticA = File(tripleDir, staticName)
+                            if (!staticA.exists() || staticA.length() == 0L) {
+                                try {
+                                    staticA.writeBytes(emptyArBytes)
+                                    staticA.setReadable(true, false)
+                                } catch (_: Throwable) {}
+                            }
+                            val rootStatic = File(usrLib, staticName)
+                            if (!rootStatic.exists() || rootStatic.length() == 0L) {
+                                try {
+                                    rootStatic.writeBytes(emptyArBytes)
+                                    rootStatic.setReadable(true, false)
+                                } catch (_: Throwable) {}
+                            }
                         }
-                        val abiA = File(tripleDir, "libc++abi.a")
-                        if (!abiA.exists() || abiA.length() == 0L) {
-                            try {
-                                abiA.writeBytes(emptyArBytes)
-                                abiA.setReadable(true, false)
-                            } catch (_: Throwable) {}
+
+                        // Also ensure libgcc.a in sources/cxx-stl/llvm-libc++/libs/$abi/
+                        val abiName = when {
+                            triple.startsWith("aarch64") -> "arm64-v8a"
+                            triple.startsWith("arm") -> "armeabi-v7a"
+                            triple.startsWith("i686") -> "x86"
+                            else -> "x86_64"
+                        }
+                        val stlAbiDir = File(dir, "sources/cxx-stl/llvm-libc++/libs/$abiName")
+                        if (stlAbiDir.exists()) {
+                            for (staticName in listOf("libgcc.a", "libgcc_real.a", "libatomic.a", "libunwind.a")) {
+                                val stlStatic = File(stlAbiDir, staticName)
+                                if (!stlStatic.exists() || stlStatic.length() == 0L) {
+                                    try {
+                                        stlStatic.writeBytes(emptyArBytes)
+                                        stlStatic.setReadable(true, false)
+                                    } catch (_: Throwable) {}
+                                }
+                            }
                         }
 
                         // Ensure essential system shared library stubs (libc.so, libm.so, libdl.so, liblog.so, libandroid.so, libz.so)
