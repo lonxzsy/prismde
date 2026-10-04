@@ -773,12 +773,15 @@ class BuildProcessRunner {
 
             // Ensure NDK has source.properties, permissions, and symlink in SDK!
             effectiveNdk?.let { n ->
-                n.ensureSourceProperties(context = context)
-                n.ensurePermissions(context)
                 n.getEffectiveNdkDir()?.let { nDir ->
+                    BuildToolInstaller.flattenOrLinkNdkRoot(nDir)
                     BuildToolInstaller.ensureSdkNdkLink(sdkDir, nDir, n.getPkgRevision(), context)
                 }
+                n.ensureSourceProperties(context = context)
+                n.ensurePermissions(context)
             }
+            BuildToolInstaller.flattenOrLinkNdkRoot(File(context.filesDir, "ndk/r26c"))
+            BuildToolInstaller.flattenOrLinkNdkRoot(File(sdkDir, "ndk/26.2.11394342"))
 
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)

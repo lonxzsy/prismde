@@ -83,6 +83,9 @@ object NdkValidator {
         if (!dir.exists() || !dir.isDirectory) return dir
 
         fun isNdkRoot(f: File): Boolean {
+            if (f.name in setOf("build", "prebuilt", "platforms", "sources", "sysroot", "meta", "bin", "tmp")) {
+                return false
+            }
             return File(f, "bin/clang").exists() ||
                     File(f, "bin/clang++").exists() ||
                     File(f, "toolchains").exists() ||

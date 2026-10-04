@@ -639,5 +639,56 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("source.properties must be generated in linked SDK NDK", prop.exists())
         assertTrue("Pkg.Revision must match", prop.readText().contains("Pkg.Revision = 26.2.11394342"))
     }
+
+    @Test
+    fun testFlattenOrLinkNdkRootFromNestedAide() {
+        val root = tempFolder.newFolder("flatten_test")
+        val aide = File(root, "android-ndk-aide").also { it.mkdirs() }
+        val altScript = File(aide, "ndk-build-android").also {
+            it.writeText("#!/bin/sh\r\nDIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"\r\n\"\$DIR/build/ndk-build\" \"\$@\"\r\n")
+        }
+        val buildDir = File(aide, "build").also { it.mkdirs() }
+        val innerScript = File(buildDir, "ndk-build").also {
+            it.writeText("#!/bin/sh\r\necho inner build\r\n")
+        }
+        val toolchains = File(aide, "toolchains").also { it.mkdirs() }
+
+        BuildToolInstaller.flattenOrLinkNdkRoot(root)
+
+        // Root must now have ndk-build directly accessible!
+        val rootNdkBuild = File(root, "ndk-build")
+        assertTrue("ndk-build must exist in root directory", rootNdkBuild.exists())
+        val rootNdkBuildAndroid = File(root, "ndk-build-android")
+        assertTrue("ndk-build-android must exist in root directory", rootNdkBuildAndroid.exists())
+
+        // Children like build and toolchains must be linked/copied to root
+        assertTrue("build directory must be accessible in root", File(root, "build").exists())
+        assertTrue("toolchains directory must be accessible in root", File(root, "toolchains").exists())
+
+        // Shebangs must be normalized and CRLF removed
+        val content = rootNdkBuild.readText()
+        assertTrue("Shebang must be /system/bin/sh", content.startsWith("#!/system/bin/sh"))
+        assertFalse("Must not have CRLF", content.contains("\r\n"))
+        assertTrue("Calls to build/ndk-build must be prefixed with /system/bin/sh", content.contains("/system/bin/sh \"\$DIR/build/ndk-build\""))
+
+        val innerContent = File(root, "build/ndk-build").readText()
+        assertTrue("Inner shebang must be /system/bin/sh", innerContent.startsWith("#!/system/bin/sh"))
+    }
+
+    @Test
+    fun testFlattenOrLinkNdkRootCreatesWrapperIfOnlyBuildNdkBuildExists() {
+        val root = tempFolder.newFolder("wrapper_gen_test")
+        val buildDir = File(root, "build").also { it.mkdirs() }
+        File(buildDir, "ndk-build").writeText("#!/bin/sh\necho building\n")
+
+        BuildToolInstaller.flattenOrLinkNdkRoot(root)
+
+        val rootNdkBuild = File(root, "ndk-build")
+        assertTrue("Generated ndk-build wrapper must exist", rootNdkBuild.exists())
+        val content = rootNdkBuild.readText()
+        assertTrue("Wrapper must use /system/bin/sh", content.startsWith("#!/system/bin/sh"))
+        assertTrue("Wrapper must execute build/ndk-build", content.contains("build/ndk-build"))
+    }
 }
+
 

@@ -862,13 +862,209 @@ object BuildToolInstaller {
      */
     fun isUsableArm64Ndk(dir: File): Boolean {
         if (!dir.exists() || !dir.isDirectory) return false
+        flattenOrLinkNdkRoot(dir)
         val hasNdkBuild = File(dir, "ndk-build").exists() ||
                 File(dir, "build/ndk-build").exists() ||
                 File(dir, "ndk-build-android").exists() ||
-                File(dir, "android-ndk-aide/ndk-build").exists()
+                File(dir, "android-ndk-aide/ndk-build").exists() ||
+                File(dir, "android-ndk-aide/ndk-build-android").exists()
         if (!hasNdkBuild) return false
         if (isX86Ndk(dir)) return false
         return true
+    }
+
+    /**
+     * Recursively patches shebangs in all scripts to #!/system/bin/sh, removes CRLF line endings,
+     * protects internal build/ndk-build calls, and applies 0755 executable permissions.
+     */
+    fun patchAllNdkScripts(rootDir: File) {
+        if (!rootDir.exists() || !rootDir.isDirectory) return
+        val scriptExtensions = setOf("sh", "bash", "awk", "sed", "py", "")
+        try {
+            rootDir.walkTopDown().maxDepth(9).forEach { file ->
+                if (file.isFile && (file.extension in scriptExtensions || file.name.startsWith("ndk-") || file.parentFile?.name == "bin")) {
+                    try {
+                        android.system.Os.chmod(file.absolutePath, 493) // 0755
+                    } catch (_: Throwable) {}
+                    try {
+                        file.setExecutable(true, false)
+                        file.setReadable(true, false)
+                    } catch (_: Throwable) {}
+
+                    try {
+                        if (file.length() in 10L..2_000_000L) {
+                            val header = ByteArray(128)
+                            val read = file.inputStream().use { it.read(header) }
+                            if (read > 2 && header[0] == '#'.code.toByte() && header[1] == '!'.code.toByte()) {
+                                val fullText = file.readText()
+                                var modified = false
+                                var text = fullText
+
+                                val lines = text.split("\n", limit = 2)
+                                val firstLine = lines[0].trimEnd('\r')
+                                if (firstLine.startsWith("#!") && (firstLine.contains("/bin/") || firstLine.contains("/usr/bin/"))) {
+                                    val patchedFirstLine = firstLine.replace(
+                                        Regex("""^#!\s*(?:/usr/bin/env\s+\w+|/(?:usr/)?(?:bin|sbin)/\w+)"""),
+                                        "#!/system/bin/sh"
+                                    )
+                                    if (patchedFirstLine != firstLine) {
+                                        val remaining = if (lines.size > 1) lines[1] else ""
+                                        text = "$patchedFirstLine\n$remaining"
+                                        modified = true
+                                    }
+                                }
+
+                                if (file.name == "ndk-build" || file.name == "ndk-build-android") {
+                                    if (text.contains("\$DIR/build/ndk-build") && !text.contains("/system/bin/sh \"\$DIR/build/ndk-build\"")) {
+                                        text = text.replace("\"\$DIR/build/ndk-build\"", "/system/bin/sh \"\$DIR/build/ndk-build\"")
+                                            .replace("\$DIR/build/ndk-build", "/system/bin/sh \"\$DIR/build/ndk-build\"")
+                                        modified = true
+                                    }
+                                }
+
+                                if (text.contains("\r\n")) {
+                                    text = text.replace("\r\n", "\n")
+                                    modified = true
+                                }
+
+                                if (modified) {
+                                    file.writeText(text)
+                                    try { android.system.Os.chmod(file.absolutePath, 493) } catch (_: Throwable) {}
+                                    try { file.setExecutable(true, false) } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Flattens or links nested NDK structures (e.g. android-ndk-aide or android-ndk-r26c)
+     * up into the target root directory, ensuring ndk-build and all toolchains are
+     * directly accessible at the NDK root with 755 permissions and Android-compatible shebangs.
+     */
+    fun flattenOrLinkNdkRoot(dir: File) {
+        if (!dir.exists() || !dir.isDirectory) return
+        val isWindows = System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+
+        // 1. Identify nested source directories (e.g. android-ndk-aide, android-ndk-r26c)
+        val nestedSources = mutableListOf<File>()
+        val aide = File(dir, "android-ndk-aide")
+        if (aide.exists() && aide.isDirectory) {
+            try {
+                if (aide.canonicalPath != dir.canonicalPath) nestedSources.add(aide)
+            } catch (_: Throwable) {
+                nestedSources.add(aide)
+            }
+        }
+        val nonRootNames = setOf("build", "prebuilt", "platforms", "sources", "sysroot", "meta", "bin", "tmp")
+        try {
+            val resolved = com.prismde.feature_ndk.engine.NdkValidator.resolveNdkRoot(dir)
+            if (resolved.exists() && resolved.isDirectory && resolved.name !in nonRootNames && resolved.canonicalPath != dir.canonicalPath) {
+                nestedSources.add(resolved)
+            }
+        } catch (_: Throwable) {}
+
+        dir.listFiles()?.filter {
+            it.isDirectory && (it.name.startsWith("android-ndk") || it.name.startsWith("ndk-")) && it.name !in nonRootNames
+        }?.forEach { sub ->
+            try {
+                if (sub.canonicalPath != dir.canonicalPath) nestedSources.add(sub)
+            } catch (_: Throwable) {
+                nestedSources.add(sub)
+            }
+        }
+
+        // 2. Link or copy all entries from nested sources to dir root
+        for (nested in nestedSources.distinct()) {
+            nested.listFiles()?.forEach { child ->
+                val target = File(dir, child.name)
+                if (!target.exists()) {
+                    var linked = false
+                    if (!isWindows) {
+                        try {
+                            android.system.Os.symlink(child.absolutePath, target.absolutePath)
+                            linked = true
+                        } catch (_: Throwable) {}
+                    }
+                    if (!linked) {
+                        try {
+                            if (child.isDirectory) {
+                                child.copyRecursively(target, overwrite = false)
+                            } else {
+                                child.copyTo(target, overwrite = false)
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+        }
+
+        // 3. Ensure ndk-build and ndk-build-android exist in dir and in all nested sources
+        val allNdkRoots = (listOf(dir) + nestedSources).distinct()
+        for (root in allNdkRoots) {
+            val mainNdkBuild = File(root, "ndk-build")
+            val altNdkBuild = File(root, "ndk-build-android")
+            val buildNdkBuild = File(root, "build/ndk-build")
+
+            if (!mainNdkBuild.exists()) {
+                if (altNdkBuild.exists()) {
+                    var linked = false
+                    if (!isWindows) {
+                        try {
+                            android.system.Os.symlink(altNdkBuild.name, mainNdkBuild.absolutePath)
+                            linked = true
+                        } catch (_: Throwable) {}
+                    }
+                    if (!linked) {
+                        try { altNdkBuild.copyTo(mainNdkBuild, overwrite = true) } catch (_: Throwable) {}
+                    }
+                } else {
+                    val donor = allNdkRoots.map { File(it, "ndk-build-android") }.firstOrNull { it.exists() }
+                        ?: allNdkRoots.map { File(it, "ndk-build") }.firstOrNull { it.exists() }
+                    if (donor != null) {
+                        var linked = false
+                        if (!isWindows) {
+                            try {
+                                android.system.Os.symlink(donor.absolutePath, mainNdkBuild.absolutePath)
+                                linked = true
+                            } catch (_: Throwable) {}
+                        }
+                        if (!linked) {
+                            try { donor.copyTo(mainNdkBuild, overwrite = true) } catch (_: Throwable) {}
+                        }
+                    } else if (buildNdkBuild.exists()) {
+                        try {
+                            mainNdkBuild.writeText(
+                                "#!/system/bin/sh\n" +
+                                "DIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"\n" +
+                                "exec /system/bin/sh \"\$DIR/build/ndk-build\" \"\$@\"\n"
+                            )
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+
+            if (!altNdkBuild.exists() && mainNdkBuild.exists()) {
+                var linked = false
+                if (!isWindows) {
+                    try {
+                        android.system.Os.symlink(mainNdkBuild.name, altNdkBuild.absolutePath)
+                        linked = true
+                    } catch (_: Throwable) {}
+                }
+                if (!linked) {
+                    try { mainNdkBuild.copyTo(altNdkBuild, overwrite = true) } catch (_: Throwable) {}
+                }
+            }
+        }
+
+        // 4. Normalize shebangs, script invocations, and permissions (0755)
+        for (root in allNdkRoots) {
+            patchAllNdkScripts(root)
+        }
     }
 
     /**
@@ -908,10 +1104,12 @@ object BuildToolInstaller {
         revision: String = "26.2.11394342",
         context: Context? = null
     ) {
+        flattenOrLinkNdkRoot(ndkDir)
         val sdkNdkDir = File(sdkDir, "ndk/$revision")
         if (sdkNdkDir.exists()) {
             try {
                 if (sdkNdkDir.canonicalFile.absolutePath == ndkDir.canonicalFile.absolutePath) {
+                    flattenOrLinkNdkRoot(sdkNdkDir)
                     NdkVersion.ensureNdkMetadata(sdkNdkDir, revision, context)
                     NdkVersion.ensureNdkPermissions(sdkNdkDir, context)
                     return
@@ -931,6 +1129,7 @@ object BuildToolInstaller {
             } catch (_: Throwable) {}
         }
         val target = if (sdkNdkDir.exists()) sdkNdkDir else ndkDir
+        flattenOrLinkNdkRoot(target)
         NdkVersion.ensureNdkMetadata(target, revision, context)
         NdkVersion.ensureNdkPermissions(target, context)
     }
@@ -1953,6 +2152,7 @@ object BuildToolInstaller {
             else "Configuring NDK permissions and environment...",
             95f
         )
+        flattenOrLinkNdkRoot(targetDir)
         NdkVersion.ensureNdkMetadata(targetDir, "26.2.11394342", context)
         NdkVersion.ensureNdkPermissions(targetDir, context)
         NdkVersion.ensureNdkStlLibraries(targetDir, context)

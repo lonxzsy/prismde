@@ -57,6 +57,9 @@ data class NdkVersion(
         for (cand in candidates) {
             if (!cand.exists() || !cand.isDirectory) continue
 
+            // Ensure cand is flattened/linked so ndk-build exists directly in cand root
+            com.prismde.feature_build.engine.BuildToolInstaller.flattenOrLinkNdkRoot(cand)
+
             // 1. If cand itself has toolchains or tools, it is the effective directory
             if (isUsableNdk(cand)) {
                 return cand
@@ -65,12 +68,14 @@ data class NdkVersion(
             // 2. Check if nested inside android-ndk-aide
             val aide = File(cand, "android-ndk-aide")
             if (isUsableNdk(aide)) {
-                return aide
+                com.prismde.feature_build.engine.BuildToolInstaller.flattenOrLinkNdkRoot(aide)
+                return cand.takeIf { File(it, "ndk-build").exists() } ?: aide
             }
 
             val resolved = com.prismde.feature_ndk.engine.NdkValidator.resolveNdkRoot(cand)
             if (isUsableNdk(resolved)) {
-                return resolved
+                com.prismde.feature_build.engine.BuildToolInstaller.flattenOrLinkNdkRoot(resolved)
+                return cand.takeIf { File(it, "ndk-build").exists() } ?: resolved
             }
         }
 
@@ -784,6 +789,7 @@ data class NdkVersion(
         fun ensureNdkPermissions(ndkDir: File, context: android.content.Context? = null) {
             if (!ndkDir.exists()) return
 
+            com.prismde.feature_build.engine.BuildToolInstaller.flattenOrLinkNdkRoot(ndkDir)
             ensureNdkMetadata(ndkDir, context = context)
 
             fun applyChmod755(target: File) {
