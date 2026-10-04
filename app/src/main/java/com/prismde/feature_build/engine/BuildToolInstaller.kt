@@ -840,10 +840,11 @@ object BuildToolInstaller {
             f.isDirectory && f != targetPlatformDir && (f.name.startsWith("android-$apiLevel-") || f.name.contains("android-$apiLevel"))
         }?.sortedByDescending { it.lastModified() } ?: emptyList()
 
-        val targetJar = File(targetPlatformDir, "android.jar")
-        val validAlt = if (!targetJar.exists() || targetJar.length() < 100_000L) {
-            altDirs.firstOrNull { File(it, "android.jar").exists() && File(it, "android.jar").length() > 1000L }
-        } else null
+        // If sdkmanager created android-XX-2, it contains the package that AGP just
+        // downloaded. Prefer that fresh package over the stale canonical directory.
+        val validAlt = altDirs.firstOrNull {
+            File(it, "android.jar").exists() && File(it, "android.jar").length() > 1000L
+        }
         if (validAlt != null) {
             // A newer/diverted complete download exists (e.g. android-34-3 from AGP). Replace targetPlatformDir with it.
             try {

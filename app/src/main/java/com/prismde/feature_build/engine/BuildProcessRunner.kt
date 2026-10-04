@@ -882,11 +882,21 @@ class BuildProcessRunner {
                 // project command. This avoids reporting a false failure after a successful
                 // SDK download.
                 if (!success && canonicalReady) {
+                    val retryCommand = command.toMutableList().apply {
+                        if (!any { it.matches(Regex("-Pandroid\\.builder\\.sdkDownload=.*")) }) {
+                            add("-Pandroid.builder.sdkDownload=false")
+                        }
+                    }
                     _events.emit(BuildOutputEvent.LogLine(
                         if (isRu) "ℹ SDK-платформа установлена, повторная попытка Gradle после нормализации..."
                         else "ℹ SDK platform installed; retrying Gradle after normalization..."
                     ))
-                    success = executeProcess(command, workingDir, extraBinDir, effectiveNdk, config, context)
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "Повторная команда Gradle с отключённой повторной загрузкой SDK:"
+                        else "Retrying Gradle with SDK auto-download disabled:"
+                    ))
+                    _events.emit(BuildOutputEvent.LogLine(retryCommand.joinToString(" ")))
+                    success = executeProcess(retryCommand, workingDir, extraBinDir, effectiveNdk, config, context)
                 }
             } catch (_: Throwable) {}
         }

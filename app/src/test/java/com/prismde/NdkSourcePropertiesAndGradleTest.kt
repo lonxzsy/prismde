@@ -258,6 +258,29 @@ class NdkSourcePropertiesAndGradleTest {
     }
 
     @Test
+    fun testNormalizeSdkPlatformReplacesStaleCanonicalWithFreshDivertedInstall() {
+        val sdkDir = tempFolder.newFolder("normalize_stale_platform_test")
+        val platformsDir = File(sdkDir, "platforms").also { it.mkdirs() }
+        val canonicalDir = File(platformsDir, "android-34").also { it.mkdirs() }
+        File(canonicalDir, "android.jar").writeBytes(ByteArray(2048) { 1 })
+        File(canonicalDir, "source.properties").writeText(
+            "Pkg.Desc=Android SDK Platform 34\nAndroidVersion.ApiLevel=34\n"
+        )
+
+        val divertedDir = File(platformsDir, "android-34-2").also { it.mkdirs() }
+        File(divertedDir, "android.jar").writeBytes(ByteArray(4096) { 2 })
+        File(divertedDir, "source.properties").writeText(
+            "Pkg.Desc=Android SDK Platform 34-ext7\nAndroidVersion.ApiLevel=34\nAndroidVersion.ExtensionLevel=7\n"
+        )
+
+        BuildToolInstaller.normalizeSdkPlatform(platformsDir, 34)
+
+        assertEquals(4096L, File(canonicalDir, "android.jar").length())
+        assertTrue("Fresh diverted install must be moved to the canonical path", !divertedDir.exists())
+        assertTrue("Extension metadata must be normalized", !File(canonicalDir, "source.properties").readText().contains("ExtensionLevel"))
+    }
+
+    @Test
     fun testDetectProjectBuildToolsVersion() {
         val projectDir = tempFolder.newFolder("build_tools_detection_test")
         val appDir = File(projectDir, "app").also { it.mkdirs() }
