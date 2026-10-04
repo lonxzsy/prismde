@@ -835,9 +835,6 @@ class BuildProcessRunner {
         if (!command.any { it.startsWith("-Pandroid.ndkVersion") }) {
             command.add("-Pandroid.ndkVersion=$ndkRev")
         }
-        if (!command.any { it.startsWith("-Pandroid.builder.sdkDownload") }) {
-            command.add("-Pandroid.builder.sdkDownload=false")
-        }
         if (!command.any { it.startsWith("-Pandroid.suppressUnsupportedCompileSdk") }) {
             val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
             command.add("-Pandroid.suppressUnsupportedCompileSdk=$requiredApi")
@@ -1120,6 +1117,7 @@ class BuildProcessRunner {
 
             val ansiRegex = Regex("\u001B\\[[;\\d]*[ -/]*[@-~]")
             var lastStdoutWasBlank = false
+            var agpInstalledPlatform = false
 
             // Stream stdout and parse diagnostics (e.g. Maven, Gradle, Javac output to stdout)
             val stdoutThread = Thread {
@@ -1138,6 +1136,24 @@ class BuildProcessRunner {
                                 lastStdoutWasBlank = true
                             } else {
                                 lastStdoutWasBlank = false
+                            }
+
+                            // Detect AGP automatic SDK installation and normalize immediately
+                            if (trimmed.contains("Installing Android SDK Platform", ignoreCase = true) ||
+                                trimmed.contains("Installing Android SDK Build-Tools", ignoreCase = true) ||
+                                trimmed.contains("Install Android SDK Platform", ignoreCase = true) && trimmed.contains("complete", ignoreCase = true)) {
+                                agpInstalledPlatform = true
+                            }
+                            if (agpInstalledPlatform && (trimmed.contains("finished", ignoreCase = true) || trimmed.contains("complete", ignoreCase = true))) {
+                                if (context != null) {
+                                    try {
+                                        val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
+                                        val platformsDir = File(sdkDir, "platforms")
+                                        BuildToolInstaller.normalizeAllSdkPlatforms(platformsDir)
+                                        _events.tryEmit(BuildOutputEvent.LogLine("→ Normalized SDK platforms after AGP auto-download"))
+                                    } catch (_: Throwable) {}
+                                }
+                                agpInstalledPlatform = false
                             }
 
                             _events.tryEmit(BuildOutputEvent.LogLine(clean))

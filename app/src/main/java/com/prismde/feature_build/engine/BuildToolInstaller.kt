@@ -429,7 +429,6 @@ object BuildToolInstaller {
                 sb.appendLine("org.gradle.vfs.watch=false")
                 sb.appendLine("org.gradle.console=plain")
                 sb.appendLine("android.suppressUnsupportedCompileSdk=34,35")
-                sb.appendLine("android.builder.sdkDownload=false")
                 if (!javaHome.isNullOrBlank()) {
                     sb.appendLine("org.gradle.java.home=${javaHome.replace("\\", "/")}")
                 }
@@ -457,8 +456,12 @@ object BuildToolInstaller {
                     propsText += "\nandroid.suppressUnsupportedCompileSdk=34,35\n"
                     modified = true
                 }
-                if (!propsText.contains("android.builder.sdkDownload")) {
-                    propsText += "\nandroid.builder.sdkDownload=false\n"
+                val withoutSdkDownloadOverride = propsText
+                    .lineSequence()
+                    .filterNot { it.trim().startsWith("android.builder.sdkDownload=") }
+                    .joinToString("\n")
+                if (withoutSdkDownloadOverride != propsText) {
+                    propsText = withoutSdkDownloadOverride
                     modified = true
                 }
                 if (!propsText.contains("org.gradle.java.home") && !javaHome.isNullOrBlank()) {
@@ -776,9 +779,8 @@ object BuildToolInstaller {
     }
 
     /**
-     * Normalizes all android-* platform directories under platformsDir.
-     * Collapses diverted folders (android-34-2, android-34-ext7, etc.) into canonical android-XX
-     * and strips ExtensionLevel so AGP hash lookup succeeds.
+     * Makes diverted platform directories available under the canonical Android SDK name.
+     * Official SDK metadata is intentionally preserved because AGP uses it to identify targets.
      */
     fun normalizeAllSdkPlatforms(platformsDir: File) {
         if (!platformsDir.exists()) return
@@ -826,68 +828,9 @@ object BuildToolInstaller {
             }
         }
 
-        // Clean up any remaining diverted folders to prevent AGP collision/re-download
-        altDirs.forEach { dir ->
-            if (dir.exists() && dir != targetPlatformDir) {
-                try { dir.deleteRecursively() } catch (_: Throwable) {}
-            }
-        }
-
         if (targetPlatformDir.exists()) {
-            // 2. source.properties must NOT contain ExtensionLevel, otherwise the hash becomes android-XX-extN
-            val propFile = File(targetPlatformDir, "source.properties")
-            val currentProps = if (propFile.exists()) {
-                try { propFile.readLines() } catch (_: Throwable) { emptyList() }
-            } else emptyList()
-
-            val sanitizedLines = currentProps
-                .filterNot { it.contains("ExtensionLevel", ignoreCase = true) }
-                .filterNot { it.contains("Codename", ignoreCase = true) }
-                .filterNot { it.contains("Ext=", ignoreCase = true) }
-                .toMutableList()
-            fun upsert(prefix: String, line: String) {
-                val idx = sanitizedLines.indexOfFirst { it.trim().startsWith(prefix) }
-                if (idx >= 0) sanitizedLines[idx] = line else sanitizedLines.add(line)
-            }
-            upsert("Pkg.Desc", "Pkg.Desc=Android SDK Platform $apiLevel")
-            upsert("Pkg.UserSrc", "Pkg.UserSrc=false")
-            upsert("Platform.Version", "Platform.Version=14")
-            upsert("Platform.CodeName", "Platform.CodeName=")
-            upsert("Pkg.Revision", "Pkg.Revision=3")
-            upsert("AndroidVersion.ApiLevel", "AndroidVersion.ApiLevel=$apiLevel")
-            upsert("Layoutlib.Api", "Layoutlib.Api=15")
-            upsert("Layoutlib.Revision", "Layoutlib.Revision=1")
-            try {
-                propFile.writeText(sanitizedLines.joinToString("\n") + "\n")
-                propFile.setReadable(true, false)
-            } catch (_: Throwable) {}
-
-            // Official package.xml from platform-34-ext7 declares an extension. AGP 8.1 then
-            // hashes the target as android-34-ext7 and rejects hash android-34. Drop it.
-            val packageXml = File(targetPlatformDir, "package.xml")
-            if (packageXml.exists()) {
-                try { packageXml.delete() } catch (_: Throwable) {}
-            }
-
-            val buildProp = File(targetPlatformDir, "build.prop")
-            try {
-                buildProp.writeText(
-                    "ro.build.version.sdk=$apiLevel\nro.build.version.release=14\nro.build.version.codename=REL\n"
-                )
-            } catch (_: Throwable) {}
-
-            val sdkProps = File(targetPlatformDir, "sdk.properties")
-            try {
-                sdkProps.writeText("AndroidVersion.ApiLevel=$apiLevel\n")
-            } catch (_: Throwable) {}
-
             val androidJar = File(targetPlatformDir, "android.jar")
-            if (androidJar.exists()) {
-                try {
-                    androidJar.setReadable(true, false)
-                    try { android.system.Os.chmod(androidJar.absolutePath, 420) } catch (_: Throwable) {}
-                } catch (_: Throwable) {}
-            }
+            try { androidJar.setReadable(true, false) } catch (_: Throwable) {}
         }
     }
 
@@ -915,13 +858,11 @@ object BuildToolInstaller {
         normalizeSdkPlatform(platformsDir, apiLevel)
         val jar = File(platformsDir, "android-$apiLevel/android.jar")
         val props = File(platformsDir, "android-$apiLevel/source.properties")
-        val packageXml = File(platformsDir, "android-$apiLevel/package.xml")
         if (!jar.exists() || jar.length() < 100_000L || !props.exists()) return false
-        if (packageXml.exists()) return false
         val text = try { props.readText() } catch (_: Throwable) { return false }
-        if (text.contains("ExtensionLevel", ignoreCase = true)) return false
-        if (text.contains("Codename", ignoreCase = true) && !text.contains("CodeName=")) return false
-        if (!text.contains("AndroidVersion.ApiLevel=$apiLevel")) return false
+        val declaredApi = Regex("""(?m)^AndroidVersion\.ApiLevel\s*=\s*(\d+)\s*$""")
+            .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        if (declaredApi != null && declaredApi != apiLevel) return false
         return true
     }
 
@@ -996,9 +937,15 @@ object BuildToolInstaller {
             )
             val urls = hosts.flatMap { host -> archives.map { host + it } }
             var lastDownloadError = "unknown"
+            var downloadedUrl = ""
 
             for (url in urls) {
                 try {
+                    onProgress(
+                        if (isRu) "Попытка загрузки: $url"
+                        else "Attempting download: $url",
+                        3f
+                    )
                     downloader.download(url, tempArchive) { current, total, percent, _ ->
                         val scaled = 5f + (percent * 0.75f)
                         onProgress(
@@ -1009,6 +956,12 @@ object BuildToolInstaller {
                     }
                     if (tempArchive.exists() && tempArchive.length() > 1_000_000L) {
                         downloadSuccess = true
+                        downloadedUrl = url
+                        onProgress(
+                            if (isRu) "✔ Успешно загружено ${tempArchive.length() / (1024 * 1024)} МБ из $url"
+                            else "✔ Successfully downloaded ${tempArchive.length() / (1024 * 1024)} MB from $url",
+                            80f
+                        )
                         break
                     }
                     lastDownloadError = "archive too small (${tempArchive.length()} bytes) from $url"

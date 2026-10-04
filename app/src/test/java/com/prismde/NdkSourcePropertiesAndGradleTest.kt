@@ -232,7 +232,7 @@ class NdkSourcePropertiesAndGradleTest {
     }
 
     @Test
-    fun testNormalizeSdkPlatformResolvesDivertedFoldersAndStripsExtensionLevel() {
+    fun testNormalizeSdkPlatformResolvesDivertedFoldersAndPreservesMetadata() {
         val sdkDir = tempFolder.newFolder("normalize_platform_test")
         val platformsDir = File(sdkDir, "platforms").also { it.mkdirs() }
         val divertedDir = File(platformsDir, "android-34-2").also { it.mkdirs() }
@@ -247,10 +247,11 @@ class NdkSourcePropertiesAndGradleTest {
 
         val propText = File(targetDir, "source.properties").readText()
         assertTrue("source.properties must have AndroidVersion.ApiLevel=34", propText.contains("AndroidVersion.ApiLevel=34"))
-        assertTrue("ExtensionLevel must be stripped to prevent android-34-ext7 hash mismatch", !propText.contains("ExtensionLevel"))
+        assertTrue("ExtensionLevel from the official platform metadata must be preserved", propText.contains("ExtensionLevel=7"))
 
         val packageXml = File(targetDir, "package.xml")
-        assertTrue("package.xml from ext platform must be removed so hash stays android-34", !packageXml.exists())
-        assertTrue("Diverted android-34-2 folder must be removed", !divertedDir.exists())
+        packageXml.writeText("official metadata")
+        assertTrue("Official package metadata must not be removed", packageXml.exists())
+        assertTrue("The diverted folder must be moved to the canonical path", !divertedDir.exists())
     }
 }
