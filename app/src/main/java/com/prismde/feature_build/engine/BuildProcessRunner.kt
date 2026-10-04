@@ -1118,77 +1118,102 @@ class BuildProcessRunner {
         val jarOutputDir = File(project.rootDir, "build/libs")
         val altJarOutputDir = File(project.rootDir, "app/build/libs")
 
-        val candidateDirs = mutableListOf<File>()
-        listOf(apkOutputDir, altApkOutputDir, aarOutputDir, altAarOutputDir).filter { it.exists() && it.isDirectory }.forEach { candidateDirs.add(it) }
+        // 1. Scan for all APK files across the project
+        val allApks = project.rootDir.walkTopDown().maxDepth(10).filter { file ->
+            file.isFile &&
+                file.extension.equals("apk", ignoreCase = true) &&
+                !file.name.endsWith("-unaligned.apk", ignoreCase = true) &&
+                !file.path.contains(".gradle", ignoreCase = true) &&
+                !file.path.contains("reports", ignoreCase = true) &&
+                file.length() > 1000L
+        }.toList()
 
-        // Also search any module outputs directories
-        try {
-            project.rootDir.walkTopDown().maxDepth(5).filter {
-                it.isDirectory && (it.name == "outputs" || it.name == "apk" || it.name == "aar") &&
-                    !it.path.contains("intermediates", ignoreCase = true) &&
-                    !it.path.contains(".gradle", ignoreCase = true)
-            }.forEach { candidateDirs.add(it) }
-        } catch (_: Throwable) {}
+        val allAars = project.rootDir.walkTopDown().maxDepth(10).filter { file ->
+            file.isFile &&
+                file.extension.equals("aar", ignoreCase = true) &&
+                !file.path.contains(".gradle", ignoreCase = true) &&
+                !file.path.contains("reports", ignoreCase = true) &&
+                file.length() > 1000L
+        }.toList()
 
-        // Check for output-metadata.json (standard AGP manifest redirect)
+        if (allApks.isNotEmpty()) {
+            _events.emit(BuildOutputEvent.LogLine("Found ${allApks.size} APK candidate(s):"))
+            allApks.take(5).forEach { apk ->
+                _events.emit(BuildOutputEvent.LogLine("  → ${apk.path} (${apk.length()} bytes, mtime=${apk.lastModified()})"))
+            }
+        }
+
+        // Check AGP output-metadata.json redirect files
         val metadataApks = mutableListOf<File>()
-        for (cand in candidateDirs.distinct()) {
-            cand.walkTopDown().maxDepth(4).filter { it.isFile && it.name == "output-metadata.json" }.forEach { jsonFile ->
-                try {
+        try {
+            project.rootDir.walkTopDown().maxDepth(10)
+                .filter { it.isFile && it.name == "output-metadata.json" }
+                .forEach { jsonFile ->
                     val jsonText = jsonFile.readText()
                     val match = Regex(""""outputFile"\s*:\s*"([^"]+)"""").find(jsonText)
                     if (match != null) {
-                        val fileName = match.groupValues[1]
-                        val apkFile = File(jsonFile.parentFile, fileName)
+                        val apkFile = File(jsonFile.parentFile, match.groupValues[1])
                         if (apkFile.exists() && apkFile.isFile && apkFile.length() > 1000L) {
                             metadataApks.add(apkFile)
                         }
                     }
-                } catch (_: Throwable) {}
+                }
+        } catch (_: Throwable) {}
+
+        // Tiered selection:
+        // Priority 1: AGP output-metadata.json redirection target
+        // Priority 2: APK in outputs/apk
+        // Priority 3: APK in outputs
+        // Priority 4: APK in intermediates/apk
+        // Priority 5: Any APK in build/
+        // Priority 6: Any APK in project
+        val finalArtifact = when {
+            allApks.isNotEmpty() || metadataApks.isNotEmpty() -> {
+                val inOutputsApk = allApks.filter { it.path.contains("outputs", ignoreCase = true) && it.path.contains("apk", ignoreCase = true) }
+                val inOutputs = allApks.filter { it.path.contains("outputs", ignoreCase = true) }
+                val inIntermediates = allApks.filter { it.path.contains("intermediates", ignoreCase = true) }
+                val inBuild = allApks.filter { it.path.contains("build", ignoreCase = true) }
+
+                fun pickBest(list: List<File>): File? {
+                    val recent = list.filter { it.lastModified() >= buildStartTime - 10_000L }
+                    return if (recent.isNotEmpty()) recent.maxByOrNull { it.lastModified() } else list.maxByOrNull { it.lastModified() }
+                }
+
+                pickBest(metadataApks)
+                    ?: pickBest(inOutputsApk)
+                    ?: pickBest(inOutputs)
+                    ?: pickBest(inIntermediates)
+                    ?: pickBest(inBuild)
+                    ?: pickBest(allApks)
             }
-        }
-
-        // Collect all candidate APK and AAR files in output directories
-        val allOutputs = candidateDirs.distinct().flatMap { dir ->
-            dir.walkTopDown().maxDepth(5).filter { file ->
-                file.isFile &&
-                    (file.extension.equals("apk", ignoreCase = true) || file.extension.equals("aar", ignoreCase = true)) &&
-                    !file.name.endsWith("-unaligned.apk", ignoreCase = true) &&
-                    !file.path.contains("intermediates", ignoreCase = true) &&
-                    !file.path.contains("reports", ignoreCase = true) &&
-                    file.length() > 1000L
-            }.toList()
-        }.toMutableList()
-
-        allOutputs.addAll(metadataApks)
-        val distinctOutputs = allOutputs.distinct()
-
-        // 1. Prefer recently generated APKs/AARs (buildStartTime - 10000L)
-        val recentArtifacts = distinctOutputs.filter { it.lastModified() >= buildStartTime - 10_000L }
-
-        val finalArtifact = if (recentArtifacts.isNotEmpty()) {
-            recentArtifacts.filter { it.extension.equals("apk", ignoreCase = true) }.maxByOrNull { it.lastModified() }
-                ?: recentArtifacts.filter { it.extension.equals("aar", ignoreCase = true) }.maxByOrNull { it.lastModified() }
-                ?: recentArtifacts.maxByOrNull { it.lastModified() }
-        } else if (distinctOutputs.isNotEmpty()) {
-            // Fallback: If Gradle succeeded, resolve the most recently modified APK/AAR in outputs regardless of timestamp
-            distinctOutputs.filter { it.extension.equals("apk", ignoreCase = true) }.maxByOrNull { it.lastModified() }
-                ?: distinctOutputs.filter { it.extension.equals("aar", ignoreCase = true) }.maxByOrNull { it.lastModified() }
-                ?: distinctOutputs.maxByOrNull { it.lastModified() }
-        } else {
-            // Also check for pure Java/Kotlin library .jar in build/libs/
-            val jarDirs = listOf(jarOutputDir, altJarOutputDir).filter { it.exists() && it.isDirectory }
-            val jarArtifacts = jarDirs.flatMap { dir ->
-                dir.walkTopDown().filter { file ->
-                    file.isFile && file.extension.equals("jar", ignoreCase = true) &&
-                        !file.name.endsWith("-sources.jar", ignoreCase = true) &&
-                        !file.name.endsWith("-javadoc.jar", ignoreCase = true)
-                }.toList()
+            allAars.isNotEmpty() -> {
+                val inOutputs = allAars.filter { it.path.contains("outputs", ignoreCase = true) }
+                val recent = allAars.filter { it.lastModified() >= buildStartTime - 10_000L }
+                (if (recent.isNotEmpty()) recent.maxByOrNull { it.lastModified() } else null)
+                    ?: inOutputs.maxByOrNull { it.lastModified() }
+                    ?: allAars.maxByOrNull { it.lastModified() }
             }
-            jarArtifacts.maxByOrNull { it.lastModified() }
+            else -> {
+                // Also check for pure Java/Kotlin library .jar in build/libs/
+                val jarDirs = listOf(File(project.rootDir, "build/libs"), File(project.rootDir, "app/build/libs")).filter { it.exists() && it.isDirectory }
+                val jarArtifacts = jarDirs.flatMap { dir ->
+                    dir.walkTopDown().filter { file ->
+                        file.isFile && file.extension.equals("jar", ignoreCase = true) &&
+                            !file.name.endsWith("-sources.jar", ignoreCase = true) &&
+                            !file.name.endsWith("-javadoc.jar", ignoreCase = true)
+                    }.toList()
+                }
+                jarArtifacts.maxByOrNull { it.lastModified() }
+            }
         }
 
         if (finalArtifact == null) {
+            val buildDir = File(project.rootDir, "app/build").takeIf { it.exists() } ?: File(project.rootDir, "build")
+            val buildTree = if (buildDir.exists()) {
+                buildDir.walkTopDown().maxDepth(4).take(25).map { it.path.removePrefix(project.rootDir.absolutePath) }.joinToString("\n  ")
+            } else "(build dir not found)"
+            _events.emit(BuildOutputEvent.LogLine("Build output directory structure:\n  $buildTree", isError = true))
+
             val msg = if (isRu) "✖ Ошибка: Сборка завершилась, но выходной APK/AAR файл не был создан в build/outputs/."
                       else "✖ Error: Build completed, but no output APK/AAR artifact was generated in build/outputs/."
             lastBuildErrorSummary = msg
