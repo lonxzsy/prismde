@@ -1083,6 +1083,41 @@ data class NdkVersion(
                             }
                         }
                     }
+                } else {
+                    // No LLD found (e.g., old Clang 7 NDK). Link standard ld from GCC toolchain.
+                    // Clang 7 uses default linker without -fuse-ld flag, so it needs working 'ld'.
+                    val gccLdCandidates = listOf(
+                        File(ndkDir, "toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/aarch64-linux-android/bin/ld"),
+                        File(ndkDir, "android-ndk-aide/toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/aarch64-linux-android/bin/ld"),
+                        File(ndkDir, "toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/bin/aarch64-linux-android-ld"),
+                        File(ndkDir, "android-ndk-aide/toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/bin/aarch64-linux-android-ld")
+                    )
+                    val gccLd = gccLdCandidates.firstOrNull { it.exists() && it.length() > 1000L }
+                    
+                    if (gccLd != null) {
+                        val localLd = File(binDir, "ld")
+                        if (!localLd.exists() || localLd.length() == 0L) {
+                            try { localLd.delete() } catch (_: Throwable) {}
+                            try {
+                                android.system.Os.symlink(gccLd.absolutePath, localLd.absolutePath)
+                            } catch (_: Throwable) {
+                                try { gccLd.copyTo(localLd, overwrite = true) } catch (_: Throwable) {}
+                            }
+                        }
+                        applyChmod755(localLd)
+                        
+                        // Also create ld.bfd alias
+                        val localLdBfd = File(binDir, "ld.bfd")
+                        if (!localLdBfd.exists() || localLdBfd.length() == 0L) {
+                            try { localLdBfd.delete() } catch (_: Throwable) {}
+                            try {
+                                android.system.Os.symlink("ld", localLdBfd.absolutePath)
+                            } catch (_: Throwable) {
+                                try { gccLd.copyTo(localLdBfd, overwrite = true) } catch (_: Throwable) {}
+                            }
+                        }
+                        applyChmod755(localLdBfd)
+                    }
                 }
 
                 // 3c. Ensure companion LLVM tools (llvm-ar, llvm-ranlib, llvm-strip, llvm-objcopy, llvm-nm)
