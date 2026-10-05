@@ -1150,8 +1150,7 @@ class BuildProcessRunner {
                 .filter { it.isFile && it.name == "output-metadata.json" }
                 .forEach { jsonFile ->
                     val jsonText = jsonFile.readText()
-                    val match = Regex(""""outputFile"\s*:\s*"([^"]+)"""").find(jsonText)
-                    if (match != null) {
+                    Regex(""""outputFile"\s*:\s*"([^"]+)"""").findAll(jsonText).forEach { match ->
                         val apkFile = File(jsonFile.parentFile, match.groupValues[1])
                         if (apkFile.exists() && apkFile.isFile && apkFile.length() > 1000L) {
                             metadataApks.add(apkFile)
