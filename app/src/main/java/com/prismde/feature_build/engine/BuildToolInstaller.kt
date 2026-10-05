@@ -1153,14 +1153,18 @@ object BuildToolInstaller {
             val clangMajorVersion = detectNdkClangVersion(rootDir)
             val linkerFlag = when {
                 clangMajorVersion >= 9 -> "-fuse-ld=lld"
-                clangMajorVersion in 5..8 -> "-fuse-ld=gold"
-                clangMajorVersion in 1..4 -> "" // Very old Clang, use default
+                clangMajorVersion == 8 -> "-fuse-ld=gold"
                 else -> {
+                    // Clang 7 and below don't support -fuse-ld syntax reliably.
                     // Detection failed (version 0). Check if this looks like a modern NDK structure.
                     // Modern NDKs have toolchains/llvm/prebuilt structure and typically support lld.
-                    val hasModernStructure = File(rootDir, "toolchains/llvm/prebuilt").exists() ||
-                                            File(rootDir, "android-ndk-aide/toolchains/llvm/prebuilt").exists()
-                    if (hasModernStructure) "-fuse-ld=lld" else ""
+                    if (clangMajorVersion == 0) {
+                        val hasModernStructure = File(rootDir, "toolchains/llvm/prebuilt").exists() ||
+                                                File(rootDir, "android-ndk-aide/toolchains/llvm/prebuilt").exists()
+                        if (hasModernStructure) "-fuse-ld=lld" else ""
+                    } else {
+                        "" // Clang 1-7: use default linker without -fuse-ld flag
+                    }
                 }
             }
 
@@ -1178,12 +1182,18 @@ object BuildToolInstaller {
                         var content = mk.readText()
                         
                         // Remove any existing incompatible -fuse-ld= flags and old comments
-                        if (content.contains("-fuse-ld=lld") && linkerFlag != "-fuse-ld=lld") {
-                            content = content.replace(Regex("""override\s+TARGET_LDFLAGS\s*\+=\s*-fuse-ld=lld\n?"""), "")
-                            content = content.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld\n?"""), "")
-                            // Remove old PrismDE comment about lld
-                            content = content.replace(Regex("""# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce LLVM lld\n"""), "")
+                        if (linkerFlag.isEmpty()) {
+                            // Remove all -fuse-ld flags if we don't want any
+                            content = content.replace(Regex("""override\s+TARGET_LDFLAGS\s*\+=\s*-fuse-ld=\w+\n?"""), "")
+                            content = content.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=\w+\n?"""), "")
+                        } else if (content.contains("-fuse-ld=") && !content.contains(linkerFlag)) {
+                            // Replace incompatible linker flag
+                            content = content.replace(Regex("""override\s+TARGET_LDFLAGS\s*\+=\s*-fuse-ld=\w+\n?"""), "")
+                            content = content.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=\w+\n?"""), "")
                         }
+                        // Remove old PrismDE comments
+                        content = content.replace(Regex("""# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce LLVM lld\n"""), "")
+                        content = content.replace(Regex("""# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce compatible linker \(Clang \d+\)\n"""), "")
                         
                         // Add PrismDE overrides if not present
                         if (!content.contains("override GCC_TOOLCHAIN :=") || 
@@ -1194,6 +1204,8 @@ object BuildToolInstaller {
                                 append("\n# PrismDE: Disable legacy GCC toolchain in Clang invocations")
                                 if (linkerFlag.isNotEmpty()) {
                                     append(" and enforce compatible linker (Clang $clangMajorVersion)")
+                                } else if (clangMajorVersion > 0) {
+                                    append(" (Clang $clangMajorVersion uses default linker)")
                                 }
                                 append("\n")
                                 append("override GCC_TOOLCHAIN :=\n")
@@ -1211,32 +1223,33 @@ object BuildToolInstaller {
             }
 
             // Also patch any Application.mk under rootDir with compatible linker flag
-            if (linkerFlag.isNotEmpty()) {
-                try {
-                    rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
-                        var text = appMk.readText()
-                        var modified = false
-                        
-                        // Remove incompatible lld flag if present
-                        if (text.contains("-fuse-ld=lld") && linkerFlag != "-fuse-ld=lld") {
-                            text = text.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
-                            // Also remove old PrismDE comment
+            try {
+                rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
+                    var text = appMk.readText()
+                    var modified = false
+                    
+                    // Remove all incompatible -fuse-ld flags
+                    if (text.contains("-fuse-ld=")) {
+                        if (linkerFlag.isEmpty() || !text.contains(linkerFlag)) {
+                            text = text.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=\w+\n?"""), "")
+                            // Also remove old PrismDE comments
                             text = text.replace(Regex("""# PrismDE: Enforce LLVM lld linker\n"""), "")
+                            text = text.replace(Regex("""# PrismDE: Enforce compatible linker \(Clang \d+\)\n"""), "")
                             modified = true
-                        }
-                        
-                        // Add compatible linker flag if not present
-                        if (linkerFlag.isNotEmpty() && !text.contains(linkerFlag)) {
-                            text += "\n# PrismDE: Enforce compatible linker (Clang $clangMajorVersion)\nAPP_LDFLAGS += $linkerFlag\n"
-                            modified = true
-                        }
-                        
-                        if (modified) {
-                            appMk.writeText(text)
                         }
                     }
-                } catch (_: Throwable) {}
-            }
+                    
+                    // Add compatible linker flag if needed
+                    if (linkerFlag.isNotEmpty() && !text.contains(linkerFlag)) {
+                        text += "\n# PrismDE: Enforce compatible linker (Clang $clangMajorVersion)\nAPP_LDFLAGS += $linkerFlag\n"
+                        modified = true
+                    }
+                    
+                    if (modified) {
+                        appMk.writeText(text)
+                    }
+                }
+            } catch (_: Throwable) {}
         } catch (_: Throwable) {}
     }
 
