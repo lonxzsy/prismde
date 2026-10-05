@@ -700,6 +700,8 @@ class NdkSourcePropertiesAndGradleTest {
     @Test
     fun testPatchNdkMakefilesRemovesGccToolchain() {
         val root = tempFolder.newFolder("gcc_toolchain_strip_test")
+        // Create mock modern NDK structure
+        File(root, "toolchains/llvm/prebuilt/linux-arm64/bin").mkdirs()
         val buildDir = File(root, "build/core").also { it.mkdirs() }
         val mkFile = File(buildDir, "default-build-commands.mk").also {
             it.writeText(
@@ -760,6 +762,8 @@ class NdkSourcePropertiesAndGradleTest {
     @Test
     fun testCleanMakefileContentStripsLgccAndInjectsOverrideTargetLibgcc() {
         val root = tempFolder.newFolder("lgcc_strip_test")
+        // Create mock modern NDK structure
+        File(root, "toolchains/llvm/prebuilt/linux-arm64/bin").mkdirs()
         val buildDir = File(root, "build/core").also { it.mkdirs() }
         val mkFile = File(buildDir, "default-build-commands.mk").also {
             it.writeText(
@@ -806,6 +810,8 @@ class NdkSourcePropertiesAndGradleTest {
     @Test
     fun testPatchNdkMakefilesInjectsFuseLdLld() {
         val root = tempFolder.newFolder("fuse_ld_test")
+        // Create mock modern NDK structure so detection assumes lld support
+        File(root, "toolchains/llvm/prebuilt/linux-arm64/bin").mkdirs()
         val buildDir = File(root, "build/core").also { it.mkdirs() }
         val mkFile = File(buildDir, "default-build-commands.mk").also {
             it.writeText("TARGET_LDFLAGS := -O2\n")

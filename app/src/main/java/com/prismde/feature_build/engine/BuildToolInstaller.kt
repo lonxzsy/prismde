@@ -1093,6 +1093,42 @@ object BuildToolInstaller {
     }
 
     /**
+     * Detects the major version of Clang in the given NDK directory.
+     * Returns 0 if detection fails or Clang is not found.
+     */
+    private fun detectNdkClangVersion(ndkDir: File): Int {
+        val clangCandidates = listOf(
+            File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
+            File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang"),
+            File(ndkDir, "toolchains/llvm/prebuilt/linux-x86_64/bin/clang"),
+            File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
+            File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-aarch64/bin/clang"),
+            File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-x86_64/bin/clang")
+        )
+
+        for (clang in clangCandidates) {
+            if (!clang.exists() || !clang.isFile) continue
+            try {
+                val process = ProcessBuilder(clang.absolutePath, "--version")
+                    .redirectErrorStream(true)
+                    .start()
+                val output = process.inputStream.bufferedReader().use { it.readText() }
+                process.waitFor()
+
+                // Parse "clang version X.Y.Z" or "clang version X.Y.Z-..."
+                val versionMatch = Regex("""clang version (\d+)\.\d+""").find(output)
+                if (versionMatch != null) {
+                    return versionMatch.groupValues[1].toIntOrNull() ?: 0
+                }
+            } catch (_: Throwable) {
+                // Try next candidate
+            }
+        }
+
+        return 0
+    }
+
+    /**
      * Recursively sanitizes and repairs all NDK makefiles and scripts:
      * - Fixes dangling parentheses left behind by corrupted regexes.
      * - Strips unsupported legacy flags such as -gcc-toolchain.
@@ -1113,37 +1149,81 @@ object BuildToolInstaller {
                 }
             }
 
-            // Inject override GCC_TOOLCHAIN :=, override TARGET_LIBGCC := and override TARGET_LDFLAGS += -fuse-ld=lld into build/core/init.mk and default-build-commands.mk
+            // Detect Clang version in the NDK to determine compatible linker
+            val clangMajorVersion = detectNdkClangVersion(rootDir)
+            val linkerFlag = when {
+                clangMajorVersion >= 9 -> "-fuse-ld=lld"
+                clangMajorVersion in 5..8 -> "-fuse-ld=gold"
+                clangMajorVersion in 1..4 -> "" // Very old Clang, use default
+                else -> {
+                    // Detection failed (version 0). Check if this looks like a modern NDK structure.
+                    // Modern NDKs have toolchains/llvm/prebuilt structure and typically support lld.
+                    val hasModernStructure = File(rootDir, "toolchains/llvm/prebuilt").exists() ||
+                                            File(rootDir, "android-ndk-aide/toolchains/llvm/prebuilt").exists()
+                    if (hasModernStructure) "-fuse-ld=lld" else ""
+                }
+            }
+
+            // Inject override GCC_TOOLCHAIN :=, override TARGET_LIBGCC := and linker flag into build/core makefiles
             val initMkCandidates = listOf(
                 File(rootDir, "build/core/init.mk"),
                 File(rootDir, "android-ndk-aide/build/core/init.mk"),
                 File(rootDir, "build/core/default-build-commands.mk"),
                 File(rootDir, "android-ndk-aide/build/core/default-build-commands.mk")
             )
-            val overrideSnippet = "\n# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce LLVM lld\n" +
-                "override GCC_TOOLCHAIN :=\n" +
-                "override TARGET_LIBGCC :=\n" +
-                "override TARGET_LDFLAGS += -fuse-ld=lld\n"
+            
             for (mk in initMkCandidates) {
                 if (mk.exists() && mk.isFile) {
                     try {
-                        val content = mk.readText()
-                        if (!content.contains("override GCC_TOOLCHAIN :=") || !content.contains("override TARGET_LIBGCC :=") || !content.contains("-fuse-ld=lld")) {
-                            mk.appendText(overrideSnippet)
+                        var content = mk.readText()
+                        
+                        // Remove any existing incompatible -fuse-ld= flags
+                        if (content.contains("-fuse-ld=lld") && linkerFlag != "-fuse-ld=lld") {
+                            content = content.replace(Regex("""override\s+TARGET_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
+                            content = content.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
                         }
+                        
+                        // Add PrismDE overrides if not present
+                        if (!content.contains("override GCC_TOOLCHAIN :=") || 
+                            !content.contains("override TARGET_LIBGCC :=") || 
+                            (linkerFlag.isNotEmpty() && !content.contains(linkerFlag))) {
+                            
+                            val overrideSnippet = buildString {
+                                append("\n# PrismDE: Disable legacy GCC toolchain in Clang invocations")
+                                if (linkerFlag.isNotEmpty()) {
+                                    append(" and enforce compatible linker (Clang $clangMajorVersion)")
+                                }
+                                append("\n")
+                                append("override GCC_TOOLCHAIN :=\n")
+                                append("override TARGET_LIBGCC :=\n")
+                                if (linkerFlag.isNotEmpty()) {
+                                    append("override TARGET_LDFLAGS += $linkerFlag\n")
+                                }
+                            }
+                            content += overrideSnippet
+                        }
+                        
+                        mk.writeText(content)
                     } catch (_: Throwable) {}
                 }
             }
 
-            // Also check any Application.mk under rootDir and ensure APP_LDFLAGS += -fuse-ld=lld
-            try {
-                rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
-                    val text = appMk.readText()
-                    if (!text.contains("-fuse-ld=lld")) {
-                        appMk.appendText("\n# PrismDE: Enforce LLVM lld linker\nAPP_LDFLAGS += -fuse-ld=lld\n")
+            // Also patch any Application.mk under rootDir with compatible linker flag
+            if (linkerFlag.isNotEmpty()) {
+                try {
+                    rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
+                        var text = appMk.readText()
+                        // Remove incompatible lld flag if present
+                        if (text.contains("-fuse-ld=lld") && linkerFlag != "-fuse-ld=lld") {
+                            text = text.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
+                        }
+                        // Add compatible linker flag if not present
+                        if (!text.contains(linkerFlag)) {
+                            appMk.appendText("\n# PrismDE: Enforce compatible linker (Clang $clangMajorVersion)\nAPP_LDFLAGS += $linkerFlag\n")
+                        }
                     }
-                }
-            } catch (_: Throwable) {}
+                } catch (_: Throwable) {}
+            }
         } catch (_: Throwable) {}
     }
 
