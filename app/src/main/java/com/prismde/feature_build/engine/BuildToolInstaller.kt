@@ -1177,10 +1177,12 @@ object BuildToolInstaller {
                     try {
                         var content = mk.readText()
                         
-                        // Remove any existing incompatible -fuse-ld= flags
+                        // Remove any existing incompatible -fuse-ld= flags and old comments
                         if (content.contains("-fuse-ld=lld") && linkerFlag != "-fuse-ld=lld") {
-                            content = content.replace(Regex("""override\s+TARGET_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
-                            content = content.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
+                            content = content.replace(Regex("""override\s+TARGET_LDFLAGS\s*\+=\s*-fuse-ld=lld\n?"""), "")
+                            content = content.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld\n?"""), "")
+                            // Remove old PrismDE comment about lld
+                            content = content.replace(Regex("""# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce LLVM lld\n"""), "")
                         }
                         
                         // Add PrismDE overrides if not present
@@ -1213,13 +1215,24 @@ object BuildToolInstaller {
                 try {
                     rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
                         var text = appMk.readText()
+                        var modified = false
+                        
                         // Remove incompatible lld flag if present
                         if (text.contains("-fuse-ld=lld") && linkerFlag != "-fuse-ld=lld") {
                             text = text.replace(Regex("""APP_LDFLAGS\s*\+=\s*-fuse-ld=lld"""), "")
+                            // Also remove old PrismDE comment
+                            text = text.replace(Regex("""# PrismDE: Enforce LLVM lld linker\n"""), "")
+                            modified = true
                         }
+                        
                         // Add compatible linker flag if not present
-                        if (!text.contains(linkerFlag)) {
-                            appMk.appendText("\n# PrismDE: Enforce compatible linker (Clang $clangMajorVersion)\nAPP_LDFLAGS += $linkerFlag\n")
+                        if (linkerFlag.isNotEmpty() && !text.contains(linkerFlag)) {
+                            text += "\n# PrismDE: Enforce compatible linker (Clang $clangMajorVersion)\nAPP_LDFLAGS += $linkerFlag\n"
+                            modified = true
+                        }
+                        
+                        if (modified) {
+                            appMk.writeText(text)
                         }
                     }
                 } catch (_: Throwable) {}
