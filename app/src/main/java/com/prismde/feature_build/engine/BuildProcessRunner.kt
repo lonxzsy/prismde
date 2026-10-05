@@ -799,6 +799,22 @@ class BuildProcessRunner {
             BuildToolInstaller.patchNdkMakefiles(sdkNdk26)
             BuildToolInstaller.patchNdkMakefiles(project.rootDir)
 
+            // Verify NDK LLVM binutils AGP needs (strip/objcopy). AGP resolves the
+            // linux-x86_64 host tag even on ARM64 devices (via linux-x86_64 ->
+            // linux-arm64 symlink), so check both paths explicitly in the log.
+            try {
+                val llvmBinNames = listOf("llvm-strip", "llvm-objcopy", "llvm-nm", "llvm-ar", "clang", "ld")
+                for (host in listOf("linux-x86_64", "linux-arm64")) {
+                    val binDir = File(sdkNdk26, "toolchains/llvm/prebuilt/$host/bin")
+                    val details = llvmBinNames.joinToString(", ") { name ->
+                        val f = File(binDir, name)
+                        val size = try { if (f.exists() && f.isFile) f.length() else -1L } catch (_: Throwable) { -1L }
+                        "$name(exists=${f.exists()},size=$size)"
+                    }
+                    _events.emit(BuildOutputEvent.LogLine("NDK binutils verification [$host]: $details"))
+                }
+            } catch (_: Throwable) {}
+
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)
 

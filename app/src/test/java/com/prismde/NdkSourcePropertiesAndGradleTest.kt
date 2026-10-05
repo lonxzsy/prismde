@@ -808,6 +808,30 @@ class NdkSourcePropertiesAndGradleTest {
     }
 
     @Test
+    fun testEnsureNdkPermissionsProvisionsLlvmStripFromGccToolchain() {
+        val root = tempFolder.newFolder("llvm_strip_test")
+        val binDir = File(root, "toolchains/llvm/prebuilt/linux-arm64/bin").also { it.mkdirs() }
+        // Simulate stripped NDK: clang exists, llvm-strip does not.
+        File(binDir, "clang").writeBytes(ByteArray(20000) { 2 })
+        // GCC 4.9 donor strip (realistic size).
+        val gccBinDir = File(root, "toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/bin").also { it.mkdirs() }
+        File(gccBinDir, "aarch64-linux-android-strip").writeBytes(ByteArray(50000) { 3 })
+        File(gccBinDir, "aarch64-linux-android-objcopy").writeBytes(ByteArray(50000) { 4 })
+
+        NdkVersion.ensureNdkPermissions(root)
+
+        val llvmStrip = File(binDir, "llvm-strip")
+        assertTrue("llvm-strip must be provisioned from GCC toolchain", llvmStrip.exists())
+        assertTrue("llvm-strip must be non-empty", llvmStrip.length() > 1000L)
+
+        val stripAlias = File(binDir, "strip")
+        assertTrue("strip alias must exist", stripAlias.exists())
+
+        val llvmObjcopy = File(binDir, "llvm-objcopy")
+        assertTrue("llvm-objcopy must be provisioned from GCC toolchain", llvmObjcopy.exists())
+    }
+
+    @Test
     fun testPatchNdkMakefilesInjectsFuseLdLld() {
         val root = tempFolder.newFolder("fuse_ld_test")
         // Create mock modern NDK structure so detection assumes lld support

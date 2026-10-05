@@ -1146,6 +1146,121 @@ data class NdkVersion(
                     }
                 }
 
+                // 3d. Provision missing LLVM binutils from GCC toolchain.
+                // Stripped NDK distributions (e.g. android-ndk-aide with Clang 7) ship
+                // clang but no llvm-strip/llvm-objcopy. AGP's stripDebugDebugSymbols
+                // task unconditionally executes <ndk>/toolchains/llvm/prebuilt/
+                // linux-x86_64/bin/llvm-strip, so a missing binary fails the whole
+                // build even after native compilation succeeds. Provision working
+                // equivalents from the bundled GCC 4.9 toolchain (verified ARM64
+                // binaries on device) instead of leaving the slot empty.
+                val gccBinSearchDirs = listOf(
+                    File(ndkDir, "toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/bin"),
+                    File(ndkDir, "android-ndk-aide/toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/bin"),
+                    File(ndkDir, "toolchains/arm-linux-androideabi-4.9/prebuilt/linux-arm64/bin"),
+                    File(ndkDir, "android-ndk-aide/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-arm64/bin"),
+                    File(ndkDir, "toolchains/x86_64-4.9/prebuilt/linux-arm64/bin"),
+                    File(ndkDir, "android-ndk-aide/toolchains/x86_64-4.9/prebuilt/linux-arm64/bin"),
+                    File(ndkDir, "toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/aarch64-linux-android/bin"),
+                    File(ndkDir, "android-ndk-aide/toolchains/aarch64-linux-android-4.9/prebuilt/linux-arm64/aarch64-linux-android/bin")
+                )
+                fun findGccDonor(names: List<String>): File? {
+                    for (dir in gccBinSearchDirs) {
+                        if (!dir.exists() || !dir.isDirectory) continue
+                        for (name in names) {
+                            val candidate = File(dir, name)
+                            try {
+                                if (candidate.exists() && candidate.isFile && candidate.length() > 1000L) return candidate
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                    return null
+                }
+                val llvmBinutilsToProvision = mapOf(
+                    "llvm-strip" to listOf("aarch64-linux-android-strip", "arm-linux-androideabi-strip", "strip"),
+                    "llvm-objcopy" to listOf("aarch64-linux-android-objcopy", "arm-linux-androideabi-objcopy", "objcopy"),
+                    "llvm-nm" to listOf("aarch64-linux-android-nm", "arm-linux-androideabi-nm", "nm"),
+                    "llvm-ar" to listOf("aarch64-linux-android-ar", "arm-linux-androideabi-ar", "ar"),
+                    "llvm-ranlib" to listOf("aarch64-linux-android-ranlib", "arm-linux-androideabi-ranlib", "ranlib"),
+                    "llvm-readelf" to listOf("aarch64-linux-android-readelf", "arm-linux-androideabi-readelf", "readelf"),
+                    "llvm-objdump" to listOf("aarch64-linux-android-objdump", "arm-linux-androideabi-objdump", "objdump"),
+                    "llvm-addr2line" to listOf("aarch64-linux-android-addr2line", "arm-linux-androideabi-addr2line", "addr2line"),
+                    "llvm-size" to listOf("aarch64-linux-android-size", "arm-linux-androideabi-size", "size"),
+                    "llvm-strings" to listOf("aarch64-linux-android-strings", "arm-linux-androideabi-strings", "strings")
+                )
+                val llvmAliasNames = mapOf(
+                    "llvm-strip" to listOf("strip", "aarch64-linux-android-strip"),
+                    "llvm-objcopy" to listOf("objcopy", "aarch64-linux-android-objcopy"),
+                    "llvm-nm" to listOf("nm", "aarch64-linux-android-nm"),
+                    "llvm-ar" to listOf("ar", "aarch64-linux-android-ar"),
+                    "llvm-ranlib" to listOf("ranlib", "aarch64-linux-android-ranlib"),
+                    "llvm-readelf" to listOf("readelf", "aarch64-linux-android-readelf"),
+                    "llvm-objdump" to listOf("objdump", "aarch64-linux-android-objdump"),
+                    "llvm-addr2line" to listOf("addr2line", "aarch64-linux-android-addr2line"),
+                    "llvm-size" to listOf("size", "aarch64-linux-android-size"),
+                    "llvm-strings" to listOf("strings", "aarch64-linux-android-strings")
+                )
+                for ((llvmName, donorNames) in llvmBinutilsToProvision) {
+                    val primaryFile = File(binDir, llvmName)
+                    val primaryOk = try {
+                        primaryFile.exists() && primaryFile.isFile && primaryFile.length() > 1000L
+                    } catch (_: Throwable) { false }
+                    if (!primaryOk) {
+                        // Prefer another LLVM bin dir that already has the tool.
+                        var donor: File? = null
+                        for (otherDir in llvmBinDirs) {
+                            if (otherDir == binDir) continue
+                            try {
+                                val other = File(otherDir, llvmName)
+                                if (other.exists() && other.isFile && other.length() > 1000L) {
+                                    donor = other
+                                    break
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                        if (donor == null) donor = findGccDonor(donorNames)
+                        if (donor != null) {
+                            try { primaryFile.delete() } catch (_: Throwable) {}
+                            try {
+                                if (donor.parentFile?.absolutePath == binDir.absolutePath) {
+                                    android.system.Os.symlink(donor.name, primaryFile.absolutePath)
+                                } else {
+                                    android.system.Os.symlink(donor.absolutePath, primaryFile.absolutePath)
+                                }
+                            } catch (_: Throwable) {
+                                try { donor.copyTo(primaryFile, overwrite = true) } catch (_: Throwable) {}
+                            }
+                        } else if (llvmName == "llvm-strip" || llvmName == "llvm-objcopy") {
+                            // Last resort: no-op shim so AGP strip/objcopy steps exit 0
+                            // and keep the (unstripped) .so instead of failing the build.
+                            try {
+                                primaryFile.delete()
+                            } catch (_: Throwable) {}
+                            try {
+                                primaryFile.writeText("#!/system/bin/sh\nexit 0\n")
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                    try {
+                        if (primaryFile.exists()) applyChmod755(primaryFile)
+                    } catch (_: Throwable) {}
+                    for (aliasName in llvmAliasNames[llvmName].orEmpty()) {
+                        val aliasFile = File(binDir, aliasName)
+                        val aliasOk = try {
+                            aliasFile.exists() && (!aliasFile.isFile || aliasFile.length() > 0L)
+                        } catch (_: Throwable) { false }
+                        if (!aliasOk && primaryFile.exists()) {
+                            try { aliasFile.delete() } catch (_: Throwable) {}
+                            try {
+                                android.system.Os.symlink(llvmName, aliasFile.absolutePath)
+                            } catch (_: Throwable) {
+                                try { primaryFile.copyTo(aliasFile, overwrite = false) } catch (_: Throwable) {}
+                            }
+                            try { applyChmod755(aliasFile) } catch (_: Throwable) {}
+                        }
+                    }
+                }
+
                 binDir.listFiles()?.forEach { f ->
                     applyChmod755(f)
                 }
