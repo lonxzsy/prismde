@@ -1113,24 +1113,37 @@ object BuildToolInstaller {
                 }
             }
 
-            // Inject override GCC_TOOLCHAIN := into build/core/init.mk and default-build-commands.mk
+            // Inject override GCC_TOOLCHAIN :=, override TARGET_LIBGCC := and override TARGET_LDFLAGS += -fuse-ld=lld into build/core/init.mk and default-build-commands.mk
             val initMkCandidates = listOf(
                 File(rootDir, "build/core/init.mk"),
                 File(rootDir, "android-ndk-aide/build/core/init.mk"),
                 File(rootDir, "build/core/default-build-commands.mk"),
                 File(rootDir, "android-ndk-aide/build/core/default-build-commands.mk")
             )
-            val overrideSnippet = "\n# PrismDE: Disable legacy GCC toolchain in Clang invocations\noverride GCC_TOOLCHAIN :=\noverride TARGET_LIBGCC :=\n"
+            val overrideSnippet = "\n# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce LLVM lld\n" +
+                "override GCC_TOOLCHAIN :=\n" +
+                "override TARGET_LIBGCC :=\n" +
+                "override TARGET_LDFLAGS += -fuse-ld=lld\n"
             for (mk in initMkCandidates) {
                 if (mk.exists() && mk.isFile) {
                     try {
                         val content = mk.readText()
-                        if (!content.contains("override GCC_TOOLCHAIN :=") || !content.contains("override TARGET_LIBGCC :=")) {
+                        if (!content.contains("override GCC_TOOLCHAIN :=") || !content.contains("override TARGET_LIBGCC :=") || !content.contains("-fuse-ld=lld")) {
                             mk.appendText(overrideSnippet)
                         }
                     } catch (_: Throwable) {}
                 }
             }
+
+            // Also check any Application.mk under rootDir and ensure APP_LDFLAGS += -fuse-ld=lld
+            try {
+                rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
+                    val text = appMk.readText()
+                    if (!text.contains("-fuse-ld=lld")) {
+                        appMk.appendText("\n# PrismDE: Enforce LLVM lld linker\nAPP_LDFLAGS += -fuse-ld=lld\n")
+                    }
+                }
+            } catch (_: Throwable) {}
         } catch (_: Throwable) {}
     }
 
@@ -2226,7 +2239,7 @@ object BuildToolInstaller {
         }
 
         val btDirInArchive = File(extractDir, "build-tools").takeIf { it.exists() } ?: extractDir
-        val toolsToCopy = listOf("aapt2", "aapt", "aidl", "zipalign", "dexdump", "split-select", "llvm-rs-cc")
+        val toolsToCopy = listOf("aapt2", "aapt", "aidl", "zipalign", "dexdump", "split-select", "llvm-rs-cc", "lld", "ld.lld", "ld", "aarch64-linux-android-ld")
         for (tool in toolsToCopy) {
             val src = File(btDirInArchive, tool).takeIf { it.exists() }
                 ?: btDirInArchive.walkTopDown().maxDepth(3).firstOrNull { it.name == tool && it.isFile }

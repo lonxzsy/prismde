@@ -780,6 +780,49 @@ class NdkSourcePropertiesAndGradleTest {
         assertTrue("Must preserve -Wl,--no-undefined", text.contains("-Wl,--no-undefined"))
         assertTrue("Must inject override TARGET_LIBGCC :=", text.contains("override TARGET_LIBGCC :="))
     }
+
+    @Test
+    fun testEnsureNdkPermissionsProvisionsLinkersAndAliases() {
+        val root = tempFolder.newFolder("linker_test")
+        val binDir = File(root, "toolchains/llvm/prebuilt/linux-arm64/bin").also { it.mkdirs() }
+        // Create dummy lld binary (>50KB)
+        val lldFile = File(binDir, "lld").also {
+            it.writeBytes(ByteArray(60000) { 1 })
+        }
+
+        NdkVersion.ensureNdkPermissions(root)
+
+        val ldFile = File(binDir, "ld")
+        val ldLldFile = File(binDir, "ld.lld")
+        val aarch64Ld = File(binDir, "aarch64-linux-android-ld")
+        val aarch64LdLld = File(binDir, "aarch64-linux-android-ld.lld")
+
+        assertTrue("ld executable must exist", ldFile.exists())
+        assertTrue("ld.lld executable must exist", ldLldFile.exists())
+        assertTrue("aarch64-linux-android-ld must exist", aarch64Ld.exists())
+        assertTrue("aarch64-linux-android-ld.lld must exist", aarch64LdLld.exists())
+    }
+
+    @Test
+    fun testPatchNdkMakefilesInjectsFuseLdLld() {
+        val root = tempFolder.newFolder("fuse_ld_test")
+        val buildDir = File(root, "build/core").also { it.mkdirs() }
+        val mkFile = File(buildDir, "default-build-commands.mk").also {
+            it.writeText("TARGET_LDFLAGS := -O2\n")
+        }
+        val appMk = File(root, "app/src/main/jni/Application.mk").also {
+            it.parentFile?.mkdirs()
+            it.writeText("APP_ABI := arm64-v8a\n")
+        }
+
+        BuildToolInstaller.patchNdkMakefiles(root)
+
+        val mkText = mkFile.readText()
+        assertTrue("Must inject -fuse-ld=lld into makefile", mkText.contains("override TARGET_LDFLAGS += -fuse-ld=lld"))
+
+        val appText = appMk.readText()
+        assertTrue("Must inject APP_LDFLAGS += -fuse-ld=lld into Application.mk", appText.contains("APP_LDFLAGS += -fuse-ld=lld"))
+    }
 }
 
 

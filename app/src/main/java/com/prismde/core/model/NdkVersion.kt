@@ -921,15 +921,32 @@ data class NdkVersion(
                 }
             }
 
-            // 3. Ensure LLVM bin directory tools are executable
+            // 3. Ensure LLVM bin directory tools (clang, lld, ld, ar, strip, etc.) are executable and properly aliased
             val llvmBinDirs = listOf(
                 File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
                 File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
                 File(ndkDir, "toolchains/llvm/prebuilt/linux-x86_64/bin"),
                 File(ndkDir, "bin"),
                 File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin"),
-                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-x86_64/bin")
+                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-aarch64/bin"),
+                File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-x86_64/bin"),
+                File(ndkDir, "android-ndk-aide/bin")
             )
+
+            val allCandidateDirs = llvmBinDirs + prebuiltBinDirs + (if (context != null) {
+                val sdkBtDir = File(context.filesDir, "tools/android-sdk/build-tools")
+                if (sdkBtDir.exists()) sdkBtDir.listFiles()?.filter { it.isDirectory } ?: emptyList() else emptyList()
+            } else emptyList())
+
+            val globalLldBinary = allCandidateDirs.mapNotNull { dir ->
+                dir.listFiles()?.firstOrNull {
+                    it.isFile && (it.name == "lld" || it.name.startsWith("lld-") || it.name == "ld.lld") &&
+                    it.length() > 50000L && com.prismde.feature_build.engine.BuildToolInstaller.isExecutableOnCurrentPlatform(it)
+                } ?: dir.listFiles()?.firstOrNull {
+                    it.isFile && (it.name == "lld" || it.name.startsWith("lld-") || it.name == "ld.lld") && it.length() > 50000L
+                }
+            }.firstOrNull()
+
             for (binDir in llvmBinDirs) {
                 if (!binDir.exists() || !binDir.isDirectory) continue
 
@@ -982,6 +999,113 @@ data class NdkVersion(
                                     try { clangPlusExe.copyTo(aliasPlusFile, overwrite = false) } catch (_: Throwable) {}
                                 }
                                 applyChmod755(aliasPlusFile)
+                            }
+                        }
+                    }
+                }
+
+                // 3b. Ensure LLVM LLD linker and standard ld / ld.lld aliases exist and are executable
+                val localLldCandidate = binDir.listFiles()?.firstOrNull {
+                    it.isFile && (it.name == "lld" || it.name.startsWith("lld-")) && it.length() > 50000L
+                } ?: globalLldBinary
+
+                if (localLldCandidate != null) {
+                    val localLld = File(binDir, "lld")
+                    if (!localLld.exists() || localLld.length() < 1000L) {
+                        try { localLld.delete() } catch (_: Throwable) {}
+                        try {
+                            if (localLldCandidate.absolutePath != localLld.absolutePath) {
+                                android.system.Os.symlink(localLldCandidate.absolutePath, localLld.absolutePath)
+                            }
+                        } catch (_: Throwable) {
+                            try { localLldCandidate.copyTo(localLld, overwrite = true) } catch (_: Throwable) {}
+                        }
+                    }
+                    applyChmod755(localLld)
+
+                    val localLdLld = File(binDir, "ld.lld")
+                    val localLd = File(binDir, "ld")
+                    for (ldTarget in listOf(localLdLld, localLd)) {
+                        val needsFix = !ldTarget.exists() || (ldTarget.isFile && ldTarget.length() == 0L)
+                        if (needsFix) {
+                            try { ldTarget.delete() } catch (_: Throwable) {}
+                            try {
+                                android.system.Os.symlink("lld", ldTarget.absolutePath)
+                            } catch (_: Throwable) {
+                                try {
+                                    // Shell script wrapper fallback if symlink cannot be created
+                                    ldTarget.writeText(
+                                        "#!/system/bin/sh\n" +
+                                        "DIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"\n" +
+                                        "if [ -x \"\$DIR/lld\" ]; then\n" +
+                                        "  exec \"\$DIR/lld\" \"\$@\"\n" +
+                                        "fi\n" +
+                                        "exec lld \"\$@\"\n"
+                                    )
+                                } catch (_: Throwable) {}
+                            }
+                        }
+                        applyChmod755(ldTarget)
+                    }
+
+                    // Target-prefixed linker aliases (e.g. aarch64-linux-android-ld, aarch64-linux-android-ld.lld)
+                    val ldPrefixes = listOf(
+                        "aarch64-linux-android",
+                        "armv7a-linux-androideabi",
+                        "arm-linux-androideabi",
+                        "i686-linux-android",
+                        "x86_64-linux-android"
+                    )
+                    for (prefix in ldPrefixes) {
+                        val aliasLd = File(binDir, "$prefix-ld")
+                        val aliasLdLld = File(binDir, "$prefix-ld.lld")
+                        for (alias in listOf(aliasLd, aliasLdLld)) {
+                            if (!alias.exists() || (alias.isFile && alias.length() == 0L)) {
+                                try { alias.delete() } catch (_: Throwable) {}
+                                try {
+                                    android.system.Os.symlink("ld.lld", alias.absolutePath)
+                                } catch (_: Throwable) {
+                                    try {
+                                        alias.writeText(
+                                            "#!/system/bin/sh\n" +
+                                            "DIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"\n" +
+                                            "if [ -x \"\$DIR/ld.lld\" ]; then\n" +
+                                            "  exec \"\$DIR/ld.lld\" \"\$@\"\n" +
+                                            "fi\n" +
+                                            "if [ -x \"\$DIR/lld\" ]; then\n" +
+                                            "  exec \"\$DIR/lld\" \"\$@\"\n" +
+                                            "fi\n" +
+                                            "exec ld.lld \"\$@\"\n"
+                                        )
+                                    } catch (_: Throwable) {}
+                                }
+                                applyChmod755(alias)
+                            }
+                        }
+                    }
+                }
+
+                // 3c. Ensure companion LLVM tools (llvm-ar, llvm-ranlib, llvm-strip, llvm-objcopy, llvm-nm)
+                val companionTools = mapOf(
+                    "llvm-ar" to listOf("ar", "aarch64-linux-android-ar", "arm-linux-androideabi-ar"),
+                    "llvm-ranlib" to listOf("ranlib", "aarch64-linux-android-ranlib"),
+                    "llvm-strip" to listOf("strip", "aarch64-linux-android-strip"),
+                    "llvm-objcopy" to listOf("objcopy", "aarch64-linux-android-objcopy"),
+                    "llvm-nm" to listOf("nm", "aarch64-linux-android-nm")
+                )
+                for ((primaryName, aliases) in companionTools) {
+                    val primaryFile = File(binDir, primaryName)
+                    if (primaryFile.exists() && primaryFile.length() > 1000L) {
+                        applyChmod755(primaryFile)
+                        for (aliasName in aliases) {
+                            val aliasFile = File(binDir, aliasName)
+                            if (!aliasFile.exists()) {
+                                try {
+                                    android.system.Os.symlink(primaryName, aliasFile.absolutePath)
+                                } catch (_: Throwable) {
+                                    try { primaryFile.copyTo(aliasFile, overwrite = false) } catch (_: Throwable) {}
+                                }
+                                applyChmod755(aliasFile)
                             }
                         }
                     }

@@ -191,28 +191,47 @@ class NdkExtractor {
             }
         }
 
-        // Process any deferred symlinks (fallback copy if symlinks not supported on filesystem)
-        for ((linkFile, targetPath) in deferredSymlinks) {
-            try {
-                try { linkFile.delete() } catch (_: Throwable) {}
-                try { android.system.Os.remove(linkFile.absolutePath) } catch (_: Throwable) {}
+        // Process any deferred symlinks in multiple passes (fallback copy if symlinks not supported on filesystem)
+        var remainingSymlinks = deferredSymlinks.toMutableList()
+        for (pass in 1..3) {
+            if (remainingSymlinks.isEmpty()) break
+            val unresolved = mutableListOf<Pair<File, String>>()
+            for ((linkFile, targetPath) in remainingSymlinks) {
                 try {
-                    android.system.Os.symlink(targetPath, linkFile.absolutePath)
-                    continue
-                } catch (_: Throwable) {}
-
-                val targetFile = if (File(targetPath).isAbsolute) {
-                    File(targetPath)
-                } else {
-                    File(linkFile.parentFile, targetPath)
-                }
-                if (targetFile.exists() && targetFile.isFile) {
-                    targetFile.copyTo(linkFile, overwrite = true)
-                    if (isExecutableEntry(linkFile)) {
-                        linkFile.setExecutable(true, false)
+                    try { linkFile.delete() } catch (_: Throwable) {}
+                    try { android.system.Os.remove(linkFile.absolutePath) } catch (_: Throwable) {}
+                    var symlinked = false
+                    try {
+                        android.system.Os.symlink(targetPath, linkFile.absolutePath)
+                        symlinked = true
+                    } catch (_: Throwable) {
+                        try {
+                            java.nio.file.Files.createSymbolicLink(linkFile.toPath(), java.nio.file.Paths.get(targetPath))
+                            symlinked = true
+                        } catch (_: Throwable) {}
                     }
-                }
-            } catch (_: Exception) {}
+                    if (symlinked) continue
+
+                    val targetFile = if (File(targetPath).isAbsolute) {
+                        File(targetPath)
+                    } else {
+                        File(linkFile.parentFile, targetPath)
+                    }
+                    if (targetFile.exists()) {
+                        if (targetFile.isFile) {
+                            targetFile.copyTo(linkFile, overwrite = true)
+                            if (isExecutableEntry(linkFile)) {
+                                linkFile.setExecutable(true, false)
+                            }
+                        } else if (targetFile.isDirectory) {
+                            targetFile.copyRecursively(linkFile, overwrite = true)
+                        }
+                    } else {
+                        unresolved.add(linkFile to targetPath)
+                    }
+                } catch (_: Exception) {}
+            }
+            remainingSymlinks = unresolved
         }
     }
 
@@ -332,11 +351,22 @@ class NdkExtractor {
                name == "llvm-ar" ||
                name == "llvm-nm" ||
                name == "llvm-strip" ||
+               name == "llvm-objcopy" ||
+               name == "llvm-ranlib" ||
+               name == "llvm-readobj" ||
+               name == "llvm-readelf" ||
                name == "ld.lld" ||
                name == "lld" ||
+               name == "ld" ||
+               name.endsWith("-ld") ||
+               name.endsWith("-ld.lld") ||
                name == "busybox" ||
                name == "make" ||
                name == "sh" ||
+               name == "yasm" ||
+               name == "ar" ||
+               name == "strip" ||
+               name == "ranlib" ||
                parent == "bin"
     }
 }

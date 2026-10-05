@@ -785,11 +785,17 @@ class BuildProcessRunner {
             BuildToolInstaller.flattenOrLinkNdkRoot(ndkR26c)
             com.prismde.core.model.NdkVersion.ensureNdkStlLibraries(ndkR26c, context)
             com.prismde.core.model.NdkVersion.ensureNdkPlatforms(ndkR26c)
+            com.prismde.core.model.NdkVersion.ensureNdkPermissions(ndkR26c, context)
+            val aideSub = File(ndkR26c, "android-ndk-aide")
+            if (aideSub.exists()) {
+                com.prismde.core.model.NdkVersion.ensureNdkPermissions(aideSub, context)
+            }
             BuildToolInstaller.patchNdkMakefiles(ndkR26c)
-            BuildToolInstaller.patchNdkMakefiles(File(ndkR26c, "android-ndk-aide"))
+            BuildToolInstaller.patchNdkMakefiles(aideSub)
             BuildToolInstaller.flattenOrLinkNdkRoot(sdkNdk26)
             com.prismde.core.model.NdkVersion.ensureNdkStlLibraries(sdkNdk26, context)
             com.prismde.core.model.NdkVersion.ensureNdkPlatforms(sdkNdk26)
+            com.prismde.core.model.NdkVersion.ensureNdkPermissions(sdkNdk26, context)
             BuildToolInstaller.patchNdkMakefiles(sdkNdk26)
             BuildToolInstaller.patchNdkMakefiles(project.rootDir)
 
@@ -1301,6 +1307,10 @@ class BuildProcessRunner {
                         File(ndkDir, "prebuilt/linux-aarch64/bin"),
                         File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin"),
                         File(ndkDir, "toolchains/llvm/prebuilt/linux-aarch64/bin"),
+                        File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin"),
+                        File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-aarch64/bin"),
+                        File(ndkDir, "android-ndk-aide/prebuilt/linux-arm64/bin"),
+                        File(ndkDir, "android-ndk-aide/bin"),
                         File(ndkDir, "bin"),
                         File(ndkDir, "build"),
                         ndkDir
@@ -1308,6 +1318,19 @@ class BuildProcessRunner {
                     for (b in ndkBinDirs) {
                         if (b.exists() && b.isDirectory && !pathEntries.contains(b.absolutePath)) {
                             pathEntries.add(b.absolutePath)
+                        }
+                    }
+                }
+            }
+
+            // Also add SDK build-tools directories to PATH for direct access to lld, aapt2, etc.
+            if (context != null) {
+                val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
+                val btDir = File(sdkDir, "build-tools")
+                if (btDir.exists()) {
+                    btDir.listFiles()?.filter { it.isDirectory }?.forEach { sub ->
+                        if (!pathEntries.contains(sub.absolutePath)) {
+                            pathEntries.add(sub.absolutePath)
                         }
                     }
                 }
