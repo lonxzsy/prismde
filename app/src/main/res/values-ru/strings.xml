@@ -108,8 +108,13 @@
     <string name="size_kb">Размер: %d КБ</string>
     <string name="architecture_label">Архитектура: %s</string>
     <string name="share_so">Поделиться .so</string>
+    <string name="share_apk">Поделиться APK</string>
+    <string name="share_file">Поделиться файлом</string>
     <string name="copy_path">Скопировать путь</string>
+    <string name="path_copied">Путь скопирован в буфер обмена</string>
     <string name="share_so_chooser">Поделиться .so библиотекой</string>
+    <string name="share_apk_chooser">Поделиться APK файлом</string>
+    <string name="share_file_chooser">Поделиться файлом</string>
     <string name="build_preset_title">Параметры сборки NDK</string>
     <string name="target_abi">Целевая архитектура (ABI):</string>
     <string name="min_api_level">Минимальный API Level: %d</string>

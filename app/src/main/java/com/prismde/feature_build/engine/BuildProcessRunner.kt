@@ -769,51 +769,24 @@ class BuildProcessRunner {
                         ))
                     }
                 }
-            }
 
-            // Ensure NDK has source.properties, permissions, and symlink in SDK!
-            effectiveNdk?.let { n ->
-                n.getEffectiveNdkDir()?.let { nDir ->
-                    BuildToolInstaller.flattenOrLinkNdkRoot(nDir)
-                    BuildToolInstaller.ensureSdkNdkLink(sdkDir, nDir, n.getPkgRevision(), context)
-                }
-                n.ensureSourceProperties(context = context)
-                n.ensurePermissions(context)
-            }
-            val ndkR26c = File(context.filesDir, "ndk/r26c")
-            val sdkNdk26 = File(sdkDir, "ndk/26.2.11394342")
-            BuildToolInstaller.flattenOrLinkNdkRoot(ndkR26c)
-            com.prismde.core.model.NdkVersion.ensureNdkStlLibraries(ndkR26c, context)
-            com.prismde.core.model.NdkVersion.ensureNdkPlatforms(ndkR26c)
-            com.prismde.core.model.NdkVersion.ensureNdkPermissions(ndkR26c, context)
-            val aideSub = File(ndkR26c, "android-ndk-aide")
-            if (aideSub.exists()) {
-                com.prismde.core.model.NdkVersion.ensureNdkPermissions(aideSub, context)
-            }
-            BuildToolInstaller.patchNdkMakefiles(ndkR26c)
-            BuildToolInstaller.patchNdkMakefiles(aideSub)
-            BuildToolInstaller.flattenOrLinkNdkRoot(sdkNdk26)
-            com.prismde.core.model.NdkVersion.ensureNdkStlLibraries(sdkNdk26, context)
-            com.prismde.core.model.NdkVersion.ensureNdkPlatforms(sdkNdk26)
-            com.prismde.core.model.NdkVersion.ensureNdkPermissions(sdkNdk26, context)
-            BuildToolInstaller.patchNdkMakefiles(sdkNdk26)
-            BuildToolInstaller.patchNdkMakefiles(project.rootDir)
-
-            // Verify NDK LLVM binutils AGP needs (strip/objcopy). AGP resolves the
-            // linux-x86_64 host tag even on ARM64 devices (via linux-x86_64 ->
-            // linux-arm64 symlink), so check both paths explicitly in the log.
-            try {
-                val llvmBinNames = listOf("llvm-strip", "llvm-objcopy", "llvm-nm", "llvm-ar", "clang", "ld")
-                for (host in listOf("linux-x86_64", "linux-arm64")) {
-                    val binDir = File(sdkNdk26, "toolchains/llvm/prebuilt/$host/bin")
-                    val details = llvmBinNames.joinToString(", ") { name ->
-                        val f = File(binDir, name)
-                        val size = try { if (f.exists() && f.isFile) f.length() else -1L } catch (_: Throwable) { -1L }
-                        "$name(exists=${f.exists()},size=$size)"
+                // Ensure NDK has source.properties, permissions, and symlink in SDK!
+                effectiveNdk?.let { n ->
+                    n.getEffectiveNdkDir()?.let { nDir ->
+                        BuildToolInstaller.flattenOrLinkNdkRoot(nDir)
+                        BuildToolInstaller.ensureSdkNdkLink(sdkDir, nDir, n.getPkgRevision(), context)
                     }
-                    _events.emit(BuildOutputEvent.LogLine("NDK binutils verification [$host]: $details"))
+                    n.ensureSourceProperties(context = context)
+                    n.ensurePermissions(context)
                 }
-            } catch (_: Throwable) {}
+
+                val ndkR26c = File(context.filesDir, "ndk/r26c")
+                if (ndkR26c.exists() && effectiveNdk?.getEffectiveNdkDir()?.canonicalPath != ndkR26c.canonicalPath) {
+                    BuildToolInstaller.flattenOrLinkNdkRoot(ndkR26c)
+                    com.prismde.core.model.NdkVersion.ensureNdkPermissions(ndkR26c, context)
+                }
+                BuildToolInstaller.patchNdkMakefiles(project.rootDir)
+            }
 
             // Ensure local.properties in project root has sdk.dir and ndk.dir
             BuildToolInstaller.ensureLocalProperties(project.rootDir, sdkDir, effectiveNdk?.getEffectiveNdkDir(), context)
@@ -858,23 +831,8 @@ class BuildProcessRunner {
             } else {
                 BuildToolInstaller.normalizeSdkPlatform(platformsDir, requiredApi)
             }
-            val readyJar = File(platformsDir, "android-$requiredApi/android.jar")
-            _events.emit(BuildOutputEvent.LogLine(
-                if (BuildToolInstaller.isPlatformReady(sdkDir, requiredApi))
-                    "SDK platform android-$requiredApi ready (${readyJar.length() / 1024} KB)"
-                else
-                    "SDK platform android-$requiredApi is NOT usable (jar=${readyJar.length()} bytes)"
-            ))
-            BuildToolInstaller.describePlatform(sdkDir, requiredApi).lineSequence().forEach { line ->
-                _events.emit(BuildOutputEvent.LogLine(line))
-            }
-
             val requiredBuildTools = BuildToolInstaller.detectProjectBuildToolsVersion(project.rootDir)
                 ?: BuildToolInstaller.ANDROID_BUILD_TOOLS_VERSION_DEFAULT
-            _events.emit(BuildOutputEvent.LogLine(
-                if (isRu) "Проверка Android Build-Tools $requiredBuildTools..."
-                else "Checking Android Build-Tools $requiredBuildTools..."
-            ))
             if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, requiredBuildTools)) {
                 _events.emit(BuildOutputEvent.LogLine(
                     if (isRu) "ℹ Android Build-Tools $requiredBuildTools не найдены. Автоматическая загрузка..."
@@ -894,26 +852,6 @@ class BuildProcessRunner {
                         else "✔ Android Build-Tools $requiredBuildTools installed successfully!"
                     ))
                 }
-            }
-            val buildToolsReady = BuildToolInstaller.isAndroidBuildToolsInstalled(context, requiredBuildTools)
-            _events.emit(BuildOutputEvent.LogLine(
-                if (buildToolsReady) "SDK Build-Tools $requiredBuildTools ready"
-                else "SDK Build-Tools $requiredBuildTools is NOT usable"
-            ))
-            BuildToolInstaller.describeBuildTools(sdkDir, requiredBuildTools)
-                .lineSequence()
-                .forEach { line -> _events.emit(BuildOutputEvent.LogLine(line)) }
-
-            // Ensure gradle.properties is re-synchronized with verified native aapt2 override
-            BuildToolInstaller.ensureGradleWrapper(context, project.rootDir)
-            val nativeAapt2 = BuildToolInstaller.getAapt2Executable(context, requiredBuildTools)
-            if (nativeAapt2 != null && nativeAapt2.exists()) {
-                val (passed, execMsg) = BuildToolInstaller.verifyBinaryExecution(nativeAapt2, "version")
-                _events.emit(BuildOutputEvent.LogLine(
-                    "SDK AAPT2 verification: path=${nativeAapt2.absolutePath}, " +
-                    "arch=${BuildToolInstaller.readElfArchitecture(nativeAapt2)}, " +
-                    "exec=${if (passed) "PASS ($execMsg)" else "FAIL ($execMsg)"}"
-                ))
             }
         }
 
@@ -1021,6 +959,17 @@ class BuildProcessRunner {
             }
         }
 
+        if (context != null) {
+            val sdkDir = BuildToolInstaller.getAndroidSdkDir(context)
+            val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
+            if (BuildToolInstaller.isPlatformReady(sdkDir, requiredApi) &&
+                BuildToolInstaller.isAndroidBuildToolsInstalled(context, requiredBuildTools) &&
+                !command.any { it.startsWith("-Pandroid.builder.sdkDownload=") }
+            ) {
+                command.add("-Pandroid.builder.sdkDownload=false")
+            }
+        }
+
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
@@ -1040,7 +989,6 @@ class BuildProcessRunner {
                 BuildToolInstaller.purgeBrokenX86Ndk(sdkDir, BuildToolInstaller.getToolsDir(context))
                 effectiveNdk?.let { n ->
                     n.ensureSourceProperties(context = context)
-                    n.ensurePermissions(context)
                     n.getEffectiveNdkDir()?.let { nDir ->
                         BuildToolInstaller.ensureSdkNdkLink(sdkDir, nDir, n.getPkgRevision(), context)
                     }
@@ -1048,11 +996,6 @@ class BuildProcessRunner {
 
                 val requiredApi = BuildToolInstaller.detectProjectCompileSdk(project.rootDir)
                 val canonicalReady = BuildToolInstaller.isPlatformReady(sdkDir, requiredApi)
-                _events.emit(BuildOutputEvent.LogLine(
-                    "SDK post-build verification: platform=android-$requiredApi ready=$canonicalReady, " +
-                            "platformPath=${File(platformsDir, "android-$requiredApi").absolutePath}"
-                ))
-                _events.emit(BuildOutputEvent.LogLine(BuildToolInstaller.describeInstalledBuildTools(sdkDir)))
 
                 // Only retry if AGP downloaded SDK components during this run,
                 // or if the failure was specifically missing SDK target and the platform is now canonical and ready.
@@ -1157,13 +1100,6 @@ class BuildProcessRunner {
                 !file.path.contains("reports", ignoreCase = true) &&
                 file.length() > 1000L
         }.toList()
-
-        if (allApks.isNotEmpty()) {
-            _events.emit(BuildOutputEvent.LogLine("Found ${allApks.size} APK candidate(s):"))
-            allApks.take(5).forEach { apk ->
-                _events.emit(BuildOutputEvent.LogLine("  → ${apk.path} (${apk.length()} bytes, mtime=${apk.lastModified()})"))
-            }
-        }
 
         // Check AGP output-metadata.json redirect files
         val metadataApks = mutableListOf<File>()

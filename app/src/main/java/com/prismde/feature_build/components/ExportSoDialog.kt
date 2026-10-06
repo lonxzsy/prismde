@@ -2,6 +2,8 @@ package com.prismde.feature_build.components
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,14 +15,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,11 +32,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
 import com.prismde.R
 import com.prismde.core.theme.DiagnosticSuccess
@@ -115,41 +119,101 @@ fun ExportSoDialog(
             }
         },
         confirmButton = {
-            Row {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 if (isApk) {
                     Button(
                         onClick = {
                             installApk(context, soFile)
                         },
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text(stringResource(R.string.install_apk))
+                        Icon(
+                            imageVector = Icons.Rounded.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.install_apk),
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
-                    Spacer(Modifier.width(8.dp))
+
+                    FilledTonalButton(
+                        onClick = {
+                            shareFile(context, soFile)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Share,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.share_apk),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            shareFile(context, soFile)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Share,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        val shareLabel = if (isSo) stringResource(R.string.share_so) else stringResource(R.string.share_file)
+                        Text(
+                            text = shareLabel,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
-                Button(
-                    onClick = {
-                        shareSoFile(context, soFile)
-                    },
-                    shape = RoundedCornerShape(12.dp)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.share_so))
+                    TextButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(soFile.absolutePath))
+                            Toast.makeText(context, context.getString(R.string.path_copied), Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.copy_path))
+                    }
+
+                    TextButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(stringResource(R.string.close))
+                    }
                 }
             }
         },
-        dismissButton = {
-            OutlinedButton(
-                onClick = {
-                    clipboardManager.setText(AnnotatedString(soFile.absolutePath))
-                    onDismiss()
-                },
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(stringResource(R.string.copy_path))
-            }
-        },
+        dismissButton = null,
         shape = RoundedCornerShape(24.dp)
     )
 }
@@ -167,16 +231,27 @@ private fun installApk(context: Context, file: File) {
     }
 }
 
-private fun shareSoFile(context: Context, file: File) {
+private fun shareFile(context: Context, file: File) {
     try {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val mime = if (file.extension.equals("apk", ignoreCase = true)) "application/vnd.android.package-archive" else "application/octet-stream"
+        val isApk = file.extension.equals("apk", ignoreCase = true)
+        val isSo = file.extension.equals("so", ignoreCase = true)
+        val mime = when {
+            isApk -> "application/vnd.android.package-archive"
+            isSo -> "application/octet-stream"
+            else -> "*/*"
+        }
+        val chooserTitle = when {
+            isApk -> context.getString(R.string.share_apk_chooser)
+            isSo -> context.getString(R.string.share_so_chooser)
+            else -> context.getString(R.string.share_file_chooser)
+        }
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = mime
             putExtra(Intent.EXTRA_STREAM, uri)
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
-        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_so_chooser)))
+        context.startActivity(Intent.createChooser(shareIntent, chooserTitle))
     } catch (e: Exception) {
         e.printStackTrace()
     }

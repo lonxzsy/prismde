@@ -108,8 +108,13 @@
     <string name="size_kb">Size: %d KB</string>
     <string name="architecture_label">Architecture: %s</string>
     <string name="share_so">Share .so</string>
+    <string name="share_apk">Share APK</string>
+    <string name="share_file">Share file</string>
     <string name="copy_path">Copy Path</string>
+    <string name="path_copied">Path copied to clipboard</string>
     <string name="share_so_chooser">Share .so library</string>
+    <string name="share_apk_chooser">Share APK file</string>
+    <string name="share_file_chooser">Share file</string>
     <string name="build_preset_title">NDK Build Configuration</string>
     <string name="target_abi">Target ABI:</string>
     <string name="min_api_level">Minimum API Level: %d</string>

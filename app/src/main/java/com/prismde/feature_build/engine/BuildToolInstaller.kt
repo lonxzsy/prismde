@@ -1136,8 +1136,22 @@ object BuildToolInstaller {
      */
     fun patchNdkMakefiles(rootDir: File) {
         if (!rootDir.exists() || !rootDir.isDirectory) return
+        val marker = File(rootDir, ".prism_makefiles_patched_v3")
+        if (marker.exists()) return
+
         try {
-            rootDir.walkTopDown().maxDepth(9).forEach { file ->
+            rootDir.walkTopDown()
+                .onEnter { dir ->
+                    val name = dir.name
+                    if (name in setOf(".gradle", ".cxx", ".git", ".idea", "node_modules", "intermediates", "outputs")) {
+                        false
+                    } else if (name == "build") {
+                        !File(dir, "intermediates").exists() && !File(dir, "outputs").exists()
+                    } else {
+                        true
+                    }
+                }
+                .maxDepth(9).forEach { file ->
                 if (file.isFile && file.extension.lowercase() in setOf("mk", "sh", "bash", "cmd", "bat", "cmake")) {
                     try {
                         val text = file.readText()
@@ -1224,7 +1238,18 @@ object BuildToolInstaller {
 
             // Also patch any Application.mk under rootDir with compatible linker flag
             try {
-                rootDir.walkTopDown().maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
+                rootDir.walkTopDown()
+                    .onEnter { dir ->
+                        val name = dir.name
+                        if (name in setOf(".gradle", ".cxx", ".git", ".idea", "node_modules", "intermediates", "outputs")) {
+                            false
+                        } else if (name == "build") {
+                            !File(dir, "intermediates").exists() && !File(dir, "outputs").exists()
+                        } else {
+                            true
+                        }
+                    }
+                    .maxDepth(6).filter { it.isFile && it.name == "Application.mk" }.forEach { appMk ->
                     var text = appMk.readText()
                     var modified = false
                     
@@ -1249,6 +1274,9 @@ object BuildToolInstaller {
                         appMk.writeText(text)
                     }
                 }
+            } catch (_: Throwable) {}
+            try {
+                marker.writeText("v3")
             } catch (_: Throwable) {}
         } catch (_: Throwable) {}
     }
@@ -2496,8 +2524,16 @@ object BuildToolInstaller {
 
         // Version marker to force re-extraction if APK assets are updated
         val versionMarker = File(libDir, ".prism_libs_version")
-        val currentLibsVersion = "v2-libcxx"
+        val currentLibsVersion = "v3-libcxx"
         val needUpdate = !versionMarker.exists() || versionMarker.readText().trim() != currentLibsVersion
+
+        val fastMarker = File(jdkDir, ".prism_jdk_ready_v3")
+        if (!needUpdate && fastMarker.exists()) {
+            val javaExe = File(jdkDir, "bin/java")
+            if (javaExe.exists() && javaExe.canExecute()) {
+                return
+            }
+        }
 
         // 1. Copy bundled native libraries from app assets (arm64-v8a)
         try {
@@ -2561,6 +2597,7 @@ object BuildToolInstaller {
                 }
             }
         }
+        try { fastMarker.writeText("v3") } catch (_: Throwable) {}
     }
 
     fun isJdkInstalled(context: Context): Boolean {

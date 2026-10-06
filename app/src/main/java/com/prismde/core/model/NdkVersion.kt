@@ -819,6 +819,25 @@ data class NdkVersion(
         fun ensureNdkPermissions(ndkDir: File, context: android.content.Context? = null) {
             if (!ndkDir.exists()) return
 
+            val preparedMarker = File(ndkDir, ".prism_ndk_ready_v3")
+            if (preparedMarker.exists()) {
+                val clangCandidates = listOf(
+                    File(ndkDir, "toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
+                    File(ndkDir, "android-ndk-aide/toolchains/llvm/prebuilt/linux-arm64/bin/clang"),
+                    File(ndkDir, "bin/clang")
+                )
+                val makeCandidates = listOf(
+                    File(ndkDir, "prebuilt/linux-arm64/bin/make"),
+                    File(ndkDir, "android-ndk-aide/prebuilt/linux-arm64/bin/make"),
+                    File(ndkDir, "bin/make")
+                )
+                val clangOk = clangCandidates.any { it.exists() && it.canExecute() }
+                val makeOk = makeCandidates.any { it.exists() && it.canExecute() }
+                if (clangOk && makeOk) {
+                    return
+                }
+            }
+
             com.prismde.feature_build.engine.BuildToolInstaller.flattenOrLinkNdkRoot(ndkDir)
             com.prismde.feature_build.engine.BuildToolInstaller.patchNdkMakefiles(ndkDir)
             ensureNdkMetadata(ndkDir, context = context)
@@ -1284,6 +1303,9 @@ data class NdkVersion(
             // Recursively normalize shebangs across all scripts in NDK
             fun patchScriptsIn(dir: File) {
                 if (!dir.exists() || !dir.isDirectory) return
+                val marker = File(dir, ".prism_scripts_patched_v3")
+                if (marker.exists()) return
+
                 try {
                     dir.walkTopDown().maxDepth(8).forEach { file ->
                         if (file.isFile && (file.extension in setOf("sh", "bash", "") || file.name.startsWith("ndk-"))) {
@@ -1311,22 +1333,13 @@ data class NdkVersion(
                             } catch (_: Throwable) {}
                         }
                     }
+                    try { marker.writeText("v3") } catch (_: Throwable) {}
                 } catch (_: Throwable) {}
             }
 
-            val allTargets = getNdkTargetDirs(ndkDir).toMutableList()
-            if (context != null) {
-                val sdkNdkDir = File(context.filesDir, "tools/android-sdk/ndk")
-                if (sdkNdkDir.exists() && sdkNdkDir.isDirectory) {
-                    sdkNdkDir.listFiles()?.filter { it.isDirectory }?.let { allTargets.addAll(it) }
-                }
-                val appNdkDir = File(context.filesDir, "ndk")
-                if (appNdkDir.exists() && appNdkDir.isDirectory) {
-                    appNdkDir.listFiles()?.filter { it.isDirectory }?.let { allTargets.addAll(it) }
-                }
-            }
+            val allTargets = getNdkTargetDirs(ndkDir).filter { isAllowedNdkDirectory(it) }
 
-            for (target in allTargets.distinct().filter { isAllowedNdkDirectory(it) }) {
+            for (target in allTargets) {
                 patchScriptsIn(target)
                 val tmpDir = File(target, "tmp")
                 try {
@@ -1337,6 +1350,10 @@ data class NdkVersion(
                     try { android.system.Os.chmod(tmpDir.absolutePath, 511) } catch (_: Throwable) {} // 0777
                 } catch (_: Throwable) {}
             }
+
+            try {
+                preparedMarker.writeText("v3")
+            } catch (_: Throwable) {}
         }
     }
 }
