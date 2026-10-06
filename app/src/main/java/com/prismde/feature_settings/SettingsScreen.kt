@@ -1013,7 +1013,7 @@ fun SettingsScreen(
                             }
                         },
                         label = {
-                            Text("Antigravity", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text("Antigravity", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     )
                     SegmentedButton(
@@ -1028,7 +1028,7 @@ fun SettingsScreen(
                             }
                         },
                         label = {
-                            Text("AI Studio", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text("AI Studio", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     )
                     SegmentedButton(
@@ -1043,7 +1043,7 @@ fun SettingsScreen(
                             }
                         },
                         label = {
-                            Text(stringResource(R.string.provider_custom), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(stringResource(R.string.provider_custom), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     )
                 }

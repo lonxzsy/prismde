@@ -267,7 +267,7 @@
     <string name="models_fetched_success">%d models fetched</string>
     <string name="select_custom_model">Select Model</string>
     <string name="custom_model_manual_hint">Or enter model name manually (e.g. gpt-4o, deepseek-chat)</string>
-    <string name="provider_custom">Custom Endpoint</string>
+    <string name="provider_custom">Custom</string>
 
     <!-- AI Chat -->
     <string name="ai_chat_title">AI Assistant Chat</string>
