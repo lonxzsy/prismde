@@ -55,12 +55,15 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -94,6 +97,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.prismde.R
 import com.prismde.core.datastore.SettingsRepository
+import com.prismde.core.theme.ExpressiveShapes
+import com.prismde.core.theme.bouncyClickable
 import com.prismde.feature_build.engine.AntigravityAuthManager
 import kotlinx.coroutines.launch
 
@@ -258,8 +263,9 @@ fun SettingsScreen(
         SettingsSectionHeader(title = stringResource(R.string.settings_appearance), icon = Icons.Rounded.Palette)
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(
@@ -310,8 +316,9 @@ fun SettingsScreen(
         SettingsSectionHeader(title = stringResource(R.string.settings_editor_section), icon = Icons.Rounded.Code)
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(stringResource(R.string.font_size_label, fontSize.toInt()), style = MaterialTheme.typography.bodyMedium)
@@ -347,10 +354,11 @@ fun SettingsScreen(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
+                .clip(ExpressiveShapes.CardShape)
                 .clickable { onNavigateNdkManager() },
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Row(
                 modifier = Modifier
@@ -375,8 +383,9 @@ fun SettingsScreen(
         )
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 // Auto-install toggle
@@ -456,7 +465,10 @@ fun SettingsScreen(
 
                     if (isInstallingMaven) {
                         Column(horizontalAlignment = Alignment.End) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             if (mavenInstallProgress > 0f) {
                                 Text("${mavenInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
                             }
@@ -490,12 +502,13 @@ fun SettingsScreen(
 
                 if (isInstallingMaven && mavenInstallStatus.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { (mavenInstallProgress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -556,7 +569,10 @@ fun SettingsScreen(
 
                     if (isInstallingGradle) {
                         Column(horizontalAlignment = Alignment.End) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             if (gradleInstallProgress > 0f) {
                                 Text("${gradleInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
                             }
@@ -596,12 +612,13 @@ fun SettingsScreen(
 
                 if (isInstallingGradle && gradleInstallStatus.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { (gradleInstallProgress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -669,7 +686,10 @@ fun SettingsScreen(
 
                     if (isInstallingJdk) {
                         Column(horizontalAlignment = Alignment.End) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             if (jdkInstallProgress > 0f) {
                                 Text("${jdkInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
                             }
@@ -711,12 +731,13 @@ fun SettingsScreen(
 
                 if (isInstallingJdk && jdkInstallStatus.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { (jdkInstallProgress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -795,7 +816,10 @@ fun SettingsScreen(
 
                     if (isInstallingPlatform) {
                         Column(horizontalAlignment = Alignment.End) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             if (platformInstallProgress > 0f) {
                                 Text("${platformInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
                             }
@@ -835,12 +859,13 @@ fun SettingsScreen(
 
                 if (isInstallingPlatform && platformInstallStatus.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { (platformInstallProgress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -901,7 +926,10 @@ fun SettingsScreen(
 
                     if (isInstallingBuildTools) {
                         Column(horizontalAlignment = Alignment.End) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             if (buildToolsInstallProgress > 0f) {
                                 Text("${buildToolsInstallProgress.toInt()}%", style = MaterialTheme.typography.labelSmall)
                             }
@@ -941,12 +969,13 @@ fun SettingsScreen(
 
                 if (isInstallingBuildTools && buildToolsInstallStatus.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { (buildToolsInstallProgress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -979,8 +1008,9 @@ fun SettingsScreen(
         SettingsSectionHeader(title = stringResource(R.string.settings_ai_section), icon = Icons.Rounded.AutoAwesome)
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
 
@@ -1271,7 +1301,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             if (isAuthenticating) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                CircularWavyProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary)
                                 Spacer(Modifier.width(8.dp))
                                 Text(stringResource(R.string.authorizing))
                             } else {
@@ -1415,14 +1445,13 @@ fun SettingsScreen(
 
                                                         Spacer(Modifier.height(4.dp))
 
-                                                        LinearProgressIndicator(
+                                                        LinearWavyProgressIndicator(
                                                             progress = { fraction },
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .height(6.dp)
-                                                                .clip(RoundedCornerShape(3.dp)),
+                                                                .padding(vertical = 3.dp),
                                                             color = if (percent < 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                                                         )
 
                                                         if (!bucket.resetTime.isNullOrBlank()) {
@@ -1467,12 +1496,13 @@ fun SettingsScreen(
 
                                     Spacer(Modifier.height(6.dp))
 
-                                    LinearProgressIndicator(
+                                    LinearWavyProgressIndicator(
                                         progress = { quotaFraction },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(8.dp)
-                                            .clip(RoundedCornerShape(4.dp))
+                                            .padding(vertical = 3.dp),
+                                        color = if (quotaPercentInt < 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                                     )
 
                                     if (antigravityQuotaResetTime.isNotBlank()) {
@@ -1538,7 +1568,10 @@ fun SettingsScreen(
                                         shape = RoundedCornerShape(12.dp)
                                     ) {
                                         if (isRefreshingQuota) {
-                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            CircularWavyProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
                                         } else {
                                             Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(Modifier.width(4.dp))
@@ -1932,7 +1965,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             if (isFetchingCustomModels) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                CircularWavyProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary)
                                 Spacer(Modifier.width(8.dp))
                                 Text(stringResource(R.string.fetching_models))
                             } else {
@@ -2106,8 +2139,9 @@ fun SettingsScreen(
         SettingsSectionHeader(title = stringResource(R.string.settings_updates_section), icon = Icons.Rounded.SystemUpdate)
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Row(
                 modifier = Modifier
@@ -2134,8 +2168,9 @@ fun SettingsScreen(
         SettingsSectionHeader(title = stringResource(R.string.settings_support_section), icon = Icons.Rounded.Favorite)
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            shape = ExpressiveShapes.CardShape,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(

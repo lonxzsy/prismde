@@ -1,8 +1,16 @@
 package com.prismde.feature_editor
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -27,14 +35,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.core.theme.ExpressiveShapes
+import com.prismde.core.theme.PrismMotion
+import com.prismde.core.theme.bouncyClickable
 import java.io.File
 
 @Composable
@@ -53,7 +58,7 @@ fun EditorTabs(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .height(50.dp)
             .background(MaterialTheme.colorScheme.surface)
             .horizontalScroll(scrollState)
             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -62,8 +67,8 @@ fun EditorTabs(
         openFiles.forEach { file ->
             val isActive = file == activeFile
             val bgColor by animateColorAsState(
-                targetValue = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                animationSpec = spring(stiffness = 380f, dampingRatio = 0.8f),
+                targetValue = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
                 label = "tabBg"
             )
             val textColor by animateColorAsState(
@@ -74,10 +79,20 @@ fun EditorTabs(
             Box(
                 modifier = Modifier
                     .padding(end = 6.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(ExpressiveShapes.TabShape)
                     .background(bgColor)
-                    .clickable { onSelectFile(file) }
-                    .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)
+                    .then(
+                        if (isActive) {
+                            Modifier.border(
+                                BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                                shape = ExpressiveShapes.TabShape
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .bouncyClickable(onClick = { onSelectFile(file) })
+                    .padding(start = 12.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -89,8 +104,8 @@ fun EditorTabs(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = file.name,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
                         color = textColor
                     )
                     val isFileModified = file in modifiedFiles
@@ -102,7 +117,7 @@ fun EditorTabs(
                         Text(
                             text = " *",
                             style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                         )
                     }
@@ -113,9 +128,9 @@ fun EditorTabs(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close tab",
+                            contentDescription = "Close ${file.name}",
                             modifier = Modifier.size(14.dp),
-                            tint = textColor.copy(alpha = 0.7f)
+                            tint = textColor.copy(alpha = 0.75f)
                         )
                     }
                 }

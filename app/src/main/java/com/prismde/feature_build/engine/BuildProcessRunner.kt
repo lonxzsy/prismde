@@ -277,7 +277,8 @@ class BuildProcessRunner {
                 "APP_ABI=${config.selectedAbi.abiString}",
                 "APP_PLATFORM=android-${config.minApiLevel}",
                 "APP_CFLAGS+=-D_USE_MATH_DEFINES",
-                "APP_CPPFLAGS+=-D_USE_MATH_DEFINES"
+                "APP_CPPFLAGS+=-D_USE_MATH_DEFINES",
+                "APP_LDFLAGS+=-Wl,--exclude-libs,libgcc.a -lgcc"
             )
             if (appMkFile != null) {
                 command.add("NDK_APPLICATION_MK=${appMkFile.absolutePath}")
@@ -296,16 +297,26 @@ class BuildProcessRunner {
                 return null
             }
 
-            val candidateSos = listOf(
-                targetSo,
-                File(mkDir, "libs/${config.selectedAbi.abiString}/$soName"),
-                File(mkParentDir, "libs/${config.selectedAbi.abiString}/$soName"),
-                File(project.rootDir, "libs/${config.selectedAbi.abiString}/$soName"),
-                File(project.rootDir, "app/libs/${config.selectedAbi.abiString}/$soName")
+            val candidateArtifacts = mutableListOf<File>()
+            val searchDirs = listOf(
+                libsDir,
+                File(mkDir, "libs/${config.selectedAbi.abiString}"),
+                File(mkParentDir, "libs/${config.selectedAbi.abiString}"),
+                File(project.rootDir, "libs/${config.selectedAbi.abiString}"),
+                File(project.rootDir, "app/libs/${config.selectedAbi.abiString}"),
+                File(mkDir, "obj/local/${config.selectedAbi.abiString}"),
+                File(mkParentDir, "obj/local/${config.selectedAbi.abiString}")
             )
-            val found = candidateSos.firstOrNull { it.exists() }
-            return found ?: libsDir.listFiles { _, name -> name.endsWith(".so") }?.firstOrNull()
-                ?: project.rootDir.walkTopDown().firstOrNull { it.isFile && it.extension.equals("so", ignoreCase = true) }
+            for (dir in searchDirs) {
+                candidateArtifacts.add(File(dir, soName))
+                candidateArtifacts.add(File(dir, "lib$soBaseName.so"))
+                candidateArtifacts.add(File(dir, "$soBaseName.so"))
+                candidateArtifacts.add(File(dir, soBaseName)) // Executable support
+            }
+            val found = candidateArtifacts.firstOrNull { it.exists() && it.length() > 0 }
+                ?: searchDirs.flatMap { it.listFiles()?.toList().orEmpty() }.firstOrNull { it.isFile && it.length() > 0 && !it.name.endsWith(".o") && !it.name.endsWith(".d") }
+                ?: project.rootDir.walkTopDown().firstOrNull { it.isFile && (it.extension.equals("so", ignoreCase = true) || it.name == soBaseName) }
+            return found
         }
 
         // Direct Clang++ invocation
@@ -699,27 +710,35 @@ class BuildProcessRunner {
             it.getEffectiveNdkDir()?.let { dir -> BuildToolInstaller.isUsableArm64Ndk(dir) } == true
         }
 
+        val requirements = ProjectRequirementsDetector.detect(project.rootDir)
+        val targetJdk = SmartJdkResolver.resolveRequiredJdk(requirements)
+
+        _events.emit(BuildOutputEvent.LogLine(
+            if (isRu) "ℹ Анализ проекта: AGP=${requirements.agpVersion ?: "Авто"}, Gradle=${requirements.gradleVersion ?: "Авто"}, Целевой JDK=${targetJdk.major}"
+            else "ℹ Project analysis: AGP=${requirements.agpVersion ?: "Auto"}, Gradle=${requirements.gradleVersion ?: "Auto"}, Target JDK=${targetJdk.major}"
+        ))
+
         // Ensure JDK runtime dependencies (libz.so.1, libc++_shared.so, etc.) and auto-install if missing
         var javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
         if (!javaEnv.isAvailable && config.javaHome.isBlank() && !ProjectDetector.isJavaAvailable(context, project.rootDir)) {
             if (context != null) {
                 _events.emit(BuildOutputEvent.LogLine(
-                    if (isRu) "ℹ Java JDK не найден. Автоматическая загрузка автономного OpenJDK 17 LTS..."
-                    else "ℹ Java JDK not found. Automatically downloading standalone OpenJDK 17 LTS..."
+                    if (isRu) "ℹ OpenJDK ${targetJdk.major} не найден. Автоматическая загрузка..."
+                    else "ℹ OpenJDK ${targetJdk.major} not found. Automatically downloading..."
                 ))
                 var lastJdkPct = -1
-                val jdkInstalled = BuildToolInstaller.installJdk(context) { status, pct ->
+                val jdkInstalled = BuildToolInstaller.ensureJdkVersion(context, targetJdk.major) { status, pct ->
                     val step = (pct / 25f).toInt() * 25
                     if (step != lastJdkPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖")) {
                         lastJdkPct = step
                         _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
                     }
-                }
+                } != null
                 if (jdkInstalled) {
                     javaEnv = BuildToolInstaller.detectJavaEnvironment(context, project.rootDir, config.javaHome)
                     _events.emit(BuildOutputEvent.LogLine(
-                        if (isRu) "✔ OpenJDK 17 успешно установлен во внутреннее хранилище PrismDE!"
-                        else "✔ OpenJDK 17 installed successfully into PrismDE internal storage!"
+                        if (isRu) "✔ OpenJDK ${targetJdk.major} готов к сборке!"
+                        else "✔ OpenJDK ${targetJdk.major} ready for build!"
                     ))
                 }
             }
@@ -831,26 +850,35 @@ class BuildProcessRunner {
             } else {
                 BuildToolInstaller.normalizeSdkPlatform(platformsDir, requiredApi)
             }
-            val requiredBuildTools = BuildToolInstaller.detectProjectBuildToolsVersion(project.rootDir)
+            val requiredBuildTools = requirements.buildToolsVersion
+                ?: BuildToolInstaller.detectProjectBuildToolsVersion(project.rootDir)
                 ?: BuildToolInstaller.ANDROID_BUILD_TOOLS_VERSION_DEFAULT
             if (!BuildToolInstaller.isAndroidBuildToolsInstalled(context, requiredBuildTools)) {
-                _events.emit(BuildOutputEvent.LogLine(
-                    if (isRu) "ℹ Android Build-Tools $requiredBuildTools не найдены. Автоматическая загрузка..."
-                    else "ℹ Android Build-Tools $requiredBuildTools not found. Automatically downloading..."
-                ))
-                var lastBtPct = -1
-                val btInstalled = BuildToolInstaller.installBuildTools(context, requiredBuildTools) { status, pct ->
-                    val step = (pct / 25f).toInt() * 25
-                    if (step != lastBtPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
-                        lastBtPct = step
-                        _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
-                    }
-                }
-                if (btInstalled) {
+                val aliased = BuildToolInstaller.createBuildToolsAlias(sdkDir, requiredBuildTools)
+                if (aliased) {
                     _events.emit(BuildOutputEvent.LogLine(
-                        if (isRu) "✔ Android Build-Tools $requiredBuildTools успешно установлены!"
-                        else "✔ Android Build-Tools $requiredBuildTools installed successfully!"
+                        if (isRu) "✔ Создан совместимый Build-Tools алиас $requiredBuildTools"
+                        else "✔ Created compatible Build-Tools alias $requiredBuildTools"
                     ))
+                } else {
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "ℹ Android Build-Tools $requiredBuildTools не найдены. Автоматическая загрузка..."
+                        else "ℹ Android Build-Tools $requiredBuildTools not found. Automatically downloading..."
+                    ))
+                    var lastBtPct = -1
+                    val btInstalled = BuildToolInstaller.installBuildTools(context, requiredBuildTools) { status, pct ->
+                        val step = (pct / 25f).toInt() * 25
+                        if (step != lastBtPct || pct >= 99f || pct == 0f || status.startsWith("✔") || status.startsWith("✖") || status.startsWith("Распаковка") || status.startsWith("Extracting")) {
+                            lastBtPct = step
+                            _events.tryEmit(BuildOutputEvent.LogLine("  → $status"))
+                        }
+                    }
+                    if (btInstalled) {
+                        _events.emit(BuildOutputEvent.LogLine(
+                            if (isRu) "✔ Android Build-Tools $requiredBuildTools успешно установлены!"
+                            else "✔ Android Build-Tools $requiredBuildTools installed successfully!"
+                        ))
+                    }
                 }
             }
         }
@@ -877,7 +905,7 @@ class BuildProcessRunner {
                 Triple(listOf("cmd.exe", "/c", gradlewBat.absolutePath), project.rootDir, null)
             }
             internalGradle != null && internalGradle.exists() -> {
-                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется встроенный Gradle: ${internalGradle.absolutePath}" else "Using internal Gradle: ${internalGradle.absolutePath}"))
+                _events.emit(BuildOutputEvent.LogLine(if (isRu) "Используется автономный Gradle: ${internalGradle.absolutePath}" else "Using standalone Gradle: ${internalGradle.absolutePath}"))
                 Triple(listOf("/system/bin/sh", internalGradle.absolutePath), project.rootDir, internalGradle.parentFile)
             }
             else -> {
@@ -970,6 +998,52 @@ class BuildProcessRunner {
             }
         }
 
+        // Smart AGP upgrade: if project uses AGP 3.x or 4.x, but Gradle is 7.x or 8.x,
+        // AGP 3.x/4.x will fail task validation or throw NoClassDefFoundError under Gradle 7+.
+        // Automatically adapt the AGP version in build.gradle to 7.4.2 (for Gradle 7.x) or 8.2.2 (for Gradle 8.x).
+        val rootBuildGradle = File(project.rootDir, "build.gradle")
+        val gradleVer = ProjectRequirementsDetector.detect(project.rootDir).gradleVersion
+        if (rootBuildGradle.exists() && gradleVer != null && (gradleVer.startsWith("7") || gradleVer.startsWith("8"))) {
+            try {
+                val txt = rootBuildGradle.readText()
+                val agpRegex = Regex("""(['"]com\.android\.tools\.build:gradle:)(3\.[0-9.]+|4\.[0-9.]+)(['"])""")
+                if (agpRegex.containsMatchIn(txt)) {
+                    val targetAgp = if (gradleVer.startsWith("8")) "8.2.2" else "7.4.2"
+                    val updated = agpRegex.replace(txt) { m -> "${m.groupValues[1]}$targetAgp${m.groupValues[3]}" }
+                    rootBuildGradle.writeText(updated)
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "ℹ Автоматическая адаптация AGP (3.x/4.x -> $targetAgp) для совместимости с Gradle $gradleVer и OpenJDK 17"
+                        else "ℹ Automatically adapted AGP (3.x/4.x -> $targetAgp) for compatibility with Gradle $gradleVer and OpenJDK 17"
+                    ))
+                }
+            } catch (_: Throwable) {}
+        }
+        val rootBuildKts = File(project.rootDir, "build.gradle.kts")
+        if (rootBuildKts.exists() && gradleVer != null && (gradleVer.startsWith("7") || gradleVer.startsWith("8"))) {
+            try {
+                val txt = rootBuildKts.readText()
+                val agpRegex = Regex("""(com\.android\.tools\.build:gradle:)(3\.[0-9.]+|4\.[0-9.]+)""")
+                if (agpRegex.containsMatchIn(txt)) {
+                    val targetAgp = if (gradleVer.startsWith("8")) "8.2.2" else "7.4.2"
+                    val updated = agpRegex.replace(txt) { m -> "${m.groupValues[1]}$targetAgp" }
+                    rootBuildKts.writeText(updated)
+                    _events.emit(BuildOutputEvent.LogLine(
+                        if (isRu) "ℹ Автоматическая адаптация AGP (3.x/4.x -> $targetAgp) для совместимости с Gradle $gradleVer и OpenJDK 17"
+                        else "ℹ Automatically adapted AGP (3.x/4.x -> $targetAgp) for compatibility with Gradle $gradleVer and OpenJDK 17"
+                    ))
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // Smart AAPT2 Resource Compatibility: normalize legacy raw hex colors in reference attributes (e.g. android:windowBackground)
+        val fixedRes = fixLegacyResourceReferences(project.rootDir)
+        if (fixedRes) {
+            _events.emit(BuildOutputEvent.LogLine(
+                if (isRu) "ℹ Нормализация атрибута android:windowBackground в ссылку @color/window_background для совместимости с AAPT2"
+                else "ℹ Normalized android:windowBackground into reference @color/window_background for AAPT2 compatibility"
+            ))
+        }
+
         _events.emit(BuildOutputEvent.LogLine(if (isRu) "Запуск команды Gradle:" else "Executing Gradle command:"))
         _events.emit(BuildOutputEvent.LogLine(command.joinToString(" ")))
 
@@ -1014,7 +1088,31 @@ class BuildProcessRunner {
                     }
                 )
 
-                if (shouldRetry) {
+                // JIT Build-Tools Auto-Provisioning:
+                // If AGP failed because a specific Build Tools revision was missing, create alias and retry!
+                val missingBtLine = outputLines.firstOrNull { it.contains("Failed to find Build Tools revision") }
+                if (missingBtLine != null && !success) {
+                    val rev = Regex("""Failed to find Build Tools revision ([0-9.]+)""").find(missingBtLine)?.groupValues?.get(1)
+                    if (rev != null) {
+                        _events.emit(BuildOutputEvent.LogLine(
+                            if (isRu) "⚠ Отсутствует Build-Tools $rev. Автоматическое создание совместимого алиаса..."
+                            else "⚠ Missing Build-Tools $rev. Automatically creating compatible alias..."
+                        ))
+                        val aliased = BuildToolInstaller.createBuildToolsAlias(sdkDir, rev)
+                        if (aliased) {
+                            _events.emit(BuildOutputEvent.LogLine(
+                                if (isRu) "Повторный запуск Gradle после применения алиаса Build-Tools $rev..."
+                                else "Retrying Gradle after applying Build-Tools $rev alias..."
+                            ))
+                            val retryCommand = command.toMutableList()
+                            execResult = executeProcess(retryCommand, workingDir, extraBinDir, effectiveNdk, config, context)
+                            success = execResult.success
+                            outputLines.addAll(execResult.outputLines)
+                        }
+                    }
+                }
+
+                if (shouldRetry && !success) {
                     val retryCommand = command.toMutableList().apply {
                         if (!any { it.matches(Regex("-Pandroid\\.builder\\.sdkDownload=.*")) }) {
                             add("-Pandroid.builder.sdkDownload=false")
@@ -1191,19 +1289,78 @@ class BuildProcessRunner {
         return finalArtifact
     }
 
+    private fun fixLegacyResourceReferences(projectRootDir: File): Boolean {
+        val resCandidates = listOf(
+            File(projectRootDir, "app/src/main/res"),
+            File(projectRootDir, "src/main/res"),
+            File(projectRootDir, "res")
+        )
+        val resDir = resCandidates.firstOrNull { it.exists() && it.isDirectory } ?: return false
+
+        var foundLegacyColor: String? = null
+        var modified = false
+
+        resDir.walkTopDown().filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }.forEach { xmlFile ->
+            try {
+                val content = xmlFile.readText()
+                val regex = Regex("""<item\s+name=["']android:windowBackground["']>#([0-9a-fA-F]{6,8})</item>""")
+                val match = regex.find(content)
+                if (match != null) {
+                    foundLegacyColor = "#" + match.groupValues[1]
+                    val updated = regex.replace(content, """<item name="android:windowBackground">@color/window_background</item>""")
+                    xmlFile.writeText(updated)
+                    modified = true
+                }
+            } catch (_: Throwable) {}
+        }
+
+        if (foundLegacyColor != null) {
+            try {
+                val valuesDir = File(resDir, "values").also { it.mkdirs() }
+                val colorsFile = File(valuesDir, "colors.xml")
+                if (!colorsFile.exists()) {
+                    colorsFile.writeText(
+                        """<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="window_background">$foundLegacyColor</color>
+</resources>"""
+                    )
+                } else {
+                    val colorsContent = colorsFile.readText()
+                    if (!colorsContent.contains("window_background")) {
+                        val insertIdx = colorsContent.lastIndexOf("</resources>")
+                        if (insertIdx != -1) {
+                            val newColors = colorsContent.substring(0, insertIdx) +
+                                    "    <color name=\"window_background\">$foundLegacyColor</color>\n" +
+                                    colorsContent.substring(insertIdx)
+                            colorsFile.writeText(newColors)
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+        return modified
+    }
+
     private fun parseLocalModule(file: File): String? {
         if (!file.exists()) return null
         return try {
+            var currentModule: String? = null
+            var targetModule: String? = null
             for (line in file.readLines()) {
                 val trimmed = line.trim()
                 if (trimmed.startsWith("LOCAL_MODULE") && (trimmed.contains(":=") || trimmed.contains("="))) {
-                    val raw = trimmed.substringAfter("=").trim()
+                    val raw = trimmed.substringAfter("=").trim().substringBefore("#").trim()
                     if (raw.isNotBlank() && !raw.startsWith("libcurl") && !raw.startsWith("libssl") && !raw.startsWith("libcrypto")) {
-                        return raw
+                        currentModule = raw
+                    }
+                } else if ((trimmed.contains("BUILD_SHARED_LIBRARY") || trimmed.contains("BUILD_EXECUTABLE")) && !trimmed.contains("PREBUILT_")) {
+                    if (currentModule != null) {
+                        targetModule = currentModule
                     }
                 }
             }
-            null
+            targetModule ?: currentModule
         } catch (_: Throwable) {
             null
         }
@@ -1223,6 +1380,9 @@ class BuildProcessRunner {
                 .redirectErrorStream(false)
 
             val env = processBuilder.environment()
+            val tmpDir = if (context != null) File(context.cacheDir, "prism_tmp").also { it.mkdirs() }
+                         else File(workingDir, ".prism_tmp").also { it.mkdirs() }
+            env["TMPDIR"] = tmpDir.absolutePath
             val existingPath = env["PATH"] ?: "/system/bin"
             val termuxBin = "/data/data/com.termux/files/usr/bin"
             val pathEntries = mutableListOf<String>()

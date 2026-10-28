@@ -760,7 +760,7 @@ class NdkSourcePropertiesAndGradleTest {
     }
 
     @Test
-    fun testCleanMakefileContentStripsLgccAndInjectsOverrideTargetLibgcc() {
+    fun testPatchNdkMakefilesPreservesLgccAndConfiguresTargetLibgcc() {
         val root = tempFolder.newFolder("lgcc_strip_test")
         // Create mock modern NDK structure
         File(root, "toolchains/llvm/prebuilt/linux-arm64/bin").mkdirs()
@@ -777,8 +777,7 @@ class NdkSourcePropertiesAndGradleTest {
         BuildToolInstaller.patchNdkMakefiles(root)
 
         val text = mkFile.readText()
-        assertFalse("Must not contain -lgcc", text.contains("-lgcc"))
-        assertFalse("Must not contain -lgcc_real", text.contains("-lgcc_real"))
+        assertTrue("Must preserve -lgcc", text.contains("-lgcc"))
         assertTrue("Must preserve -lc", text.contains("-lc"))
         assertTrue("Must preserve -lm", text.contains("-lm"))
         assertTrue("Must preserve -Wl,--no-undefined", text.contains("-Wl,--no-undefined"))

@@ -1,6 +1,7 @@
 package com.prismde.feature_ndk
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.prismde.R
+import com.prismde.core.theme.ExpressiveShapes
+import com.prismde.core.theme.bouncyClickable
 import com.prismde.feature_ndk.components.NdkVersionCard
 
 @Composable
@@ -60,9 +63,10 @@ fun NdkScreen(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
+                shape = ExpressiveShapes.CardShape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
                 )
             ) {
                 Row(
@@ -118,8 +122,9 @@ fun NdkScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                shape = ExpressiveShapes.CardShape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(

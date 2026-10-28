@@ -30,8 +30,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -447,7 +450,10 @@ private fun StepNdkDownload(
                         )
                     }
                     if (isDownloading) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
+                        CircularWavyProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     } else if (isInstalled) {
                         Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = DiagnosticSuccess)
                     }
@@ -456,12 +462,13 @@ private fun StepNdkDownload(
                 Spacer(Modifier.height(16.dp))
 
                 if (isDownloading) {
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { downloadPercent / 100f },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(6.dp))
                     Row {

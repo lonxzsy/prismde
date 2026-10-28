@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -24,7 +26,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Difference
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +63,7 @@ sealed class MarkdownBlock {
     data class Header(val level: Int, val text: String) : MarkdownBlock()
     data class Paragraph(val text: String) : MarkdownBlock()
     data class CodeBlock(val language: String, val code: String) : MarkdownBlock()
+    data class DiffBlock(val filePath: String?, val code: String) : MarkdownBlock()
     data class BulletItem(val text: String, val indentLevel: Int = 0) : MarkdownBlock()
     data class NumberedItem(val number: String, val text: String, val indentLevel: Int = 0) : MarkdownBlock()
     data class Blockquote(val text: String) : MarkdownBlock()
@@ -96,7 +102,16 @@ fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
                 codeLines.add(lines[i])
                 i++
             }
-            blocks.add(MarkdownBlock.CodeBlock(language, codeLines.joinToString("\n")))
+            val codeContent = codeLines.joinToString("\n")
+            if (language.equals("diff", ignoreCase = true) || language.equals("patch", ignoreCase = true) ||
+                (codeContent.contains("--- a/") && codeContent.contains("+++ b/")) ||
+                (codeContent.contains("@@ -") && codeContent.contains("@@ +"))) {
+                val targetPath = codeLines.firstOrNull { it.startsWith("+++ b/") || it.startsWith("--- a/") }
+                    ?.removePrefix("+++ b/")?.removePrefix("--- a/")?.trim()
+                blocks.add(MarkdownBlock.DiffBlock(targetPath, codeContent))
+            } else {
+                blocks.add(MarkdownBlock.CodeBlock(language, codeContent))
+            }
             i++
             continue
         }
@@ -330,7 +345,8 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     textColor: Color = MaterialTheme.colorScheme.onSurface,
-    isStreaming: Boolean = false
+    isStreaming: Boolean = false,
+    onApplyDiff: ((filePath: String?, diffText: String) -> Unit)? = null
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val codeBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
@@ -479,6 +495,10 @@ fun MarkdownText(
                     CodeBlockCard(language = block.language, code = block.code)
                 }
 
+                is MarkdownBlock.DiffBlock -> {
+                    DiffBlockCard(code = block.code, targetFilePath = block.filePath, onApplyDiff = onApplyDiff)
+                }
+
                 is MarkdownBlock.Divider -> {
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 6.dp),
@@ -569,6 +589,133 @@ fun CodeBlockCard(
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Material 3 Expressive DiffBlockCard:
+ * Renders syntax-highlighted diffs with green/red row backgrounds,
+ * copy button, and a prominent 1-tap "Apply to Editor" action.
+ */
+@Composable
+fun DiffBlockCard(
+    code: String,
+    targetFilePath: String? = null,
+    onApplyDiff: ((filePath: String?, diffText: String) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val lines = remember(code) { code.lines() }
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.Difference,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = targetFilePath ?: "DIFF PATCH",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onApplyDiff != null) {
+                        FilledTonalButton(
+                            onClick = { onApplyDiff(targetFilePath, code) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Применить в редактор", style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp))
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+
+                    IconButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(code))
+                            Toast.makeText(context, "Diff скопирован", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.ContentCopy,
+                            contentDescription = "Копировать",
+                            modifier = Modifier.size(15.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            SelectionContainer {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(vertical = 4.dp)
+                ) {
+                    Column {
+                        lines.forEach { line ->
+                            val (bgColor, textColor) = when {
+                                line.startsWith("+") && !line.startsWith("+++") ->
+                                    Color(0x224CAF50) to Color(0xFF81C784)
+                                line.startsWith("-") && !line.startsWith("---") ->
+                                    Color(0x22F44336) to Color(0xFFE57373)
+                                line.startsWith("@@") ->
+                                    Color(0x152196F3) to Color(0xFF64B5F6)
+                                else ->
+                                    Color.Transparent to MaterialTheme.colorScheme.onSurface
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(bgColor)
+                                    .padding(horizontal = 12.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = line,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = textColor
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

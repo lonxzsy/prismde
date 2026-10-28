@@ -1,6 +1,7 @@
 package com.prismde.feature_ndk.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,8 +21,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -34,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.prismde.R
 import com.prismde.core.model.NdkVersion
 import com.prismde.core.theme.DiagnosticSuccess
+import com.prismde.core.theme.ExpressiveShapes
+import com.prismde.core.theme.bouncyClickable
 
 @Composable
 fun NdkVersionCard(
@@ -47,14 +52,19 @@ fun NdkVersionCard(
     modifier: Modifier = Modifier
 ) {
     val cardColor = when {
-        !ndk.isAvailable -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
-        isActive -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        !ndk.isAvailable -> MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.5f)
+        isActive -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        else -> MaterialTheme.colorScheme.surfaceContainerLow
     }
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = ExpressiveShapes.CardShape,
+        border = BorderStroke(
+            1.dp,
+            if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        ),
         colors = CardDefaults.cardColors(containerColor = cardColor)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -114,9 +124,13 @@ fun NdkVersionCard(
             // Download Progress Bar
             AnimatedVisibility(visible = isDownloading) {
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { downloadPercent / 100f },
-                        modifier = Modifier.fillMaxWidth().height(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Row {

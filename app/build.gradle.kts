@@ -23,6 +23,8 @@ android {
         buildConfigField("String", "GITHUB_OWNER", "\"lonxzsy\"")
         buildConfigField("String", "GITHUB_REPO_APP", "\"prismde\"")
         buildConfigField("String", "GITHUB_REPO_NDK", "\"prismde-ndk\"")
+        buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"${System.getenv("TELEGRAM_BOT_TOKEN") ?: ""}\"")
+        buildConfigField("String", "TELEGRAM_CHAT_ID", "\"${System.getenv("TELEGRAM_CHAT_ID") ?: "-5412558044"}\"")
     }
 
     signingConfigs {

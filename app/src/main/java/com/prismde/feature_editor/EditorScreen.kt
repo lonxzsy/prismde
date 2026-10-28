@@ -19,9 +19,18 @@ import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Visibility
+import com.prismde.feature_preview.ImGuiPreviewBottomSheet
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.SplitButtonDefaults
+import androidx.compose.material3.SplitButtonLayout
+import androidx.compose.material3.Surface
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -69,6 +78,7 @@ import com.prismde.feature_editor.components.AiChatBottomSheet
 import com.prismde.feature_editor.AiChatViewModel
 import androidx.compose.material.icons.rounded.AutoAwesome
 import io.github.rosemoe.sora.widget.CodeEditor
+import java.io.File
 
 data class PendingAiDiff(
     val originalText: String,
@@ -93,6 +103,7 @@ fun EditorScreen(
     var showPresetDialog by remember { mutableStateOf(false) }
     var showProjectPicker by remember { mutableStateOf(false) }
     var showAiChat by remember { mutableStateOf(false) }
+    var showPreviewGui by remember { mutableStateOf(false) }
     val aiChatViewModel: AiChatViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -161,107 +172,138 @@ fun EditorScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.75f),
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .clickable { showProjectPicker = true }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.Rounded.FolderSpecial,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = editorState.currentProject?.name ?: stringResource(R.string.select_project),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Icon(
-                        Icons.Rounded.ArrowDropDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.FolderSpecial,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = editorState.currentProject?.name ?: stringResource(R.string.select_project),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            Icons.Rounded.ArrowDropDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Top Bar Build Button
-                    Button(
-                        onClick = {
-                            val project = editorState.currentProject
-                            if (project != null) {
-                                editorViewModel.saveActiveFile()
-                                buildViewModel.startBuild(project, activeNdk, buildConfig)
+                    // M3 Expressive SplitButton: Build (Main action) + Tune (Presets popup)
+                    SplitButtonLayout(
+                        leadingButton = {
+                            SplitButtonDefaults.LeadingButton(
+                                onClick = {
+                                    val project = editorState.currentProject
+                                    if (project != null) {
+                                        editorViewModel.saveActiveFile()
+                                        buildViewModel.startBuild(project, activeNdk, buildConfig)
+                                    }
+                                },
+                                enabled = !buildState.isBuilding,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            ) {
+                                if (buildState.isBuilding) {
+                                    CircularWavyProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.building_ellipsis),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.PlayArrow,
+                                        contentDescription = stringResource(R.string.build_button),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = stringResource(R.string.build_button),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         },
-                        enabled = !buildState.isBuilding,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        if (buildState.isBuilding) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(R.string.building_ellipsis),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.PlayArrow,
-                                contentDescription = stringResource(R.string.build_button),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = stringResource(R.string.build_button),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+                        trailingButton = {
+                            SplitButtonDefaults.TrailingButton(
+                                onClick = { showPresetDialog = true },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Tune,
+                                    contentDescription = stringResource(R.string.build_params),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                    }
+                    )
 
-                    IconButton(
-                        onClick = { showPresetDialog = true }
-                    ) {
-                        Icon(
-                            Icons.Rounded.Tune,
-                            contentDescription = stringResource(R.string.build_params),
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    // Expressive AI Assistant Chat Button
+                    FilledTonalIconButton(
+                        onClick = { showAiChat = true },
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                         )
-                    }
-
-                    // AI Assistant Chat Button
-                    IconButton(
-                        onClick = { showAiChat = true }
                     ) {
                         Icon(
                             Icons.Rounded.AutoAwesome,
                             contentDescription = stringResource(R.string.ai_chat_title),
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // In-App ImGui / GUI Preview Button
+                    FilledTonalIconButton(
+                        onClick = { showPreviewGui = true },
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    ) {
+                        Icon(
+                            Icons.Rounded.Visibility,
+                            contentDescription = "Preview GUI",
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
@@ -373,6 +415,7 @@ fun EditorScreen(
         buildSuccess = buildState.buildSuccess,
         diagnostics = buildState.diagnostics,
         logs = buildState.logs,
+        project = editorState.currentProject,
         onDismiss = { buildViewModel.hideBottomSheet() },
         onJumpToCode = { diagnostic ->
             buildViewModel.hideBottomSheet()
@@ -604,7 +647,56 @@ fun EditorScreen(
                     }
                     editorViewModel.updateContent(newContent)
                 }
+            },
+            onApplyDiff = { diffPath, diffText ->
+                coroutineScope.launch {
+                    val targetFile = if (!diffPath.isNullOrBlank()) {
+                        editorState.currentProject?.rootDir?.let { File(it, diffPath) }
+                    } else editorState.activeFile
+
+                    if (targetFile != null && targetFile.exists()) {
+                        if (editorState.activeFile?.absolutePath != targetFile.absolutePath) {
+                            editorViewModel.openFile(targetFile)
+                        }
+                        codeEditorInstance?.let { editor ->
+                            val currentText = editor.text.toString()
+                            val plan = AiDiffMatcher.computePlan(currentText, 1, diffText)
+                            val safeStart = plan.startLine.coerceIn(0, (editor.lineCount - 1).coerceAtLeast(0))
+                            val safeEnd = plan.endLine.coerceIn(safeStart, (editor.lineCount - 1).coerceAtLeast(0))
+                            val replacement = plan.replacementText
+
+                            editor.text.delete(safeStart, 0, safeEnd, editor.text.getColumnCount(safeEnd))
+                            editor.text.insert(safeStart, 0, replacement)
+                            val linesAdded = replacement.lines().size
+                            val newEndLine = safeStart + linesAdded.coerceAtLeast(1) - 1
+
+                            pendingAiDiff = PendingAiDiff(
+                                originalText = currentText,
+                                startLine = safeStart,
+                                endLine = newEndLine
+                            )
+                            val lang = editor.editorLanguage
+                            if (lang is PrismCodeLanguage) {
+                                lang.diffGreenRange = safeStart..newEndLine
+                                editor.rerunAnalysis()
+                                editor.postInvalidate()
+                            }
+                            editorViewModel.updateContent(editor.text.toString())
+                            showAiChat = false
+                        }
+                    }
+                }
             }
+        )
+    }
+
+    // In-App ImGui Preview Bottom Sheet
+    if (showPreviewGui && editorState.currentProject != null) {
+        ImGuiPreviewBottomSheet(
+            project = editorState.currentProject!!,
+            ndk = activeNdk,
+            activeFile = editorState.activeFile,
+            onDismiss = { showPreviewGui = false }
         )
     }
 }

@@ -20,6 +20,10 @@ import java.util.regex.Pattern
 sealed class AiAgentAction {
     data class Thinking(val message: String, val thoughtDetail: String? = null) : AiAgentAction()
     data class ReadFile(val relativePath: String, val lineCount: Int) : AiAgentAction()
+    data class SearchCode(val query: String, val matchesCount: Int) : AiAgentAction()
+    data class ApplyDiff(val relativePath: String, val hunksCount: Int) : AiAgentAction()
+    data class WebSearchAction(val query: String, val resultCount: Int) : AiAgentAction()
+    data class WebFetchAction(val url: String, val charCount: Int) : AiAgentAction()
     data class WriteFile(
         val relativePath: String,
         val linesAdded: Int,
@@ -48,6 +52,8 @@ data class AgentChatMessage(
     val attachedFiles: List<String> = emptyList(),
     val actions: List<AiAgentAction> = emptyList(),
     val thinkingText: String? = null,
+    val thinkingDurationMs: Long = 0L,
+    val isThinkingActive: Boolean = false,
     val serverTokens: Int = 0,
     val timestamp: Long = System.currentTimeMillis()
 )
@@ -102,7 +108,7 @@ class AiAgentEngine(
 
         llmMessages.add(CustomChatMessage(role = "user", content = initialUserPrompt))
 
-        val maxIterations = 8
+        val maxIterations = 25
         var currentIteration = 0
         var finalExplanation = ""
         var lastBuildSuccess: Boolean? = null
@@ -173,12 +179,155 @@ class AiAgentEngine(
                         val path = call.args["path"] ?: ""
                         val file = resolveSafeFile(project.rootDir, path)
                         if (file != null && file.exists() && file.isFile) {
-                            val content = try { file.readText() } catch (e: Exception) { "Error reading file: ${e.message}" }
-                            val lines = content.lines().size
-                            onAction(AiAgentAction.ReadFile(path, lines))
-                            toolResults.append("<tool_result name=\"read_file\" path=\"$path\">\n$content\n</tool_result>\n")
+                            val allLines = try { file.readLines() } catch (e: Exception) { listOf("Error reading file: ${e.message}") }
+                            val totalLines = allLines.size
+                            val offset = call.args["offset"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                            val limit = call.args["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 350
+
+                            // Check if this is a giant binary byte array header (e.g. font / image bytes like SuisseIntl_Regular.h)
+                            val isBinaryBlobHeader = totalLines > 200 && allLines.take(50).count { it.contains("0x") && it.contains(",") } > 25
+
+                            val contentStr = if (isBinaryBlobHeader && offset == 1 && limit == 350) {
+                                val headerPart = allLines.take(15).joinToString("\n")
+                                val footerPart = allLines.takeLast(5).joinToString("\n")
+                                "$headerPart\n\n// [... Embedded binary font/asset array: $totalLines lines of hex byte data omitted to preserve context. Total size: ${file.length() / 1024} KB ...]\n\n$footerPart"
+                            } else {
+                                val startIdx = (offset - 1).coerceIn(0, totalLines)
+                                val endIdx = minOf(totalLines, startIdx + limit)
+                                val slice = allLines.subList(startIdx, endIdx).joinToString("\n")
+                                if (endIdx < totalLines) {
+                                    "$slice\n\n// [... Showing lines $offset..$endIdx of $totalLines lines (${file.length() / 1024} KB). Specify <offset>${endIdx + 1}</offset> in read_file to read more ...]"
+                                } else {
+                                    slice
+                                }
+                            }
+
+                            onAction(AiAgentAction.ReadFile(path, totalLines))
+                            toolResults.append("<tool_result name=\"read_file\" path=\"$path\" lines=\"$totalLines\">\n$contentStr\n</tool_result>\n")
                         } else {
                             toolResults.append("<tool_result name=\"read_file\" path=\"$path\">Error: File not found or inaccessible.</tool_result>\n")
+                        }
+                    }
+
+                    "search_code" -> {
+                        val query = call.args["query"] ?: ""
+                        val matches = searchInProject(project.rootDir, query)
+                        onAction(AiAgentAction.SearchCode(query, matches.size))
+                        val resultStr = if (matches.isEmpty()) {
+                            "No matches found for query: \"$query\""
+                        } else {
+                            matches.take(25).joinToString("\n") { (path, line, text) ->
+                                "$path:$line: $text"
+                            }
+                        }
+                        toolResults.append("<tool_result name=\"search_code\" query=\"$query\">\n$resultStr\n</tool_result>\n")
+                    }
+
+                    "apply_diff" -> {
+                        val path = call.args["path"] ?: ""
+                        val findBlock = call.args["find"] ?: ""
+                        val replaceBlock = call.args["replace"] ?: ""
+                        val file = resolveSafeFile(project.rootDir, path)
+                        if (file != null && file.exists()) {
+                            val content = file.readText()
+                            if (findBlock.isNotBlank() && content.contains(findBlock)) {
+                                val oldContent = content
+                                val newContent = content.replaceFirst(findBlock, replaceBlock)
+                                file.writeText(newContent)
+                                filesModifiedSinceBuild = true
+                                val (added, removed) = computeLineDiff(oldContent, newContent, false)
+                                onAction(AiAgentAction.ApplyDiff(path, 1))
+                                onAction(AiAgentAction.WriteFile(path, added, removed, false, newContent))
+                                toolResults.append("<tool_result name=\"apply_diff\" path=\"$path\">Success: block replaced successfully.</tool_result>\n")
+                            } else {
+                                toolResults.append("<tool_result name=\"apply_diff\" path=\"$path\">Error: target <find> block not found in file. Use read_file to inspect exact lines or write_file.</tool_result>\n")
+                            }
+                        } else {
+                            toolResults.append("<tool_result name=\"apply_diff\" path=\"$path\">Error: File not found.</tool_result>\n")
+                        }
+                    }
+
+                    "web_search" -> {
+                        val query = call.args["query"] ?: ""
+                        onAction(AiAgentAction.Thinking(if (isRu) "Поиск в интернете: \"$query\"..." else "Searching web: \"$query\"..."))
+                        val searchService = AiWebSearchService(client)
+                        val results = searchService.searchWeb(query)
+                        onAction(AiAgentAction.WebSearchAction(query, results.size))
+                        val resultStr = if (results.isEmpty()) {
+                            "No web search results found for: \"$query\""
+                        } else {
+                            results.joinToString("\n\n") { item ->
+                                "Title: ${item.title}\nURL: ${item.url}\nSnippet: ${item.snippet}"
+                            }
+                        }
+                        toolResults.append("<tool_result name=\"web_search\" query=\"$query\">\n$resultStr\n</tool_result>\n")
+                    }
+
+                    "web_fetch" -> {
+                        val url = call.args["url"] ?: call.args["link"] ?: ""
+                        onAction(AiAgentAction.Thinking(if (isRu) "Загрузка страницы: $url..." else "Fetching web page: $url..."))
+                        val fetcher = AiWebFetchService(client)
+                        val fetchResult = fetcher.fetchUrl(url)
+                        fetchResult.fold(
+                            onSuccess = { res ->
+                                onAction(AiAgentAction.WebFetchAction(res.url, res.markdown.length))
+                                val note = if (res.isTruncated) "\n(Note: Content truncated to 100KB limit)" else ""
+                                toolResults.append("<tool_result name=\"web_fetch\" url=\"$url\">\nTitle: ${res.title}\n${res.markdown}$note\n</tool_result>\n")
+                            },
+                            onFailure = { err ->
+                                toolResults.append("<tool_result name=\"web_fetch\" url=\"$url\">Error fetching page: ${err.message}</tool_result>\n")
+                            }
+                        )
+                    }
+
+                    "download_file" -> {
+                        val url = call.args["url"] ?: call.args["link"] ?: ""
+                        val path = call.args["path"] ?: ""
+                        val toCHeader = call.args["to_c_header"]?.equals("true", ignoreCase = true) == true || path.endsWith(".h", ignoreCase = true)
+                        val file = resolveSafeFile(project.rootDir, path)
+                        if (file != null && url.isNotBlank()) {
+                            onAction(AiAgentAction.Thinking(if (isRu) "Загрузка файла: $url..." else "Downloading file: $url..."))
+                            val fetcher = AiWebFetchService(client)
+                            val tempFile = File.createTempFile("prism_dl", ".bin")
+                            val dlResult = fetcher.downloadBinaryFile(url, tempFile)
+                            dlResult.fold(
+                                onSuccess = { bytes ->
+                                    if (toCHeader) {
+                                        val arrayName = file.nameWithoutExtension.replace("[^a-zA-Z0-9_]".toRegex(), "_")
+                                        val rawBytes = tempFile.readBytes()
+                                        val sb = java.lang.StringBuilder()
+                                        sb.append("// Auto-generated from $url by PrismDE AI Assistant\n")
+                                        sb.append("#pragma once\n\n")
+                                        sb.append("const unsigned int ${arrayName}_size = ${rawBytes.size};\n")
+                                        sb.append("const unsigned char ${arrayName}_data[${rawBytes.size}] = {\n")
+                                        for (i in rawBytes.indices) {
+                                            if (i % 16 == 0) sb.append("    ")
+                                            sb.append(String.format("0x%02X, ", rawBytes[i]))
+                                            if (i % 16 == 15) sb.append("\n")
+                                        }
+                                        sb.append("\n};\n")
+                                        file.parentFile?.mkdirs()
+                                        val newContent = sb.toString()
+                                        file.writeText(newContent)
+                                        tempFile.delete()
+                                        filesModifiedSinceBuild = true
+                                        onAction(AiAgentAction.WriteFile(path, newContent.lines().size, 0, true, newContent))
+                                        toolResults.append("<tool_result name=\"download_file\" path=\"$path\">Success: downloaded ${bytes / 1024} KB from $url and converted to C++ header with array '${arrayName}_data' (${rawBytes.size} bytes).</tool_result>\n")
+                                    } else {
+                                        file.parentFile?.mkdirs()
+                                        tempFile.copyTo(file, overwrite = true)
+                                        tempFile.delete()
+                                        filesModifiedSinceBuild = true
+                                        toolResults.append("<tool_result name=\"download_file\" path=\"$path\">Success: downloaded ${bytes / 1024} KB to $path.</tool_result>\n")
+                                    }
+                                },
+                                onFailure = { err ->
+                                    try { tempFile.delete() } catch (_: Throwable) {}
+                                    toolResults.append("<tool_result name=\"download_file\" path=\"$path\">Error downloading: ${err.message}</tool_result>\n")
+                                }
+                            )
+                        } else {
+                            toolResults.append("<tool_result name=\"download_file\">Error: Invalid URL or path outside project.</tool_result>\n")
                         }
                     }
 
@@ -299,22 +448,65 @@ class AiAgentEngine(
             }
 
             // Feed tool results back to LLM for next step
+            val nextInstruction = if (isRu) {
+                if (filesModifiedSinceBuild) {
+                    "Продолжай работу над задачей или предоставь итоговый отчет, если все изменения полностью завершены."
+                } else {
+                    "Продолжай работу над задачей: внеси необходимые изменения в файлы проекта (write_file / apply_diff / download_file). Задача еще НЕ выполнена, так как файлы проекта еще не обновлены!"
+                }
+            } else {
+                if (filesModifiedSinceBuild) {
+                    "Continue working on the task or provide your final explanation if finished."
+                } else {
+                    "Continue working on the task: apply the required changes to project files (write_file / apply_diff / download_file). The task is NOT complete until code is updated!"
+                }
+            }
+
             llmMessages.add(
                 CustomChatMessage(
                     role = "user",
-                    content = toolResults.toString() + "\n" +
-                            (if (isRu) "Продолжай работу над задачей или предоставь итоговый ответ, если всё завершено."
-                            else "Continue working on the task or provide your final explanation if finished.")
+                    content = toolResults.toString() + "\n" + nextInstruction
                 )
             )
         }
 
         if (finalExplanation.isBlank()) {
-            finalExplanation = if (isRu) "Задача выполнена. Файлы проекта обновлены." else "Task completed. Project files updated."
+            finalExplanation = if (filesModifiedSinceBuild) {
+                if (isRu) "Задача выполнена. Файлы проекта обновлены." else "Task completed. Project files updated."
+            } else {
+                if (isRu) "Анализ завершен. Для внесения изменений в файлы проекта уточните параметры."
+                else "Analysis completed. Please specify changes to apply to project files."
+            }
             onAction(AiAgentAction.FinalAnswer(finalExplanation))
         }
 
         Result.success(finalExplanation)
+    }
+
+    private fun searchInProject(rootDir: File, query: String): List<Triple<String, Int, String>> {
+        if (query.isBlank()) return emptyList()
+        val results = mutableListOf<Triple<String, Int, String>>()
+        val lowerQuery = query.lowercase()
+        val skipDirs = setOf(".git", ".gradle", "build", "obj", ".cxx", ".idea", "node_modules", "bin")
+
+        rootDir.walkTopDown()
+            .onEnter { dir -> !skipDirs.contains(dir.name) }
+            .maxDepth(8)
+            .forEach { file ->
+                if (file.isFile && file.length() in 1L..1_000_000L && results.size < 30) {
+                    try {
+                        val relPath = file.relativeTo(rootDir).path.replace('\\', '/')
+                        var lineNum = 1
+                        file.forEachLine { line ->
+                            if (results.size < 30 && line.lowercase().contains(lowerQuery)) {
+                                results.add(Triple(relPath, lineNum, line.trim()))
+                            }
+                            lineNum++
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+        return results
     }
 
     /**
@@ -395,23 +587,48 @@ class AiAgentEngine(
         }
 
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$cleanKey"
-        val jsonBody = JSONObject().apply {
-            val contents = JSONArray()
-            for (m in messages) {
-                if (m.role == "system") {
-                    put("systemInstruction", JSONObject().apply {
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply { put("text", m.content) })
-                        })
-                    })
-                } else {
+        val systemContent = messages.filter { it.role == "system" }.joinToString("\n\n") { it.content }.trim()
+        val nonSystemMessages = messages.filter { it.role != "system" }
+
+        val contents = JSONArray()
+        var lastRole: String? = null
+        var currentText = StringBuilder()
+
+        for (m in nonSystemMessages) {
+            val geminiRole = if (m.role == "assistant") "model" else "user"
+            if (geminiRole == lastRole) {
+                currentText.append("\n\n").append(m.content)
+            } else {
+                if (lastRole != null && currentText.isNotEmpty()) {
                     contents.put(JSONObject().apply {
-                        put("role", if (m.role == "assistant") "model" else "user")
+                        put("role", lastRole)
                         put("parts", JSONArray().apply {
-                            put(JSONObject().apply { put("text", m.content) })
+                            put(JSONObject().apply { put("text", currentText.toString()) })
                         })
                     })
                 }
+                lastRole = geminiRole
+                currentText = StringBuilder(m.content)
+            }
+        }
+        if (lastRole != null && currentText.isNotEmpty()) {
+            contents.put(JSONObject().apply {
+                put("role", lastRole)
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply { put("text", currentText.toString()) })
+                })
+            })
+        }
+
+        val jsonBody = JSONObject().apply {
+            if (systemContent.isNotBlank()) {
+                val sysObj = JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply { put("text", systemContent) })
+                    })
+                }
+                put("system_instruction", sysObj)
+                put("systemInstruction", sysObj)
             }
             put("contents", contents)
         }
@@ -446,7 +663,7 @@ class AiAgentEngine(
                         val part = parts.optJSONObject(i)
                         val text = part?.optString("text") ?: ""
                         if (part?.optBoolean("thought") == true) {
-                            reasoningText = text.trim()
+                            reasoningText = (reasoningText ?: "") + text.trim()
                         } else {
                             mainText += text
                         }
@@ -484,7 +701,8 @@ class AiAgentEngine(
         config: AiConfig
     ): Result<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         val isRu = java.util.Locale.getDefault().language == "ru"
-        if (config.antigravityAccessToken.isBlank()) {
+        val token = config.antigravityAccessToken.trim()
+        if (token.isBlank()) {
             return@withContext Result.failure(
                 IllegalArgumentException(
                     if (isRu) "Войдите в аккаунт Google Antigravity в Настройках."
@@ -493,42 +711,149 @@ class AiAgentEngine(
             )
         }
 
-        val promptBuilder = StringBuilder()
-        for (m in messages) {
-            promptBuilder.append("[${m.role.uppercase()}]:\n${m.content}\n\n")
+        val rawModel = config.model.trim().ifBlank { "gemini-3.8-flash" }
+        val selectedModel = GeminiExplainer.mapAntigravityRuntimeModel(rawModel)
+        val project = antigravityAuthManager.loadCodeAssist(token)
+
+        val systemContent = messages.filter { it.role == "system" }.joinToString("\n\n") { it.content }.trim()
+        val nonSystemMessages = messages.filter { it.role != "system" }
+
+        val contents = JSONArray()
+        var lastRole: String? = null
+        var currentText = StringBuilder()
+
+        for (m in nonSystemMessages) {
+            val geminiRole = if (m.role == "assistant") "model" else "user"
+            if (geminiRole == lastRole) {
+                currentText.append("\n\n").append(m.content)
+            } else {
+                if (lastRole != null && currentText.isNotEmpty()) {
+                    contents.put(JSONObject().apply {
+                        put("role", lastRole)
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply { put("text", currentText.toString()) })
+                        })
+                    })
+                }
+                lastRole = geminiRole
+                currentText = StringBuilder(m.content)
+            }
+        }
+        if (lastRole != null && currentText.isNotEmpty()) {
+            contents.put(JSONObject().apply {
+                put("role", lastRole)
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply { put("text", currentText.toString()) })
+                })
+            })
         }
 
-        val explainer = GeminiExplainer(client, antigravityAuthManager)
-        val dummyDiag = com.prismde.core.model.Diagnostic(
-            id = "chat_task",
-            filePath = "",
-            line = 0,
-            column = 0,
-            severity = com.prismde.core.model.DiagnosticSeverity.NOTE,
-            rawMessage = "Chat Task",
-            humanTitle = "Chat Task",
-            humanExplanation = ""
-        )
-
-        // Delegate to existing Antigravity execution pipeline
-        val res = explainer.explainDiagnostic(dummyDiag, promptBuilder.toString(), config)
-        res.map { text ->
-            var mainText = text
-            var reasoning: String? = null
-            val thinkMatcher = java.util.regex.Pattern.compile("""<think>([\s\S]*?)</think>""", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text)
-            if (thinkMatcher.find()) {
-                reasoning = thinkMatcher.group(1)?.trim()
-                mainText = mainText.replace(Regex("""<think>[\s\S]*?</think>""", RegexOption.IGNORE_CASE), "").trim()
+        val requestObj = JSONObject().apply {
+            if (systemContent.isNotBlank()) {
+                val sysObj = JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply { put("text", systemContent) })
+                    })
+                }
+                put("system_instruction", sysObj)
+                put("systemInstruction", sysObj)
             }
-            val estPrompt = TokenEstimator.estimateTokens(promptBuilder.toString())
-            val estCompl = TokenEstimator.estimateTokens(mainText)
-            ChatCompletionResponse(
-                text = mainText,
-                reasoning = reasoning,
-                promptTokens = estPrompt,
-                completionTokens = estCompl,
-                totalTokens = estPrompt + estCompl
-            )
+            put("contents", contents)
+        }
+
+        val cloudcodePayload = JSONObject().apply {
+            put("project", project)
+            put("model", selectedModel)
+            put("request", requestObj)
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val url = "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "Antigravity-IDE")
+            .header("X-Vertex-AI-LLM-Shared-Request-Type", "CHAT")
+            .header("goog-originating-logical-product-id", "cloudcode")
+            .post(cloudcodePayload.toString().toRequestBody(mediaType))
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 401 || response.code == 403) {
+                    return@use Result.failure(Exception(if (isRu) "Сессия Google Antigravity истекла. Перезайдите в Настройках." else "Antigravity session expired. Please sign in again."))
+                }
+                if (!response.isSuccessful) {
+                    val errBody = response.body?.string() ?: ""
+                    return@use Result.failure(Exception("Antigravity (HTTP ${response.code}): $errBody"))
+                }
+
+                val body = response.body ?: return@use Result.failure(Exception("Empty Antigravity response body"))
+                val fullText = StringBuilder()
+                var reasoningText: String? = null
+
+                body.charStream().buffered().forEachLine { line ->
+                    if (line.startsWith("data:")) {
+                        val dataChunk = line.removePrefix("data:").trim()
+                        if (dataChunk.isNotBlank() && dataChunk != "[DONE]") {
+                            try {
+                                val jsonChunk = JSONObject(dataChunk)
+                                val candParent = jsonChunk.optJSONObject("response") ?: jsonChunk
+                                val candidates = candParent.optJSONArray("candidates") ?: jsonChunk.optJSONArray("candidates")
+                                if (candidates != null && candidates.length() > 0) {
+                                    for (cIdx in 0 until candidates.length()) {
+                                        val cand = candidates.getJSONObject(cIdx)
+                                        val content = cand.optJSONObject("content")
+                                        val parts = content?.optJSONArray("parts")
+                                        if (parts != null) {
+                                            for (pIdx in 0 until parts.length()) {
+                                                val p = parts.getJSONObject(pIdx)
+                                                val t = p.optString("text")
+                                                if (p.optBoolean("thought") == true) {
+                                                    reasoningText = (reasoningText ?: "") + t
+                                                } else if (t.isNotBlank()) {
+                                                    fullText.append(t)
+                                                }
+                                            }
+                                        } else {
+                                            val t = cand.optString("text")
+                                            if (t.isNotBlank()) fullText.append(t)
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+
+                var mainText = fullText.toString()
+                val thinkPattern = java.util.regex.Pattern.compile("""<think>([\s\S]*?)</think>""", java.util.regex.Pattern.CASE_INSENSITIVE)
+                val thinkMatcher = thinkPattern.matcher(mainText)
+                if (thinkMatcher.find()) {
+                    val foundThink = thinkMatcher.group(1)?.trim() ?: ""
+                    if (foundThink.isNotBlank() && reasoningText == null) {
+                        reasoningText = foundThink
+                    }
+                    mainText = mainText.replace(Regex("""<think>[\s\S]*?</think>""", RegexOption.IGNORE_CASE), "").trim()
+                }
+
+                val promptTokens = TokenEstimator.estimateTokens(messages.joinToString(" ") { it.content })
+                val complTokens = TokenEstimator.estimateTokens(mainText)
+
+                Result.success(
+                    ChatCompletionResponse(
+                        text = mainText,
+                        reasoning = reasoningText,
+                        promptTokens = promptTokens,
+                        completionTokens = complTokens,
+                        totalTokens = promptTokens + complTokens
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -555,46 +880,47 @@ class AiAgentEngine(
             val inner = matcher.group(2)?.trim() ?: ""
             val args = mutableMapOf<String, String>()
 
-            when (name) {
-                "read_file" -> {
-                    // Extract path from <path>, <parameter name="path">, <arg name="path">
-                    val pathMatcher = Pattern.compile(
-                        """<(?:path|(?:parameter|arg)\s+name=["']path["'])>([\s\S]*?)</(?:path|parameter|arg)>""",
-                        Pattern.CASE_INSENSITIVE
-                    ).matcher(inner)
-
-                    if (pathMatcher.find()) {
-                        args["path"] = pathMatcher.group(1)?.trim() ?: ""
-                    } else {
-                        // Check if inner contains only a plain path without tags
-                        val cleanPath = inner.replace(Regex("<[^>]+>"), "").trim()
-                        if (cleanPath.isNotBlank() && !cleanPath.contains("\n") && !cleanPath.contains(" ")) {
-                            args["path"] = cleanPath
-                        }
-                    }
-                }
-                "write_file" -> {
-                    val pathMatcher = Pattern.compile(
-                        """<(?:path|(?:parameter|arg)\s+name=["']path["'])>([\s\S]*?)</(?:path|parameter|arg)>""",
-                        Pattern.CASE_INSENSITIVE
-                    ).matcher(inner)
-                    if (pathMatcher.find()) {
-                        args["path"] = pathMatcher.group(1)?.trim() ?: ""
-                    }
-
-                    val contentMatcher = Pattern.compile(
-                        """<(?:content|(?:parameter|arg)\s+name=["']content["'])>([\s\S]*?)</(?:content|parameter|arg)>""",
-                        Pattern.CASE_INSENSITIVE
-                    ).matcher(inner)
-                    if (contentMatcher.find()) {
-                        args["content"] = contentMatcher.group(1) ?: ""
-                    }
-                }
-                "list_files" -> {}
-                "build_project" -> {}
+            // 1. Universal parameter extraction from XML tags: <tag>value</tag>
+            val tagPattern = Pattern.compile("""<([a-zA-Z0-9_]+)>([\s\S]*?)</\1>""", Pattern.CASE_INSENSITIVE)
+            val tagMatcher = tagPattern.matcher(inner)
+            while (tagMatcher.find()) {
+                val tagKey = tagMatcher.group(1)?.lowercase() ?: continue
+                val tagVal = tagMatcher.group(2) ?: ""
+                args[tagKey] = tagVal
             }
 
-            if (name == "list_files" || name == "build_project" || args.isNotEmpty()) {
+            // 2. Universal parameter extraction from attributes: <parameter name="key">value</parameter>
+            val paramPattern = Pattern.compile("""<(?:parameter|arg)\s+name=["'](.*?)["']>([\s\S]*?)</(?:parameter|arg)>""", Pattern.CASE_INSENSITIVE)
+            val paramMatcher = paramPattern.matcher(inner)
+            while (paramMatcher.find()) {
+                val paramKey = paramMatcher.group(1)?.lowercase() ?: continue
+                val paramVal = paramMatcher.group(2) ?: ""
+                args[paramKey] = paramVal
+            }
+
+            // 3. Fallbacks if model outputs plain text without sub-tags:
+            when (name) {
+                "web_search", "search_code" -> {
+                    if (!args.containsKey("query")) {
+                        val clean = inner.replace(Regex("<[^>]+>"), "").trim()
+                        if (clean.isNotBlank()) args["query"] = clean
+                    }
+                }
+                "web_fetch" -> {
+                    if (!args.containsKey("url")) {
+                        val clean = inner.replace(Regex("<[^>]+>"), "").trim()
+                        if (clean.startsWith("http://") || clean.startsWith("https://")) args["url"] = clean
+                    }
+                }
+                "read_file" -> {
+                    if (!args.containsKey("path")) {
+                        val clean = inner.replace(Regex("<[^>]+>"), "").trim()
+                        if (clean.isNotBlank() && !clean.contains("\n") && !clean.contains(" ")) args["path"] = clean
+                    }
+                }
+            }
+
+            if (name in setOf("list_files", "build_project") || args.isNotEmpty()) {
                 calls.add(ParsedToolCall(name, args))
             }
         }
@@ -621,9 +947,12 @@ class AiAgentEngine(
             .replace(Regex("""<(?:tool_call|invoke)\s+name=["'][^"']*["']>[\s\S]*?(?:</(?:tool_call|invoke)>|</calls>|(?=<(?:tool_call|invoke)\s+name=)|$)""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""<tool_call[\s\S]*?</tool_call>""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""<tool_result[\s\S]*?</tool_result>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?tool_call[^>]*>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?tool_result[^>]*>""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""</?calls>""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""</?invoke[^>]*>""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""</?parameter[^>]*>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?arg[^>]*>""", RegexOption.IGNORE_CASE), "")
             .trim()
     }
 
@@ -679,23 +1008,56 @@ class AiAgentEngine(
                  <path>относительный/путь/к/файлу</path>
                </tool_call>
 
-            2. Создание или перезапись файла проекта:
+            2. Поиск фрагмента кода или символа по всем файлам проекта (grep):
+               <tool_call name="search_code">
+                 <query>символ_или_текст_для_поиска</query>
+               </tool_call>
+
+            3. Точечное изменение файла через замену блока (diff / patch):
+               <tool_call name="apply_diff">
+                 <path>относительный/путь/к/файлу</path>
+                 <find>старый точный фрагмент кода</find>
+                 <replace>новый фрагмент кода</replace>
+               </tool_call>
+
+            4. Создание или полная перезапись файла проекта:
                <tool_call name="write_file">
                  <path>относительный/путь/к/файлу</path>
                  <content>Полное новое содержимое файла</content>
                </tool_call>
 
-            3. Просмотр структуры файлов проекта:
+            5. Просмотр структуры файлов проекта:
                <tool_call name="list_files"></tool_call>
 
-            4. Сборка и компиляция проекта (Gradle/NDK/CMake или Maven):
+            6. Поиск актуальной информации, документации и решений в интернете:
+               <tool_call name="web_search">
+                 <query>поисковый запрос на английском или русском</query>
+               </tool_call>
+
+            7. Загрузка и чтение полной веб-страницы, статьи или документации по URL (web_fetch):
+               <tool_call name="web_fetch">
+                 <url>https://example.com/docs/api</url>
+               </tool_call>
+
+            8. Прямое скачивание файлов/шрифтов/библиотек из интернета в проект (download_file):
+               <tool_call name="download_file">
+                 <url>https://raw.githubusercontent.com/.../Inter.ttf</url>
+                 <path>jni/ui/fonts/Inter_Regular.h</path> <!-- если расширение .h, автоматически конвертирует TTF в готовый C++ байт-массив! -->
+               </tool_call>
+
+            9. Сборка и компиляция проекта (Gradle/NDK/CMake или Maven):
                <tool_call name="build_project"></tool_call>
 
             ПРАВИЛА РАБОТЫ:
-            - Если тебе нужно узнать содержимое файла, вызови <tool_call name="read_file">.
-            - Если нужно создать или модифицировать код, вызови <tool_call name="write_file">. Всегда предоставляй ПОЛНОЕ валидное содержимое файла в теге <content>.
+            - Если нужно найти где объявлен класс, метод или функция, используй <tool_call name="search_code">.
+            - Если нужно прочитать файл, используй <tool_call name="read_file">.
+            - Для небольших правок используй <tool_call name="apply_diff">. Для создания новых файлов используй <tool_call name="write_file">.
+            - Если не уверен в синтаксисе сторонней библиотеки, NDK API или Gradle плагина, вызови <tool_call name="web_search">.
+            - Чтобы прочитать подробную документацию или страницу по ссылке из поиска, вызови <tool_call name="web_fetch">.
+            - Если нужно скачать шрифт (TTF/OTF) или файл в проект, используй <tool_call name="download_file">.
+            - ВАЖНО: Если пользователь просит добавить фичу, шрифт или изменить логику, твоя задача НЕ ЗАВЕРШЕНА, пока ты РЕАЛЬНО не внесешь изменения в код (write_file / apply_diff / download_file). Никогда не останавливайся после одного чтения файлов или поиска без реального изменения файлов проекта!
             - Если пользователь просит собрать или проверить проект, или после внесения правок в код C/C++/Java/Kotlin, вызови <tool_call name="build_project"></tool_call>.
-            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang/Javac/Kotlinc, открой указанные файлы, исправь ошибки через write_file и ОБЯЗАТЕЛЬНО снова вызови build_project для подтверждения успешного исправления.
+            - Если сборка вернет ошибки (FAILURE), внимательно изучи строки с ошибками компилятора Clang/Javac/Kotlinc, открой указанные файлы, исправь ошибки через apply_diff или write_file и ОБЯЗАТЕЛЬНО снова вызови build_project для подтверждения успешного исправления.
             - ВНИМАНИЕ: Используй ТОЛЬКО стандартный тег <tool_call name="...">...</tool_call>. НЕ используй спецсимволы DSML (<|DSML|>, invoke, calls, parameter). Обязательно закрывай каждый вызов тегом </tool_call>.
             - После выполнения всех операций напиши краткое, профессиональное и понятное резюме на русском языке без лишней воды.
         """.trimIndent()
@@ -712,23 +1074,65 @@ class AiAgentEngine(
                  <path>relative/path/to/file</path>
                </tool_call>
 
-            2. Write or create a project file:
+            2. Search code in project (grep):
+               <tool_call name="search_code">
+                 <query>symbol_or_pattern_to_search</query>
+               </tool_call>
+
+            3. Apply targeted diff / block replacement:
+               <tool_call name="apply_diff">
+                 <path>relative/path/to/file</path>
+                 <find>exact old code block</find>
+                 <replace>new code block</replace>
+               </tool_call>
+
+            4. Write or create a project file:
                <tool_call name="write_file">
                  <path>relative/path/to/file</path>
                  <content>Complete full file content</content>
                </tool_call>
 
-            3. List project files:
+            5. List project files:
                <tool_call name="list_files"></tool_call>
 
-            4. Build and compile project (Clang/NDK/CMake or Maven pom.xml):
+            6. Search web for online documentation and libraries:
+               <tool_call name="web_search">
+                 <query>search query</query>
+               </tool_call>
+
+            7. Fetch web page or documentation content by URL:
+               <tool_call name="web_fetch">
+                 <url>https://example.com/docs/api</url>
+               </tool_call>
+
+            8. Download binary asset/font directly into project:
+               <tool_call name="download_file">
+                 <url>https://raw.githubusercontent.com/.../Inter.ttf</url>
+                 <path>jni/ui/fonts/Inter_Regular.h</path> <!-- if .h extension, automatically converts TTF to C++ byte array! -->
+               </tool_call>
+
+            9. Build and compile project (Clang/NDK/CMake or Maven pom.xml):
                <tool_call name="build_project"></tool_call>
 
             RULES:
+            - When looking for where symbols or methods are declared, use <tool_call name="search_code">.
             - When you need file contents, call <tool_call name="read_file">.
-            - When writing or modifying code, call <tool_call name="write_file">. Always provide the COMPLETE, valid file content inside <content>.
+            - For small targeted edits, call <tool_call name="apply_diff">. For new files or major rewrites, call <tool_call name="write_file">.
+            - If you need external library documentation, invoke <tool_call name="web_search">.
+            - To download fonts or assets into project, invoke <tool_call name="download_file">.
+            - CRITICAL: Do NOT finish or give up after only searching or reading files. You MUST actually modify the project files (write_file / apply_diff / download_file) to complete the user's request!
             - If user asks to build or compile the project, or after making changes to native or Java code, invoke <tool_call name="build_project"></tool_call>.
-            - If the build fails with errors (FAILURE), carefully read the compiler diagnostics (file and line numbers), inspect the code, fix errors with write_file, and RE-TEST with build_project to verify the fix.
+            - If the build fails with errors (FAILURE), carefully read the compiler diagnostics (file and line numbers), inspect the code, fix errors with apply_diff or write_file, and RE-TEST with build_project to verify the fix.
+            - ATTENTION: Strictly use standard XML format: <tool_call name="...">...</tool_call>. Do NOT use DSML tokens (<|DSML|>, invoke, calls, parameter). Always close each tool call with </tool_call>.
+            - When finished, provide a clear, concise summary of the changes made.
+
+            RULES:
+            - When looking for where symbols or methods are declared, use <tool_call name="search_code">.
+            - When you need file contents, call <tool_call name="read_file">.
+            - For small targeted edits, call <tool_call name="apply_diff">. For new files or major rewrites, call <tool_call name="write_file">.
+            - If you need external library documentation, invoke <tool_call name="web_search">.
+            - If user asks to build or compile the project, or after making changes to native or Java code, invoke <tool_call name="build_project"></tool_call>.
+            - If the build fails with errors (FAILURE), carefully read the compiler diagnostics (file and line numbers), inspect the code, fix errors with apply_diff or write_file, and RE-TEST with build_project to verify the fix.
             - ATTENTION: Strictly use standard XML format: <tool_call name="...">...</tool_call>. Do NOT use DSML tokens (<|DSML|>, invoke, calls, parameter). Always close each tool call with </tool_call>.
             - When finished, provide a clear, concise summary of the changes made.
         """.trimIndent()

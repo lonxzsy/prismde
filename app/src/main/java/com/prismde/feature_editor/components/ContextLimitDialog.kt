@@ -16,8 +16,10 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -96,14 +98,13 @@ fun ContextLimitDialog(
 
                 Spacer(Modifier.height(8.dp))
 
-                LinearProgressIndicator(
+                LinearWavyProgressIndicator(
                     progress = { progress },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(4.dp)),
+                        .padding(vertical = 4.dp),
                     color = progressColor,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                 )
 
                 Spacer(Modifier.height(8.dp))

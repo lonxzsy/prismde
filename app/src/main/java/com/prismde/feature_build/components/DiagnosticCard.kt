@@ -27,6 +27,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -289,7 +291,10 @@ fun DiagnosticCard(
                     border = BorderStroke(1.dp, borderColor)
                 ) {
                     if (isAiLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        CircularWavyProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = iconColor
+                        )
                     } else {
                         Icon(
                             imageVector = Icons.Rounded.AutoAwesome,

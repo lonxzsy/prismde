@@ -1,5 +1,10 @@
 package com.prismde.feature_editor.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -35,18 +40,24 @@ import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Difference
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.ElectricBolt
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,10 +81,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.prismde.core.theme.PrismMotion
 import com.prismde.R
 import com.prismde.core.model.BuildConfiguration
 import com.prismde.core.model.NdkVersion
@@ -94,7 +111,8 @@ fun AiChatBottomSheet(
     ndk: NdkVersion? = null,
     buildConfig: BuildConfiguration? = null,
     onDismiss: () -> Unit,
-    onFileModified: (File, String) -> Unit = { _, _ -> }
+    onFileModified: (File, String) -> Unit = { _, _ -> },
+    onApplyDiff: ((filePath: String?, diffText: String) -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -109,16 +127,10 @@ fun AiChatBottomSheet(
         viewModel.loadSessionsForProject(project, config)
     }
 
-    // Auto-scroll when new messages arrive or text is streaming
-    val lastMessageTextLength = uiState.messages.lastOrNull()?.text?.length ?: 0
+    // Auto-scroll when new messages arrive
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
-        }
-    }
-    LaunchedEffect(lastMessageTextLength, uiState.currentActivity) {
-        if (uiState.messages.isNotEmpty() && uiState.isRunning) {
-            listState.scrollToItem(uiState.messages.size - 1)
         }
     }
 
@@ -389,7 +401,8 @@ fun AiChatBottomSheet(
                                 isRunning = uiState.isRunning,
                                 currentActivity = uiState.currentActivity,
                                 isLastMessage = message.id == uiState.messages.lastOrNull()?.id,
-                                modifier = Modifier.animateItem()
+                                onApplyDiff = onApplyDiff,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -552,6 +565,7 @@ fun ChatMessageItem(
     isRunning: Boolean,
     currentActivity: String?,
     isLastMessage: Boolean = false,
+    onApplyDiff: ((filePath: String?, diffText: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isUser = message.isUser
@@ -604,13 +618,14 @@ fun ChatMessageItem(
                 Column(modifier = Modifier.padding(12.dp)) {
                     val thinkingDetail = message.thinkingText
                         ?: message.actions.filterIsInstance<AiAgentAction.Thinking>().firstOrNull { it.thoughtDetail != null }?.thoughtDetail
-                    val isActivelyThinking = !isUser && isRunning && isLastMessage && (currentActivity?.contains("анализ", ignoreCase = true) == true || currentActivity?.contains("размыш", ignoreCase = true) == true || currentActivity?.contains("think", ignoreCase = true) == true)
+                    val isActivelyThinking = !isUser && isRunning && isLastMessage && (thinkingDetail.isNullOrBlank() || message.isThinkingActive)
 
                     // Thinking Card
                     if (!isUser && (isActivelyThinking || !thinkingDetail.isNullOrBlank())) {
                         ThinkingCard(
-                            isThinkingActive = isActivelyThinking && thinkingDetail.isNullOrBlank(),
+                            isThinkingActive = isActivelyThinking,
                             thinkingDetail = thinkingDetail,
+                            durationMs = message.thinkingDurationMs,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
                     }
@@ -642,7 +657,8 @@ fun ChatMessageItem(
                             MarkdownText(
                                 markdown = message.text,
                                 textColor = MaterialTheme.colorScheme.onSurface,
-                                isStreaming = isRunning && isLastMessage
+                                isStreaming = isRunning && isLastMessage,
+                                onApplyDiff = onApplyDiff
                             )
                         }
                     }
@@ -653,9 +669,8 @@ fun ChatMessageItem(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(top = 8.dp)
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(16.dp),
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(Modifier.width(8.dp))
@@ -672,25 +687,45 @@ fun ChatMessageItem(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ThinkingCard(
     isThinkingActive: Boolean,
     thinkingDetail: String?,
+    durationMs: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+
+    // Live duration counter
+    var elapsedMs by remember(isThinkingActive, durationMs) {
+        mutableLongStateOf(if (durationMs > 0L) durationMs else 0L)
+    }
+
+    LaunchedEffect(isThinkingActive) {
+        if (isThinkingActive) {
+            val start = android.os.SystemClock.elapsedRealtime() - elapsedMs
+            while (true) {
+                elapsedMs = android.os.SystemClock.elapsedRealtime() - start
+                kotlinx.coroutines.delay(100L)
+            }
+        }
+    }
+
+    val secondsText = String.format(java.util.Locale.US, "%.1fs", (elapsedMs / 1000f).coerceAtLeast(0.1f))
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isThinkingActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+            if (isThinkingActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
         ),
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = !thinkingDetail.isNullOrBlank()) {
                 isExpanded = !isExpanded
             }
@@ -706,9 +741,8 @@ fun ThinkingCard(
                     modifier = Modifier.weight(1f, fill = false)
                 ) {
                     if (isThinkingActive) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(13.dp),
-                            strokeWidth = 2.dp,
+                        CircularWavyProgressIndicator(
+                            modifier = Modifier.size(15.dp),
                             color = MaterialTheme.colorScheme.primary
                         )
                     } else {
@@ -721,11 +755,11 @@ fun ThinkingCard(
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (isThinkingActive) stringResource(R.string.ai_thinking_title)
-                               else stringResource(R.string.ai_thinking_completed),
+                        text = if (isThinkingActive) "Размышления... ($secondsText)"
+                               else "Размышления завершены ($secondsText)",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isThinkingActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (isThinkingActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                     )
                 }
 
@@ -753,20 +787,64 @@ fun ThinkingCard(
                 }
             }
 
-            if (isExpanded && !thinkingDetail.isNullOrBlank()) {
-                Spacer(Modifier.height(6.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-                Spacer(Modifier.height(6.dp))
+            // Collapsed Preview Summary
+            if (!isExpanded && !thinkingDetail.isNullOrBlank() && !isThinkingActive) {
+                val firstLine = thinkingDetail.lines().firstOrNull { it.isNotBlank() } ?: ""
                 Text(
-                    text = thinkingDetail.trim(),
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        fontSize = 11.5.sp,
-                        lineHeight = 15.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                    modifier = Modifier.fillMaxWidth()
+                    text = firstLine,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp, start = 24.dp)
                 )
+            }
+
+            // Expanded Fluid Thought Box
+            AnimatedVisibility(
+                visible = isExpanded && !thinkingDetail.isNullOrBlank(),
+                enter = expandVertically(animationSpec = androidx.compose.animation.core.spring(dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)) + fadeIn(),
+                exit = shrinkVertically(animationSpec = androidx.compose.animation.core.spring(dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy, stiffness = androidx.compose.animation.core.Spring.StiffnessMedium)) + fadeOut()
+            ) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Spacer(Modifier.height(8.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = thinkingDetail!!.trim(),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 28.dp)
+                        )
+
+                        IconButton(
+                            onClick = { clipboardManager.setText(AnnotatedString(thinkingDetail)) },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .align(Alignment.TopEnd)
+                        ) {
+                            Icon(
+                                Icons.Rounded.ContentCopy,
+                                contentDescription = "Copy thoughts",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -828,6 +906,118 @@ fun ActionCard(action: AiAgentAction) {
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+
+        is AiAgentAction.SearchCode -> {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Поиск в проекте \"${action.query}\": найдено ${action.matchesCount}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+
+        is AiAgentAction.ApplyDiff -> {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Difference,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Применен diff-патч в ${action.relativePath}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+
+        is AiAgentAction.WebSearchAction -> {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Public,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Поиск в сети \"${action.query}\": ${action.resultCount} рез.",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
+
+        is AiAgentAction.WebFetchAction -> {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Public,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Загрузка страницы: ${action.url.take(35)}... (${action.charCount} симв.)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
                     )
                 }
             }

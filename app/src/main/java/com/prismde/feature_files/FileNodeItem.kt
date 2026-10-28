@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -33,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prismde.core.theme.bouncyClickable
 import androidx.compose.ui.unit.sp
 import java.io.File
 
@@ -53,21 +55,23 @@ fun FileNodeItem(
         isDirectory -> Icons.Rounded.Folder
         file.name.endsWith(".cpp") || file.name.endsWith(".c") || file.name.endsWith(".cc") -> Icons.Rounded.Code
         file.name == "Android.mk" || file.name == "Application.mk" || file.name == "CMakeLists.txt" -> Icons.Rounded.Settings
-        else -> Icons.Rounded.InsertDriveFile
+        else -> Icons.AutoMirrored.Rounded.InsertDriveFile
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .clickable {
+                .padding(horizontal = 4.dp, vertical = 1.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .bouncyClickable {
                     if (isDirectory) {
                         isExpanded = !isExpanded
                     } else {
                         onFileClick(file)
                     }
                 },
+            shape = RoundedCornerShape(12.dp),
             color = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
         ) {
             Row(

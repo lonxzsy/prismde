@@ -380,6 +380,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                         if (isRu) "Изменен: ${action.relativePath} ($diff строк)..." else "Modified: ${action.relativePath} ($diff lines)..."
                     }
                     is AiAgentAction.ListFiles -> if (isRu) "Анализ файлов проекта (${action.fileCount} файлов)..." else "Scanning project structure (${action.fileCount} files)..."
+                    is AiAgentAction.SearchCode -> if (isRu) "Поиск в проекте \"${action.query}\"..." else "Searching project for \"${action.query}\"..."
+                    is AiAgentAction.ApplyDiff -> if (isRu) "Применение изменений в ${action.relativePath}..." else "Applying diff to ${action.relativePath}..."
+                    is AiAgentAction.WebSearchAction -> if (isRu) "Поиск в интернете: \"${action.query}\"..." else "Searching web: \"${action.query}\"..."
+                    is AiAgentAction.WebFetchAction -> if (isRu) "Загрузка страницы: ${action.url.take(35)}... (${action.charCount} симв.)..." else "Fetching page: ${action.url.take(35)}... (${action.charCount} chars)..."
                     is AiAgentAction.BuildProject -> if (isRu) "Сборка проекта: ${action.status}..." else "Building project: ${action.status}..."
                     is AiAgentAction.ContextCompacted -> if (isRu) "Контекст сжат (~${action.savedTokens} токенов)..." else "Context compacted (~${action.savedTokens} tokens)..."
                     is AiAgentAction.TokenUsageUpdated -> null
@@ -408,35 +412,6 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
 
             result.onSuccess { finalExplanation ->
                 val fullText = finalExplanation.trim()
-                if (fullText.isNotEmpty()) {
-                    // Smooth progressive typing animation (~1 - 1.4 seconds)
-                    val targetDurationMs = 1200L
-                    val delayStepMs = 16L
-                    val totalSteps = (targetDurationMs / delayStepMs).toInt().coerceAtLeast(1)
-                    val stepSize = (fullText.length / totalSteps).coerceAtLeast(2)
-
-                    var currentLen = 0
-                    while (currentLen < fullText.length) {
-                        currentLen = minOf(fullText.length, currentLen + stepSize)
-                        val partial = fullText.substring(0, currentLen)
-                        val streamingMessages = _uiState.value.messages.map { msg ->
-                            if (msg.id == assistantMsgId) {
-                                msg.copy(
-                                    text = partial,
-                                    actions = actionsAcc.toList(),
-                                    thinkingText = currentThinkingText,
-                                    serverTokens = lastServerTokens
-                                )
-                            } else msg
-                        }
-                        _uiState.value = _uiState.value.copy(
-                            messages = streamingMessages,
-                            currentActivity = null
-                        )
-                        kotlinx.coroutines.delay(delayStepMs)
-                    }
-                }
-
                 val finalMessages = _uiState.value.messages.map { msg ->
                     if (msg.id == assistantMsgId) {
                         msg.copy(

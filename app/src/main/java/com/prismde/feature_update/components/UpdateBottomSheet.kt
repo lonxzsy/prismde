@@ -20,8 +20,10 @@ import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -125,9 +127,13 @@ fun UpdateBottomSheet(
 
             AnimatedVisibility(visible = isDownloading) {
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-                    LinearProgressIndicator(
+                    LinearWavyProgressIndicator(
                         progress = { downloadPercent / 100f },
-                        modifier = Modifier.fillMaxWidth().height(6.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(

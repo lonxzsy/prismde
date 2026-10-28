@@ -10,6 +10,7 @@ import com.prismde.feature_ndk.engine.NdkExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -45,18 +46,15 @@ object BuildToolInstaller {
     private const val GRADLE_ZIP_URL_ALIYUN = "https://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.5-bin.zip"
     private const val GRADLE_ZIP_URL_FALLBACK = "https://downloads.gradle-dn.com/distributions/gradle-8.5-bin.zip"
 
-    const val JDK_VERSION = "17.0.20"
-    const val JDK_BUILD_TAG = "17.0.20-termux-deb-v3"
+    const val JDK_VERSION = "17.0.21"
+    const val JDK_BUILD_TAG = "17.0.21-termux-deb-v4"
 
     // Official Termux OpenJDK 17 LTS packages with built-in Android 12+ tagged pointers fix (patch 0021)
-    const val JDK_DEB_URL_PRIMARY = "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
-    const val JDK_DEB_URL_TSINGHUA = "https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
-    const val JDK_DEB_URL_BFSU = "https://mirrors.bfsu.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
-    const val JDK_DEB_URL_GRIMLER = "https://grimler.se/termux-packages-24/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb"
-
-    // Fallback mirrors
-    const val JDK_TAR_XZ_FALLBACK = "https://gh-proxy.com/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
-    const val JDK_TAR_XZ_CDN = "https://ghfast.top/https://github.com/zryyoung/openjdk-Termux/releases/download/openjdk-17/openjdk-17-aarch64.tar.xz"
+    const val JDK_DEB_URL_PRIMARY = "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.21_aarch64.deb"
+    const val JDK_DEB_URL_TSINGHUA = "https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.21_aarch64.deb"
+    const val JDK_DEB_URL_BFSU = "https://mirrors.bfsu.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.21_aarch64.deb"
+    const val JDK_DEB_URL_GRIMLER = "https://grimler.se/termux-packages-24/pool/main/o/openjdk-17/openjdk-17_17.0.21_aarch64.deb"
+    const val JDK_DEB_BASE_URL = "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-17/"
 
     const val TERMUX_INSTALL_CMD = "pkg update -y && pkg install -y openjdk-17 maven"
 
@@ -760,8 +758,12 @@ object BuildToolInstaller {
                         txt = cleaned
                         modified = true
                     }
-                    if (!txt.contains("override GCC_TOOLCHAIN :=") || !txt.contains("override TARGET_LIBGCC :=")) {
-                        txt = "$txt\n# PrismDE: Disable legacy GCC toolchain in Clang\noverride GCC_TOOLCHAIN :=\noverride TARGET_LIBGCC :=\n"
+                    if (txt.contains("override TARGET_LIBGCC :=")) {
+                        txt = txt.replace(Regex("""override\s+TARGET_LIBGCC\s*:=\s*\n?"""), "")
+                        modified = true
+                    }
+                    if (!txt.contains("override GCC_TOOLCHAIN :=")) {
+                        txt = "$txt\n# PrismDE: Disable legacy GCC toolchain in Clang\noverride GCC_TOOLCHAIN :=\n"
                         modified = true
                     }
                     if (modified) {
@@ -971,6 +973,10 @@ object BuildToolInstaller {
                                 }
 
                                 if (file.name == "ndk-build" || file.name == "ndk-build-android") {
+                                    if (text.contains("TMPDIR=/sdcard")) {
+                                        text = text.replace("TMPDIR=/sdcard", "TMPDIR=\"\$DIR/tmp\"")
+                                        modified = true
+                                    }
                                     if (text.contains("\$DIR/build/ndk-build") && !text.contains("/system/bin/sh \"\$DIR/build/ndk-build\"")) {
                                         text = text.replace("\"\$DIR/build/ndk-build\"", "/system/bin/sh \"\$DIR/build/ndk-build\"")
                                             .replace("\$DIR/build/ndk-build", "/system/bin/sh \"\$DIR/build/ndk-build\"")
@@ -1011,11 +1017,6 @@ object BuildToolInstaller {
         if (txt.contains("gcc-toolchain")) {
             val gccToolchainRegex = Regex("""--?gcc-toolchain(?:\s*(?:\\\s*[\r\n]+\s*)?(?:\$\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)|\$\{[^}]+\}|"[^"]*"|'[^']*'|\S+)|=\S+)?""")
             txt = txt.replace(gccToolchainRegex, "")
-        }
-
-        // 1b. Strip obsolete -lgcc and -lgcc_real linker flags
-        if (txt.contains("gcc")) {
-            txt = txt.replace(Regex("""\s*-l(?:gcc_real|gcc)\b"""), "")
         }
 
         // 2. Line-by-line repair of dangling parentheses and orphaned line continuations
@@ -1136,7 +1137,7 @@ object BuildToolInstaller {
      */
     fun patchNdkMakefiles(rootDir: File) {
         if (!rootDir.exists() || !rootDir.isDirectory) return
-        val marker = File(rootDir, ".prism_makefiles_patched_v3")
+        val marker = File(rootDir, ".prism_makefiles_patched_v4")
         if (marker.exists()) return
 
         try {
@@ -1208,12 +1209,15 @@ object BuildToolInstaller {
                         // Remove old PrismDE comments
                         content = content.replace(Regex("""# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce LLVM lld\n"""), "")
                         content = content.replace(Regex("""# PrismDE: Disable legacy GCC toolchain in Clang invocations and enforce compatible linker \(Clang \d+\)\n"""), "")
-                        
+
+                        // Replace any legacy empty TARGET_LIBGCC override with proper -Wl,--exclude-libs,libgcc.a -lgcc
+                        content = content.replace(Regex("""override\s+TARGET_LIBGCC\s*:=\s*\n"""), "override TARGET_LIBGCC := -Wl,--exclude-libs,libgcc.a -lgcc\n")
+
                         // Add PrismDE overrides if not present
-                        if (!content.contains("override GCC_TOOLCHAIN :=") || 
-                            !content.contains("override TARGET_LIBGCC :=") || 
+                        if (!content.contains("override GCC_TOOLCHAIN :=") ||
+                            !content.contains("override TARGET_LIBGCC :=") ||
                             (linkerFlag.isNotEmpty() && !content.contains(linkerFlag))) {
-                            
+
                             val overrideSnippet = buildString {
                                 append("\n# PrismDE: Disable legacy GCC toolchain in Clang invocations")
                                 if (linkerFlag.isNotEmpty()) {
@@ -1223,7 +1227,7 @@ object BuildToolInstaller {
                                 }
                                 append("\n")
                                 append("override GCC_TOOLCHAIN :=\n")
-                                append("override TARGET_LIBGCC :=\n")
+                                append("override TARGET_LIBGCC := -Wl,--exclude-libs,libgcc.a -lgcc\n")
                                 if (linkerFlag.isNotEmpty()) {
                                     append("override TARGET_LDFLAGS += $linkerFlag\n")
                                 }
@@ -1276,7 +1280,7 @@ object BuildToolInstaller {
                 }
             } catch (_: Throwable) {}
             try {
-                marker.writeText("v3")
+                marker.writeText("v4")
             } catch (_: Throwable) {}
         } catch (_: Throwable) {}
     }
@@ -1815,6 +1819,63 @@ object BuildToolInstaller {
                 }
             }
         }
+
+        // Virtual Build-Tools Aliasing:
+        // Automatically provision common backward-compatible revisions (33.0.1, 30.0.3, 31.0.0, 32.0.0)
+        // using the ready native ARM64 build tools so AGP never fails with "Failed to find Build Tools revision".
+        val readySource = buildToolsDir.listFiles()?.firstOrNull { isBuildToolsDirectoryReady(it) }
+        val sdkRoot = buildToolsDir.parentFile
+        if (readySource != null && sdkRoot != null) {
+            listOf("34.0.0", "33.0.1", "33.0.2", "30.0.3", "31.0.0", "32.0.0").forEach { v ->
+                val vDir = File(buildToolsDir, v)
+                if (!vDir.exists() || !isBuildToolsDirectoryReady(vDir)) {
+                    createBuildToolsAlias(sdkRoot, v, readySource.name)
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates a fully backward-compatible Build-Tools directory alias (e.g. 33.0.1 from 34.0.0)
+     * with valid source.properties to satisfy AGP without expensive multi-megabyte downloads.
+     */
+    fun createBuildToolsAlias(sdkDir: File, targetVersion: String, sourceVersion: String = "34.0.0"): Boolean {
+        val buildToolsDir = File(sdkDir, "build-tools").also { it.mkdirs() }
+        val targetDir = File(buildToolsDir, targetVersion)
+        if (targetDir.exists() && isBuildToolsDirectoryReady(targetDir)) {
+            return true
+        }
+
+        val availableSources = buildToolsDir.listFiles()
+            ?.filter { it.isDirectory && isBuildToolsDirectoryReady(it) }
+            ?.sortedByDescending { it.name }
+            ?: emptyList()
+        val sourceDir = File(buildToolsDir, sourceVersion).takeIf { isBuildToolsDirectoryReady(it) }
+            ?: availableSources.firstOrNull() ?: return false
+
+        return try {
+            targetDir.mkdirs()
+            sourceDir.listFiles()?.forEach { file ->
+                val dest = File(targetDir, file.name)
+                if (file.name != "source.properties" && file.name != "package.xml") {
+                    try {
+                        if (file.isDirectory) file.copyRecursively(dest, overwrite = true)
+                        else file.copyTo(dest, overwrite = true)
+                        if (dest.extension.isEmpty() || dest.extension == "so") {
+                            dest.setExecutable(true, false)
+                            dest.setReadable(true, false)
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+
+            try { File(targetDir, "package.xml").delete() } catch (_: Throwable) {}
+            val propFile = File(targetDir, "source.properties")
+            propFile.writeText("Pkg.Desc = Android SDK Build-Tools $targetVersion\nPkg.Revision = $targetVersion\n")
+            isBuildToolsDirectoryReady(targetDir)
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     fun isBuildToolsDirectoryReady(directory: File): Boolean {
@@ -1994,11 +2055,14 @@ object BuildToolInstaller {
                 "https://mirrors.aliyun.com/android/repository/"
             )
             val archives = listOf(
-                "platform-${apiLevel}-ext7_r03.zip",
-                "platform-${apiLevel}-ext7_r02.zip",
+                "platform-${apiLevel}_r06.zip",
+                "platform-${apiLevel}_r05.zip",
+                "platform-${apiLevel}_r04.zip",
                 "platform-${apiLevel}_r03.zip",
                 "platform-${apiLevel}_r02.zip",
-                "platform-${apiLevel}_r01.zip"
+                "platform-${apiLevel}_r01.zip",
+                "platform-${apiLevel}-ext7_r03.zip",
+                "platform-${apiLevel}-ext7_r02.zip"
             )
             val urls = hosts.flatMap { host -> archives.map { host + it } }
             var lastDownloadError = "unknown"
@@ -2518,6 +2582,56 @@ object BuildToolInstaller {
         return File(getToolsDir(context), "jdk")
     }
 
+    fun getJdksBaseDir(context: Context): File {
+        return File(getToolsDir(context), "jdks").also { it.mkdirs() }
+    }
+
+    fun getJdkDirForVersion(context: Context, version: Int): File {
+        return if (version == 17) {
+            getJdkDir(context) // Keep JDK 17 in tools/jdk as primary default
+        } else {
+            File(getJdksBaseDir(context), version.toString()).also { it.mkdirs() }
+        }
+    }
+
+    fun isJdkVersionInstalled(context: Context, version: Int): Boolean {
+        val dir = getJdkDirForVersion(context, version)
+        val javaBin = File(dir, "bin/java")
+        return javaBin.exists() && (version != 17 || isJdkInstalled(context))
+    }
+
+    suspend fun ensureJdkVersion(
+        context: Context,
+        version: Int,
+        onProgress: (statusMessage: String, percent: Float) -> Unit = { _, _ -> }
+    ): File? = withContext(Dispatchers.IO) {
+        val jdkTargetDir = getJdkDirForVersion(context, version)
+        val javaBin = File(jdkTargetDir, "bin/java")
+        if (javaBin.exists() && javaBin.canExecute() && (version != 17 || isJdkInstalled(context))) {
+            ensureJdkRuntimeLibraries(context, jdkTargetDir)
+            return@withContext jdkTargetDir
+        }
+
+        val debUrl = when (version) {
+            8 -> "https://grimler.se/termux-packages-24/pool/main/o/openjdk-8/openjdk-8_8.412-1_aarch64.deb"
+            11 -> "https://grimler.se/termux-packages-24/pool/main/o/openjdk-11/openjdk-11_11.0.22_aarch64.deb"
+            21 -> "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-21/openjdk-21_21.0.4_aarch64.deb"
+            else -> JDK_DEB_URL_PRIMARY
+        }
+
+        val ok = installJdk(context, customUrl = debUrl, onProgress = onProgress)
+        if (ok) {
+            val installedDir = getJdkDir(context)
+            if (version != 17 && installedDir.exists()) {
+                try {
+                    installedDir.copyRecursively(jdkTargetDir, overwrite = true)
+                } catch (_: Throwable) {}
+            }
+            ensureJdkRuntimeLibraries(context, jdkTargetDir)
+            jdkTargetDir
+        } else null
+    }
+
     fun ensureJdkRuntimeLibraries(context: Context, jdkDir: File = getJdkDir(context)) {
         val libDir = File(jdkDir, "lib")
         if (!libDir.exists()) libDir.mkdirs()
@@ -2606,15 +2720,20 @@ object BuildToolInstaller {
         ensureJdkRuntimeLibraries(context, jdkDir)
         val libz1 = File(jdkDir, "lib/libz.so.1")
         val libcxx = File(jdkDir, "lib/libc++_shared.so")
-        val tagFile = File(jdkDir, ".prism_jdk_tag")
-        val isTagged = tagFile.exists() && (tagFile.readText().trim() == JDK_BUILD_TAG || tagFile.readText().trim().startsWith("17.0.20-termux-deb"))
-        if (exe.exists() && libz1.exists() && libcxx.exists()) {
-            if (!tagFile.exists() || tagFile.readText().trim() != JDK_BUILD_TAG) {
-                try { tagFile.writeText(JDK_BUILD_TAG) } catch (_: Throwable) {}
+        val releaseFile = File(jdkDir, "release")
+        // Check for ancient unpatched 2021 build that crashes on Android 12+ Tagged Pointers
+        if (releaseFile.exists()) {
+            val relText = try { releaseFile.readText() } catch (_: Throwable) { "" }
+            if (relText.contains("2021-09-14") || relText.contains("itsaky")) {
+                return false
             }
+        }
+        val tagFile = File(jdkDir, ".prism_jdk_tag")
+        val isTagged = tagFile.exists() && (tagFile.readText().trim() == JDK_BUILD_TAG || tagFile.readText().trim().startsWith("17.0.21-termux-deb"))
+        if (exe.exists() && libz1.exists() && libcxx.exists() && isTagged) {
             return true
         }
-        return isTagged
+        return false
     }
 
     fun hasAnyJdkInstalled(context: Context): Boolean {
@@ -2675,12 +2794,31 @@ object BuildToolInstaller {
             if (!customUrl.isNullOrBlank()) {
                 urls.add(customUrl.trim())
             }
+
+            // Dynamically discover latest available Termux openjdk-17 package version
+            try {
+                val indexReq = Request.Builder()
+                    .url(JDK_DEB_BASE_URL)
+                    .header("User-Agent", "PrismDE/1.0")
+                    .build()
+                httpClient.newCall(indexReq).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val html = response.body?.string() ?: ""
+                        val debRegex = Regex("""href=["'](openjdk-17_([0-9.]+)_aarch64\.deb)["']""")
+                        val match = debRegex.findAll(html).lastOrNull()?.groupValues?.get(1)
+                        if (match != null && match.isNotBlank()) {
+                            urls.add("https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-17/$match")
+                            urls.add("https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/$match")
+                            urls.add("https://mirrors.bfsu.edu.cn/termux/apt/termux-main/pool/main/o/openjdk-17/$match")
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+
             urls.add(JDK_DEB_URL_PRIMARY)
             urls.add(JDK_DEB_URL_TSINGHUA)
             urls.add(JDK_DEB_URL_BFSU)
             urls.add(JDK_DEB_URL_GRIMLER)
-            urls.add(JDK_TAR_XZ_FALLBACK)
-            urls.add(JDK_TAR_XZ_CDN)
 
             var downloadSuccess = false
             var lastErrorMessage: String? = null
@@ -2835,11 +2973,19 @@ object BuildToolInstaller {
             val internalJava = getJdkExecutable(context)
             val internalHome = getJdkHomeDir(context)
             if (internalJava != null && internalJava.exists()) {
-                ensureJdkRuntimeLibraries(context)
-                val tagFile = File(getJdkDir(context), ".prism_jdk_tag")
-                if (!tagFile.exists() || tagFile.readText().trim() != JDK_BUILD_TAG) {
-                    try { tagFile.writeText(JDK_BUILD_TAG) } catch (_: Throwable) {}
+                val jdkDir = getJdkDir(context)
+                val releaseFile = File(jdkDir, "release")
+                val isOldUnpatched = releaseFile.exists() && (releaseFile.readText().contains("2021-09-14") || releaseFile.readText().contains("itsaky"))
+                if (isOldUnpatched) {
+                    return JavaEnvironmentInfo(
+                        isAvailable = false,
+                        javaHome = internalHome,
+                        javaBin = internalJava,
+                        sourceDescription = if (isRu) "Требуется обновление (исправление Tagged Pointers для Android 12+)"
+                                             else "Update required (Tagged Pointers fix for Android 12+)"
+                    )
                 }
+                ensureJdkRuntimeLibraries(context)
                 return JavaEnvironmentInfo(
                     isAvailable = true,
                     javaHome = internalHome,

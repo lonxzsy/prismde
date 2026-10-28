@@ -8,11 +8,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import java.util.Locale
 
 class ClangDiagnosticParserTest {
 
     private val parser = ClangDiagnosticParser()
+
+    @Before
+    fun setUp() {
+        Locale.setDefault(Locale("ru"))
+    }
 
     @Test
     fun testMultilineStreamingTyping() {

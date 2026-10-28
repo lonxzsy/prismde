@@ -69,6 +69,8 @@ jobs:
           PRISM_KEYSTORE_PASSWORD: ${{ secrets.PRISM_KEYSTORE_PASSWORD || 'prismde-release' }}
           PRISM_KEY_ALIAS: ${{ secrets.PRISM_KEY_ALIAS || 'prismde' }}
           PRISM_KEY_PASSWORD: ${{ secrets.PRISM_KEY_PASSWORD || 'prismde-release' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '-5412558044' }}
         run: ./gradlew assembleRelease --no-daemon
 
       - name: Verify APK and Generate Checksum

@@ -1,5 +1,6 @@
 package com.prismde.feature_files
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +47,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.prismde.R
 import com.prismde.core.model.Project
+import com.prismde.core.theme.ExpressiveShapes
+import com.prismde.core.theme.bouncyClickable
 import com.prismde.feature_files.components.ProjectPickerBottomSheet
 import java.io.File
 
@@ -67,9 +70,10 @@ fun FileTreeScreen(
             if (currentProject != null) {
                 FloatingActionButton(
                     onClick = { showCreateDialog = true },
-                    shape = RoundedCornerShape(16.dp),
+                    shape = ExpressiveShapes.SquircleShape,
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.bouncyClickable(onClick = { showCreateDialog = true })
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = stringResource(R.string.new_file))
                 }
@@ -122,11 +126,12 @@ fun FileTreeScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                        .clip(ExpressiveShapes.CardShape)
                         .clickable { showProjectPicker = true },
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    shape = ExpressiveShapes.CardShape,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ) {
                     Row(
                         modifier = Modifier

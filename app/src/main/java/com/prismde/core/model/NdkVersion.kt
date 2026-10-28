@@ -427,6 +427,39 @@ data class NdkVersion(
             return null
         }
 
+        fun findRealLibgcc(ndkRoot: File, triple: String): File? {
+            val gccToolchainName = when {
+                triple.startsWith("aarch64") -> "aarch64-linux-android-4.9"
+                triple.startsWith("arm") -> "arm-linux-androideabi-4.9"
+                triple.startsWith("i686") -> "x86-4.9"
+                else -> "x86_64-4.9"
+            }
+            val searchRoots = listOf(
+                File(ndkRoot, "toolchains/$gccToolchainName"),
+                File(ndkRoot, "android-ndk-aide/toolchains/$gccToolchainName"),
+                File(ndkRoot, "android-ndk-aide/toolchains"),
+                File(ndkRoot, "toolchains")
+            )
+            for (root in searchRoots) {
+                if (!root.exists()) continue
+                val match = root.walkTopDown().maxDepth(8).firstOrNull { file ->
+                    file.isFile && file.name == "libgcc.a" && file.length() > 1000L &&
+                    (file.absolutePath.contains(gccToolchainName) || file.parentFile?.parentFile?.name == gccToolchainName)
+                }
+                if (match != null) return match
+            }
+            // General search by arch keyword if specific toolchain name didn't hit
+            val archKey = when {
+                triple.startsWith("aarch64") -> "aarch64"
+                triple.startsWith("arm") -> "arm"
+                triple.startsWith("i686") -> "i686"
+                else -> "x86_64"
+            }
+            return ndkRoot.walkTopDown().maxDepth(9).firstOrNull {
+                it.isFile && it.name == "libgcc.a" && it.length() > 1000L && it.absolutePath.contains(archKey)
+            }
+        }
+
         fun ensureNdkStlLibraries(ndkDir: File, context: android.content.Context? = null) {
             if (!ndkDir.exists()) return
 
@@ -536,7 +569,11 @@ data class NdkVersion(
                             }
                         }
 
-                        // Ensure static stubs for C++ STL and GCC runtime compatibility (required by ld.lld)
+                        // Locate real libgcc.a from GCC toolchains to satisfy exception unwinding (_Unwind_Resume, _Unwind_RaiseException)
+                        val realLibgcc = findRealLibgcc(dir, triple) ?: findRealLibgcc(ndkDir, triple)
+                        val libgccBytes = try { realLibgcc?.readBytes() } catch (_: Throwable) { null }
+
+                        // Ensure static libraries for C++ STL and GCC runtime compatibility (required by ld.lld & clang)
                         val staticStubNames = listOf(
                             "libc++_static.a",
                             "libc++abi.a",
@@ -547,22 +584,42 @@ data class NdkVersion(
                         )
                         for (staticName in staticStubNames) {
                             val staticA = File(tripleDir, staticName)
-                            if (!staticA.exists() || staticA.length() == 0L) {
-                                try {
-                                    staticA.writeBytes(emptyArBytes)
-                                    staticA.setReadable(true, false)
-                                } catch (_: Throwable) {}
+                            val isGccRuntime = staticName in setOf("libgcc.a", "libgcc_real.a", "libunwind.a")
+                            if (isGccRuntime && libgccBytes != null && libgccBytes.isNotEmpty()) {
+                                if (!staticA.exists() || staticA.length() <= 8L) {
+                                    try {
+                                        staticA.writeBytes(libgccBytes)
+                                        staticA.setReadable(true, false)
+                                    } catch (_: Throwable) {}
+                                }
+                            } else {
+                                if (!staticA.exists() || staticA.length() == 0L) {
+                                    try {
+                                        staticA.writeBytes(emptyArBytes)
+                                        staticA.setReadable(true, false)
+                                    } catch (_: Throwable) {}
+                                }
                             }
+
                             val rootStatic = File(usrLib, staticName)
-                            if (!rootStatic.exists() || rootStatic.length() == 0L) {
-                                try {
-                                    rootStatic.writeBytes(emptyArBytes)
-                                    rootStatic.setReadable(true, false)
-                                } catch (_: Throwable) {}
+                            if (isGccRuntime && libgccBytes != null && libgccBytes.isNotEmpty()) {
+                                if (!rootStatic.exists() || rootStatic.length() <= 8L) {
+                                    try {
+                                        rootStatic.writeBytes(libgccBytes)
+                                        rootStatic.setReadable(true, false)
+                                    } catch (_: Throwable) {}
+                                }
+                            } else {
+                                if (!rootStatic.exists() || rootStatic.length() == 0L) {
+                                    try {
+                                        rootStatic.writeBytes(emptyArBytes)
+                                        rootStatic.setReadable(true, false)
+                                    } catch (_: Throwable) {}
+                                }
                             }
                         }
 
-                        // Also ensure libgcc.a in sources/cxx-stl/llvm-libc++/libs/$abi/
+                        // Also ensure real libgcc.a in sources/cxx-stl/llvm-libc++/libs/$abi/
                         val abiName = when {
                             triple.startsWith("aarch64") -> "arm64-v8a"
                             triple.startsWith("arm") -> "armeabi-v7a"
@@ -573,11 +630,46 @@ data class NdkVersion(
                         if (stlAbiDir.exists()) {
                             for (staticName in listOf("libgcc.a", "libgcc_real.a", "libatomic.a", "libunwind.a")) {
                                 val stlStatic = File(stlAbiDir, staticName)
-                                if (!stlStatic.exists() || stlStatic.length() == 0L) {
-                                    try {
-                                        stlStatic.writeBytes(emptyArBytes)
-                                        stlStatic.setReadable(true, false)
-                                    } catch (_: Throwable) {}
+                                val isGccRuntime = staticName in setOf("libgcc.a", "libgcc_real.a", "libunwind.a")
+                                if (isGccRuntime && libgccBytes != null && libgccBytes.isNotEmpty()) {
+                                    if (!stlStatic.exists() || stlStatic.length() <= 8L) {
+                                        try {
+                                            stlStatic.writeBytes(libgccBytes)
+                                            stlStatic.setReadable(true, false)
+                                        } catch (_: Throwable) {}
+                                    }
+                                } else {
+                                    if (!stlStatic.exists() || stlStatic.length() == 0L) {
+                                        try {
+                                            stlStatic.writeBytes(emptyArBytes)
+                                            stlStatic.setReadable(true, false)
+                                        } catch (_: Throwable) {}
+                                    }
+                                }
+                            }
+                        }
+
+                        // Also provision real libgcc into platforms/
+                        val archName = when {
+                            triple.startsWith("aarch64") -> "arch-arm64"
+                            triple.startsWith("arm") -> "arch-arm"
+                            triple.startsWith("i686") -> "arch-x86"
+                            else -> "arch-x86_64"
+                        }
+                        val platformsDir = listOf(File(dir, "platforms"), File(dir, "android-ndk-aide/platforms")).firstOrNull { it.exists() }
+                        if (platformsDir != null && libgccBytes != null && libgccBytes.isNotEmpty()) {
+                            platformsDir.listFiles()?.filter { it.isDirectory && it.name.startsWith("android-") }?.forEach { apiDir ->
+                                val platUsrLib = File(apiDir, "$archName/usr/lib")
+                                if (platUsrLib.exists()) {
+                                    for (libName in listOf("libgcc.a", "libgcc_real.a", "libunwind.a")) {
+                                        val targetLib = File(platUsrLib, libName)
+                                        if (!targetLib.exists() || targetLib.length() <= 8L) {
+                                            try {
+                                                targetLib.writeBytes(libgccBytes)
+                                                targetLib.setReadable(true, false)
+                                            } catch (_: Throwable) {}
+                                        }
+                                    }
                                 }
                             }
                         }
